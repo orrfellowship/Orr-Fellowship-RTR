@@ -1,0 +1,16 @@
+:root {
+  --navy: #11123E;
+  --orange: #DD5434;
+  --blue: #8AB9E2;
+  --gray: #303333;
+  --canvas: #F7F8FB;
+  --line: #E4E7EE;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: 'Open Sans', system-ui, sans-serif;
+  background: var(--canvas);
+  color: var(--gray);
+}
+h1, h2, h3 { font-family: 'Cabin', 'Segoe UI', sans-serif; }
