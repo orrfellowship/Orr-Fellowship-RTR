@@ -40,6 +40,23 @@ export default function ConsoleClient({
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  // ---- list jobs (read-only diagnostic) ----
+  const [jobs, setJobs] = useState<{ id: string; title: string; status: string | null; city: string | null }[] | null>(null);
+  const [listing, setListing] = useState(false);
+  async function listJobs() {
+    setListing(true); setSyncError(null);
+    try {
+      const res = await fetch("/api/sync", { method: "GET" });
+      const data = await res.json();
+      if (!res.ok) setSyncError(typeof data.error === "string" ? data.error : JSON.stringify(data));
+      else setJobs(data.jobs ?? []);
+    } catch (e: any) {
+      setSyncError(e?.message ?? "Request failed");
+    } finally {
+      setListing(false);
+    }
+  }
   async function runSync(mode: "full" | "refresh") {
     setSyncing(true); setSyncResult(null); setSyncError(null);
     try {
@@ -171,6 +188,31 @@ export default function ConsoleClient({
               Start with a <b>full</b> pull; later, <b>refresh</b> adds new candidates and updates stages.
             </p>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
+              <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 4px", color: C.navy }}>Step 1 — Check the connection</h3>
+              <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 12px" }}>Lists the jobs in your JazzHR account. Read-only — writes nothing.</p>
+              <button onClick={listJobs} disabled={listing}
+                style={{ border: `1px solid ${C.navy}`, background: listing ? C.canvas : "#fff", color: C.navy, fontWeight: 700, padding: "11px 18px", borderRadius: 10, cursor: listing ? "default" : "pointer", fontSize: 14 }}>
+                {listing ? "Loading jobs…" : "List JazzHR jobs"}
+              </button>
+              {jobs && (
+                <div style={{ marginTop: 14, border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
+                  {jobs.length === 0 ? (
+                    <div style={{ padding: 16, fontSize: 13.5, color: C.grayMute }}>Connected, but no jobs returned.</div>
+                  ) : jobs.map((j) => (
+                    <div key={j.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderBottom: `1px solid ${C.line}` }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 13.5, color: C.gray }}>{j.title}</div>
+                        <div style={{ fontSize: 12, color: C.grayMute }}>{j.city ?? "—"} · {j.status ?? "—"}</div>
+                      </div>
+                      <code style={{ fontSize: 12, color: C.navy2, background: C.canvas, padding: "3px 8px", borderRadius: 6 }}>{j.id}</code>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
+              <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 12px", color: C.navy }}>Step 2 — Pull candidates</h3>
               <div style={{ display: "flex", gap: 12 }}>
                 <button onClick={() => runSync("full")} disabled={syncing}
                   style={{ border: "none", background: syncing ? C.navy3 : C.orange, color: "#fff", fontWeight: 700, padding: "12px 20px", borderRadius: 10, cursor: syncing ? "default" : "pointer", fontSize: 14 }}>
