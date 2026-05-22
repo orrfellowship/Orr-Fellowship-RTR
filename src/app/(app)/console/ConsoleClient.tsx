@@ -31,10 +31,35 @@ export default function ConsoleClient({
 }: {
   profile: Profile; schools: School[]; candidates: Cand[]; goals: Goal[]; ai: AI[];
 }) {
-  const [tab, setTab] = useState<"overview" | "applicants">("overview");
+  const [tab, setTab] = useState<"overview" | "applicants" | "sync">("overview");
   const [scope, setScope] = useState<string>("Org-wide");
   const superUser = isSuper(profile.role);
   const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a.resume_score])), [ai]);
+
+  // ---- JazzHR sync (super-admin only) ----
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  async function runSync(mode: "full" | "refresh") {
+    setSyncing(true); setSyncResult(null); setSyncError(null);
+    try {
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSyncError(typeof data.error === "string" ? data.error : JSON.stringify(data));
+      } else {
+        setSyncResult(`Mode: ${data.mode} · fetched ${data.fetched} · written ${data.written}`);
+      }
+    } catch (e: any) {
+      setSyncError(e?.message ?? "Request failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   // scoreboard totals for the selected scope
   const board = useMemo(() => {
@@ -66,6 +91,9 @@ export default function ConsoleClient({
             {([["overview", "Overview"], ["applicants", "Applicants"]] as const).map(([k, l]) => (
               <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${C.orange}` : "3px solid transparent" }}>{l}</button>
             ))}
+            {superUser && (
+              <button onClick={() => setTab("sync")} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === "sync" ? 700 : 600, color: tab === "sync" ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === "sync" ? `3px solid ${C.orange}` : "3px solid transparent" }}>Sync</button>
+            )}
           </div>
           <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
         </div>
@@ -131,6 +159,41 @@ export default function ConsoleClient({
                 );
               })}
               {candidates.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No applicants yet — run a sync.</div>}
+            </div>
+          </>
+        )}
+
+        {tab === "sync" && superUser && (
+          <>
+            <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>JazzHR Sync</h1>
+            <p style={{ color: C.grayMute, maxWidth: 620 }}>
+              Pull candidates from JazzHR. The API key lives server-side and is never exposed to the browser.
+              Start with a <b>full</b> pull; later, <b>refresh</b> adds new candidates and updates stages.
+            </p>
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
+              <div style={{ display: "flex", gap: 12 }}>
+                <button onClick={() => runSync("full")} disabled={syncing}
+                  style={{ border: "none", background: syncing ? C.navy3 : C.orange, color: "#fff", fontWeight: 700, padding: "12px 20px", borderRadius: 10, cursor: syncing ? "default" : "pointer", fontSize: 14 }}>
+                  {syncing ? "Syncing… (paging through JazzHR)" : "Run full sync"}
+                </button>
+                <button onClick={() => runSync("refresh")} disabled={syncing}
+                  style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, padding: "12px 20px", borderRadius: 10, cursor: syncing ? "default" : "pointer", fontSize: 14 }}>
+                  Refresh
+                </button>
+              </div>
+              {syncResult && (
+                <div style={{ marginTop: 16, background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: "#1B5E3F" }}>
+                  ✓ {syncResult}
+                </div>
+              )}
+              {syncError && (
+                <div style={{ marginTop: 16, background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: "#8A3A1E", wordBreak: "break-word" }}>
+                  Sync error: {syncError}
+                </div>
+              )}
+              <p style={{ fontSize: 12.5, color: C.grayMute, marginTop: 16, fontStyle: "italic" }}>
+                First run is a connection + data-shape test. Synced candidates won't be sorted into schools until university normalization is added — that's the next step.
+              </p>
             </div>
           </>
         )}
