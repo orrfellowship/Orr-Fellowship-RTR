@@ -2,11 +2,12 @@
 
 import { useState, useMemo, useTransition, useEffect } from "react";
 import type { Profile } from "@/lib/types";
-import { isSuper } from "@/lib/types";
+import { isSuper, isAdminPlus } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
-  reassignPointPerson, addConnection, addPhase, upsertTask, deleteTask,
-  upsertGoal, updateUser, addCandidate, bulkImportCandidates,
+  reassignPointPerson, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
+  upsertGoal, updateUser, addCandidate, bulkImportCandidates, deleteOutreach, deleteConnection,
+  deduplicateCandidates, inviteUser,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import { phaseOf, STAGE_CONFIG } from "@/lib/stages";
@@ -59,7 +60,7 @@ export default function ConsoleClient({
   profile: Profile; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
 }) {
-  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "boards" | "playbooks" | "schools" | "fellows" | "users" | "sync">("overview");
+  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "boards" | "playbooks" | "schools" | "users" | "sync">("overview");
   const [scope, setScope] = useState<string>("Org-wide");
   const [boardSchool, setBoardSchool] = useState<string>(schools[0]?.id ?? "");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schools[0]?.id ?? "");
@@ -67,8 +68,12 @@ export default function ConsoleClient({
   const [showUnrouted, setShowUnrouted] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [dedupMsg, setDedupMsg] = useState<string | null>(null);
+  const [deduping, setDeduping] = useState(false);
   const [pending, startTransition] = useTransition();
   const superUser = isSuper(profile.role);
+  const adminPlus = isAdminPlus(profile.role);
   const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a as AI])), [ai]);
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
 
@@ -147,10 +152,15 @@ export default function ConsoleClient({
   const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
 
-  const fellowCands = useMemo(() => candidates.filter((c) => phaseOf(c.stage) === "fellow"), [candidates]);
 
   // goal draft state: school_id → {sourced, contacted, applied}
   const [goalDrafts, setGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
+  const [expandedTiers, setExpandedTiers] = useState<Set<string>>(new Set());
+  const toggleTier = (tier: string) => setExpandedTiers((prev) => {
+    const next = new Set(prev);
+    next.has(tier) ? next.delete(tier) : next.add(tier);
+    return next;
+  });
   const goalDraft = (sid: string) => {
     if (goalDrafts[sid]) return goalDrafts[sid];
     const g = goals.find((g) => g.school_id === sid);
@@ -160,7 +170,8 @@ export default function ConsoleClient({
     setGoalDrafts((prev) => ({ ...prev, [sid]: { ...goalDraft(sid), [field]: val } }));
 
   const TABS: [string, string][] = [["overview", "Overview"], ["applicants", "Applicants"], ["standings", "Standings"], ["boards", "Boards"], ["playbooks", "Playbooks"]];
-  if (superUser) TABS.push(["schools", "Schools"], ["fellows", "Fellows"], ["users", "Users"], ["sync", "Sync"]);
+  if (adminPlus) TABS.push(["schools", "Schools"]);
+  if (superUser) TABS.push(["users", "Users"], ["sync", "Sync"]);
 
   return (
     <div style={{ minHeight: "100vh", background: C.canvas }}>
@@ -375,39 +386,56 @@ export default function ConsoleClient({
                   {playbookSchoolObj?.logo_url && <img src={playbookSchoolObj.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 5, marginRight: 10, verticalAlign: "middle" }} />}
                   {playbookSchoolObj?.name ?? "School"} Playbook
                 </h1>
-                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>All team leads' phases and to-dos. Admins can edit.</p>
+                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>Edit phase names, tasks, assignees, and due dates inline. Changes save on blur.</p>
               </div>
               <select value={playbookSchool} onChange={(e) => setPlaybookSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
                 {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
-            <button onClick={() => startTransition(() => { addPhase(playbookSchool, "New month", "Untitled phase", playbookPhases.length); })}
+            <button onClick={() => startTransition(() => { addPhase(playbookSchool, "Month", "New phase", playbookPhases.length); })}
               style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", marginTop: 16 }}>
               + Add phase
             </button>
             <div style={{ display: "grid", gap: 14, marginTop: 14 }}>
               {playbookPhases.map((p) => (
                 <div key={p.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22 }}>
-                  <div style={{ display: "flex", gap: 12, alignItems: "baseline", marginBottom: 12 }}>
-                    <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 12, color: C.orange, textTransform: "uppercase" }}>{p.label}</span>
-                    <h3 style={{ fontFamily: HEAD, fontSize: 19, fontWeight: 700, margin: 0, color: C.navy }}>{p.title}</h3>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}>
+                    <input defaultValue={p.label}
+                      onBlur={(e) => { if (e.target.value.trim() !== p.label) startTransition(() => { updatePhase(p.id, e.target.value.trim() || p.label, p.title); }); }}
+                      style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 11, color: C.orange, textTransform: "uppercase", border: "none", background: "transparent", width: 90, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
+                    <input defaultValue={p.title}
+                      onBlur={(e) => { if (e.target.value.trim() !== p.title) startTransition(() => { updatePhase(p.id, p.label, e.target.value.trim() || p.title); }); }}
+                      style={{ fontFamily: HEAD, fontSize: 18, fontWeight: 700, color: C.navy, border: "none", background: "transparent", flex: 1, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
+                    <button onClick={() => { if (confirm(`Delete phase "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
+                      style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6, whiteSpace: "nowrap" }}>
+                      Delete phase
+                    </button>
                   </div>
                   {p.playbook_tasks.map((t) => (
-                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 14, color: t.done ? C.grayMute : C.gray }}>
+                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${C.line}88` }}>
                       <input type="checkbox" defaultChecked={t.done}
                         onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, due_date: t.due_date, done: e.target.checked }); })}
-                        style={{ accentColor: C.orange }} />
-                      <span style={{ flex: 1, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
-                      <span style={{ fontSize: 12, color: t.assignee_id ? C.navy2 : C.orange, fontWeight: 600 }}>{nameOf(t.assignee_id)}</span>
-                      {t.due_date && <span style={{ fontSize: 12, color: C.grayMute }}>due {t.due_date.slice(5)}</span>}
-                      <button onClick={() => startTransition(() => { deleteTask(t.id); })} style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16 }}>×</button>
+                        style={{ accentColor: C.orange, flexShrink: 0 }} />
+                      <input defaultValue={t.text}
+                        onBlur={(e) => { if (e.target.value.trim() !== t.text) startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: e.target.value.trim() || t.text, assignee_id: t.assignee_id, due_date: t.due_date, done: t.done }); }); }}
+                        style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none", outline: "none", minWidth: 0 }} />
+                      <select value={t.assignee_id ?? ""}
+                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: e.target.value || null, due_date: t.due_date, done: t.done }); })}
+                        style={{ fontSize: 12, fontWeight: 600, color: t.assignee_id ? C.navy2 : C.orange, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }}>
+                        <option value="">Unassigned</option>
+                        {team.map((tm) => <option key={tm.id} value={tm.id}>{tm.id === profile.id ? `${tm.full_name} (me)` : tm.full_name}</option>)}
+                      </select>
+                      <input type="date" value={t.due_date ?? ""}
+                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, due_date: e.target.value || null, done: t.done }); })}
+                        style={{ fontSize: 12, color: C.grayMute, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }} />
+                      <button onClick={() => startTransition(() => { deleteTask(t.id); })} style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>
                     </div>
                   ))}
                   <button onClick={() => startTransition(() => { upsertTask({ phase_id: p.id, text: "New task", assignee_id: null, due_date: null, done: false }); })}
                     style={{ marginTop: 10, border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, padding: "8px 14px", borderRadius: 9, cursor: "pointer", width: "100%" }}>
                     + Add task
                   </button>
-                  {p.playbook_tasks.length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No tasks yet.</div>}
+                  {p.playbook_tasks.length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic", marginTop: 8 }}>No tasks yet.</div>}
                 </div>
               ))}
               {playbookPhases.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No playbook yet for this school — add the first phase.</div>}
@@ -416,101 +444,131 @@ export default function ConsoleClient({
         )}
 
         {/* ---- SCHOOLS ---- */}
-        {tab === "schools" && superUser && (
-          <>
-            <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 6px" }}>Schools</h1>
-            <p style={{ color: C.grayMute, margin: "0 0 20px" }}>Goals, pipeline stats, and team size per school.</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {schools.map((s) => {
-                const accent = s.color_primary ?? C.navy2;
-                const sc = candidates.filter((c) => c.school_id === s.id);
-                const teamSize = users.filter((u) => u.school_id === s.id).length;
-                const g = goals.find((g) => g.school_id === s.id);
-                const draft = goalDraft(s.id);
-                const sourced = sc.filter((c) => c.stage && ["sourced","contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
-                const contacted = sc.filter((c) => c.stage && ["contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
-                const applied = sc.filter((c) => c.stage && ["applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
-                return (
-                  <div key={s.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: "18px 22px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-                      {s.logo_url && <img src={s.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 4 }} />}
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.gray }}>{s.name}</div>
-                        <div style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{s.tier} · {teamSize} teammate{teamSize !== 1 ? "s" : ""}</div>
-                      </div>
-                      <div style={{ display: "flex", gap: 16 }}>
-                        {([["Sourced", sourced, g?.goal_sourced], ["Contacted", contacted, g?.goal_contacted], ["Applied", applied, g?.goal_applied]] as [string, number, number | undefined][]).map(([lbl, act, goal]) => {
-                          const hasGoal = (goal ?? 0) > 0;
-                          const pct = hasGoal ? Math.round((act / (goal as number)) * 100) : 0;
-                          const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
-                          return (
-                            <div key={lbl} style={{ textAlign: "center" }}>
-                              <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: hasGoal ? tone : C.navy2 }}>{act}</div>
-                              <div style={{ fontSize: 10, color: C.grayMute, fontWeight: 600 }}>{lbl}{hasGoal ? ` · ${pct}%` : ""}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goals:</span>
-                      {(["sourced", "contacted", "applied"] as const).map((field) => (
-                        <label key={field} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <span style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{field}</span>
-                          <input type="number" min={0} value={draft[field]}
-                            onChange={(e) => setGoalField(s.id, field, e.target.value)}
-                            style={{ width: 60, padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.line}`, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center" }} />
-                        </label>
-                      ))}
-                      <button onClick={() => startTransition(() => {
-                        upsertGoal(s.id, Number(draft.sourced) || 0, Number(draft.contacted) || 0, Number(draft.applied) || 0);
-                      })} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>
-                        Save goals
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
+        {tab === "schools" && adminPlus && (() => {
+          // Group schools by tier: core → individual; satellite/bonus → grouped then expandable
+          const tierGroups = ["core", "satellite", "bonus"];
+          const schoolsByTier = tierGroups.map((tier) => ({
+            tier,
+            schools: schools.filter((s) => s.tier === tier),
+          })).filter((g) => g.schools.length > 0);
 
-        {/* ---- FELLOWS ---- */}
-        {tab === "fellows" && superUser && (
-          <>
-            <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 6px" }}>Fellows</h1>
-            <p style={{ color: C.grayMute, margin: "0 0 20px" }}>{fellowCands.length} candidate{fellowCands.length !== 1 ? "s" : ""} at the Fellow stage across all schools.</p>
-            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr 1fr 0.6fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                <div>Fellow</div><div>School</div><div>Major</div><div>GPA</div><div>Email</div>
+          const renderSchoolCard = (s: typeof schools[0]) => {
+            const accent = s.color_primary ?? C.navy2;
+            const sc = candidates.filter((c) => c.school_id === s.id);
+            const teamSize = users.filter((u) => u.school_id === s.id).length;
+            const g = goals.find((g) => g.school_id === s.id);
+            const draft = goalDraft(s.id);
+            const sourced = sc.filter((c) => ["sourced","contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+            const contacted = sc.filter((c) => ["contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+            const applied = sc.filter((c) => ["applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+            return (
+              <div key={s.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: "18px 22px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                  {s.logo_url && <img src={s.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 4 }} />}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.gray }}>{s.name}</div>
+                    <div style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{s.tier} · {teamSize} teammate{teamSize !== 1 ? "s" : ""}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 16 }}>
+                    {([["Sourced", sourced, g?.goal_sourced], ["Contacted", contacted, g?.goal_contacted], ["Applied", applied, g?.goal_applied]] as [string, number, number | undefined][]).map(([lbl, act, goal]) => {
+                      const hasGoal = (goal ?? 0) > 0;
+                      const pct = hasGoal ? Math.round((act / (goal as number)) * 100) : 0;
+                      const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
+                      return (
+                        <div key={lbl} style={{ textAlign: "center" }}>
+                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: hasGoal ? tone : C.navy2 }}>{act}</div>
+                          <div style={{ fontSize: 10, color: C.grayMute, fontWeight: 600 }}>{lbl}{hasGoal ? ` · ${pct}%` : ""}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goals:</span>
+                  {(["sourced", "contacted", "applied"] as const).map((field) => (
+                    <label key={field} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      <span style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{field}</span>
+                      <input type="number" min={0} value={draft[field]}
+                        onChange={(e) => setGoalField(s.id, field, e.target.value)}
+                        style={{ width: 60, padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.line}`, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center" }} />
+                    </label>
+                  ))}
+                  <button onClick={() => startTransition(() => {
+                    upsertGoal(s.id, Number(draft.sourced) || 0, Number(draft.contacted) || 0, Number(draft.applied) || 0);
+                  })} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>
+                    Save goals
+                  </button>
+                </div>
               </div>
-              {fellowCands.map((c) => {
-                const school = schools.find((s) => s.id === c.school_id);
-                const accent = school?.color_primary ?? C.navy2;
+            );
+          };
+
+          return (
+            <>
+              <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 6px" }}>Schools & Goals</h1>
+              <p style={{ color: C.grayMute, margin: "0 0 20px" }}>Pipeline stats and goals per school. Satellite and bonus schools are grouped.</p>
+              {schoolsByTier.map(({ tier, schools: tierSchools }) => {
+                const isGrouped = tier === "satellite" || tier === "bonus";
+                const groupCands = tierSchools.flatMap((s) => candidates.filter((c) => c.school_id === s.id));
+                const groupSourced = groupCands.filter((c) => ["sourced","contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+                const groupContacted = groupCands.filter((c) => ["contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+                const groupApplied = groupCands.filter((c) => ["applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+                const groupGoals = tierSchools.reduce((acc, s) => {
+                  const g = goals.find((g) => g.school_id === s.id);
+                  return { sourced: acc.sourced + (g?.goal_sourced ?? 0), contacted: acc.contacted + (g?.goal_contacted ?? 0), applied: acc.applied + (g?.goal_applied ?? 0) };
+                }, { sourced: 0, contacted: 0, applied: 0 });
+
                 return (
-                  <div key={c.id} onClick={() => setOpenId(c.id)}
-                    style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr 1fr 0.6fr 1fr", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", borderLeft: `3px solid ${accent}` }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "#F0F4FA")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div>
-                    <div style={{ fontSize: 13, color: accent, fontWeight: 600 }}>{school?.name ?? <span style={{ color: C.grayMute, fontStyle: "italic" }}>Unrouted</span>}</div>
-                    <div style={{ fontSize: 13 }}>{c.area_of_study ?? "—"}</div>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{c.gpa ?? "—"}</div>
-                    <div style={{ fontSize: 12, color: C.grayMute }}>{c.email ?? "—"}</div>
+                  <div key={tier} style={{ marginBottom: 28 }}>
+                    <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 1, marginBottom: 10 }}>
+                      {tier === "core" ? "Core Schools" : tier === "satellite" ? "Satellite Group" : "Bonus Group"}
+                    </div>
+                    {isGrouped && (
+                      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${C.navy2}`, borderRadius: 14, padding: "14px 18px", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: C.gray }}>{tier === "satellite" ? "Satellite Schools" : "Bonus Schools"} ({tierSchools.length})</div>
+                          <div style={{ display: "flex", gap: 16, marginTop: 4 }}>
+                            {([["Sourced", groupSourced, groupGoals.sourced], ["Contacted", groupContacted, groupGoals.contacted], ["Applied", groupApplied, groupGoals.applied]] as [string, number, number][]).map(([lbl, act, goal]) => {
+                              const hasGoal = goal > 0;
+                              const pct = hasGoal ? Math.round((act / goal) * 100) : 0;
+                              const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
+                              return (
+                                <span key={lbl} style={{ fontSize: 13, color: C.grayMute }}>
+                                  {lbl}: <b style={{ color: hasGoal ? tone : C.navy2 }}>{act}</b>{hasGoal ? <span style={{ fontSize: 11, color: tone }}> ({pct}%)</span> : ""}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <button onClick={() => toggleTier(tier)}
+                          style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 13, padding: "7px 14px", borderRadius: 8, cursor: "pointer" }}>
+                          {expandedTiers.has(tier) ? "Collapse ▲" : `Expand (${tierSchools.length}) ▼`}
+                        </button>
+                      </div>
+                    )}
+                    {(!isGrouped || expandedTiers.has(tier)) && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                        {tierSchools.map((s) => renderSchoolCard(s))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
-              {fellowCands.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No fellows yet — sync candidates and advance them to the Fellow stage in JazzHR.</div>}
-            </div>
-          </>
-        )}
+            </>
+          );
+        })()}
 
         {/* ---- USERS ---- */}
         {tab === "users" && superUser && (
           <>
-            <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 6px" }}>Users</h1>
-            <p style={{ color: C.grayMute, margin: "0 0 20px" }}>{users.length} user{users.length !== 1 ? "s" : ""} in the system. Role and school changes take effect immediately.</p>
-            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
+              <div>
+                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Users</h1>
+                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{users.length} user{users.length !== 1 ? "s" : ""} · Role and school changes take effect immediately.</p>
+              </div>
+              <button onClick={() => setInviteOpen(true)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, padding: "10px 18px", borderRadius: 10, cursor: "pointer" }}>+ Invite User</button>
+            </div>
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                 <div>Name</div><div>Email</div><div>Role</div><div>School</div><div></div>
               </div>
@@ -589,6 +647,25 @@ export default function ConsoleClient({
               {rerouteResult && <div style={{ marginTop: 14, background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: "#1B5E3F" }}>✓ {rerouteResult}</div>}
             </div>
 
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
+              <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 4px", color: C.navy }}>Step 4 — Remove duplicates</h3>
+              <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 12px" }}>
+                Deduplicates candidates by email. Keeps JazzHR-sourced records and deletes extra copies.
+              </p>
+              <button
+                onClick={async () => {
+                  setDeduping(true); setDedupMsg(null);
+                  const r = await deduplicateCandidates();
+                  setDedupMsg("error" in r && r.error ? `Error: ${r.error}` : `Removed ${"removed" in r ? r.removed : 0} duplicate${("removed" in r ? r.removed : 0) !== 1 ? "s" : ""}.`);
+                  setDeduping(false);
+                }}
+                disabled={deduping}
+                style={{ border: `1px solid ${C.navy}`, background: deduping ? C.canvas : "#fff", color: C.navy, fontWeight: 700, padding: "11px 18px", borderRadius: 10, cursor: deduping ? "default" : "pointer", fontSize: 14 }}>
+                {deduping ? "Removing duplicates…" : "Remove duplicates"}
+              </button>
+              {dedupMsg && <div style={{ marginTop: 14, background: dedupMsg.startsWith("Error") ? "#FBE7DF" : "#E8F5EE", border: `1px solid ${dedupMsg.startsWith("Error") ? C.orange : C.good}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: dedupMsg.startsWith("Error") ? "#8A3A1E" : "#1B5E3F" }}>{dedupMsg}</div>}
+            </div>
+
             <div style={{ background: "#fff", border: `1px solid ${C.orange}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
               <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 4px", color: C.orange }}>Danger zone — clear all candidates</h3>
               <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 12px", lineHeight: 1.5 }}>Deletes every candidate and their notes, favorites, and AI rows. Schools, users, playbook, and goals are kept. Type <b style={{ color: C.gray }}>{CONFIRM}</b> to confirm.</p>
@@ -612,6 +689,9 @@ export default function ConsoleClient({
       )}
       {bulkOpen && (
         <BulkImportModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} startTransition={startTransition} />
+      )}
+      {inviteOpen && (
+        <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />
       )}
     </div>
   );
@@ -654,10 +734,24 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
     });
   };
 
+  const doDelConn = (id: string) => {
+    startTransition(() => {
+      deleteConnection(id);
+      setConns((prev) => (prev ?? []).filter((cn) => cn.id !== id));
+    });
+  };
+
   const doLog = (body: string) => startTransition(() => {
     logOutreach(c.id, body);
     setLog((prev) => [{ id: Math.random().toString(), body, created_at: new Date().toISOString() }, ...(prev ?? [])]);
   });
+
+  const doDelLog = (id: string) => {
+    startTransition(() => {
+      deleteOutreach(id);
+      setLog((prev) => (prev ?? []).filter((n) => n.id !== id));
+    });
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
@@ -768,7 +862,8 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
                 {conns.map((cn) => (
                   <div key={cn.id} style={{ fontSize: 13, color: C.gray, display: "flex", gap: 6, alignItems: "center" }}>
                     <span style={{ fontSize: 16 }}>●</span>
-                    <span><b>{cn.name}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span></span>
+                    <span style={{ flex: 1 }}><b>{cn.name}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span></span>
+                    <button onClick={() => doDelConn(cn.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px" }}>×</button>
                   </div>
                 ))}
               </div>
@@ -798,7 +893,12 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
             <button onClick={() => { if (draft.trim()) { doLog(draft.trim()); setDraft(""); } }} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 16px", borderRadius: 9, cursor: "pointer" }}>Log</button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(log ?? []).map((n) => <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray }}>{n.body}</div>)}
+            {(log ?? []).map((n) => (
+              <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <span style={{ flex: 1 }}>{n.body}</span>
+                <button onClick={() => doDelLog(n.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
+              </div>
+            ))}
             {(log ?? []).length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No outreach logged yet.</div>}
           </div>
         </div>
@@ -963,6 +1063,70 @@ function BulkImportModal({ schools, existingEmails, onClose, startTransition }: 
             style={{ border: "none", background: parsed && parsed.items.length > 0 ? C.navy : C.navy3, color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: parsed && parsed.items.length > 0 ? "pointer" : "not-allowed" }}>
             Import {parsed ? parsed.items.length : 0} rows
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Invite User Modal ----
+const INVITE_EMPTY = { email: "", full_name: "", role: "fellow", school_id: "" };
+function InviteUserModal({ schools, onClose, startTransition }: {
+  schools: School[];
+  onClose: () => void; startTransition: (cb: () => void) => void;
+}) {
+  const [form, setForm] = useState(INVITE_EMPTY);
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+  const set = (k: keyof typeof INVITE_EMPTY, v: string) => setForm((p) => ({ ...p, [k]: v }));
+
+  const submit = () => {
+    if (!form.email.trim() || !form.full_name.trim()) { setError("Email and name are required."); return; }
+    setError(null);
+    startTransition(() => {
+      inviteUser(form.email.trim(), form.full_name.trim(), form.role, form.school_id || null).then((r) => {
+        if ("error" in r && r.error) setError(r.error);
+        else { setSent(true); setTimeout(onClose, 1500); }
+      });
+    });
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.45)" }} />
+      <div style={{ position: "relative", background: "#fff", borderRadius: 16, padding: 28, width: 440, maxWidth: "95vw" }}>
+        <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 20px" }}>Invite User</h2>
+        <p style={{ fontSize: 13, color: C.grayMute, margin: "-12px 0 20px" }}>An invite email will be sent. They set their own password on first login.</p>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Full name *</label>
+          <input value={form.full_name} onChange={(e) => set("full_name", e.target.value)} placeholder="Jane Smith"
+            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" }} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Email *</label>
+          <input value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="jane@example.com" type="email"
+            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" }} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Role</label>
+          <select value={form.role} onChange={(e) => set("role", e.target.value)}
+            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
+            {(["super_admin", "admin", "team_lead", "fellow"] as const).map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>School</label>
+          <select value={form.school_id} onChange={(e) => set("school_id", e.target.value)}
+            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
+            <option value="">— No school —</option>
+            {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E", marginBottom: 14 }}>{error}</div>}
+        {sent && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>✓ Invite sent!</div>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>Cancel</button>
+          <button onClick={submit} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: "pointer" }}>Send invite</button>
         </div>
       </div>
     </div>

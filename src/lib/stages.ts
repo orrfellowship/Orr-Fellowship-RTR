@@ -59,10 +59,16 @@ export const isActive = (key: string | null): boolean => {
 
 // "Most advanced stage wins" across a candidate's jobs. Highest order wins;
 // ties broken deterministically by the stage key (stable, not random).
+// Falls back to the raw lowercased value when no STAGE_CONFIG key matches,
+// so unknown JazzHR stages are shown in the UI rather than disappearing.
 export function mostAdvancedStage(progressValues: string[]): string | null {
   let best: StageDef | null = null;
+  let firstRaw: string | null = null;
   for (const raw of progressValues) {
-    const d = stageDef(raw);
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    if (!firstRaw) firstRaw = trimmed.toLowerCase();
+    const d = stageDef(trimmed);
     if (!d) continue;
     if (
       best === null ||
@@ -72,7 +78,7 @@ export function mostAdvancedStage(progressValues: string[]): string | null {
       best = d;
     }
   }
-  return best?.key ?? null;
+  return best?.key ?? firstRaw;
 }
 
 // ----------------------------------------------------------------------------

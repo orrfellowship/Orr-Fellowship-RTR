@@ -6,7 +6,9 @@ import { canReassign, canEditPlaybook } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, reassignPointPerson,
   getOutreach, addConnection, getConnections, upsertTask, deleteTask, addPhase,
+  deleteOutreach, deleteConnection, updatePhase, deletePhase,
 } from "./actions";
+import { phaseOf } from "@/lib/stages";
 import StandingsClient from "@/components/StandingsClient";
 
 const C = {
@@ -55,6 +57,22 @@ export default function WorkspaceClient({
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
   const open = candidates.find((c) => c.id === openId) ?? null;
 
+  const PHASE_ORDER_PIPELINE = ["sourced", "contacted", "applied", "advanced", "finalist", "fellow"] as const;
+  const PHASE_LABEL: Record<string, string> = { sourced: "Sourced", contacted: "Contacted", applied: "Applied", advanced: "Advanced", finalist: "Finalist", fellow: "Fellow" };
+  const PHASE_TONE: Record<string, string> = { sourced: C.navy3, contacted: C.blue, applied: C.navy2, advanced: C.orange, finalist: C.gold, fellow: C.good };
+
+  const phaseCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    candidates.forEach((c) => {
+      if (c.not_interested) return;
+      const ph = phaseOf(c.stage);
+      if (ph && ph !== "rejected" && ph !== "moved") counts[ph] = (counts[ph] ?? 0) + 1;
+    });
+    return counts;
+  }, [candidates]);
+
+  const totalActive = PHASE_ORDER_PIPELINE.reduce((s, ph) => s + (phaseCounts[ph] ?? 0), 0);
+
   const plan = useMemo(() => {
     const out: { id: string; type: string; cand: Cand; why: string }[] = [];
     candidates.forEach((c) => {
@@ -94,8 +112,36 @@ export default function WorkspaceClient({
         {tab === "plan" && (
           <>
             <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>This Week</h1>
-            <p style={{ color: C.grayMute }}>{plan.length} moves queued at your school.</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 11, marginTop: 16 }}>
+            <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{plan.length} move{plan.length !== 1 ? "s" : ""} queued · {totalActive} active candidates</p>
+
+            {/* Pipeline snapshot */}
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 20px", marginTop: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 12 }}>Pipeline Snapshot</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {PHASE_ORDER_PIPELINE.map((ph) => {
+                  const n = phaseCounts[ph] ?? 0;
+                  const tone = PHASE_TONE[ph];
+                  return (
+                    <div key={ph} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 68, padding: "10px 14px", borderRadius: 10, background: `${tone}14`, border: `1px solid ${tone}44` }}>
+                      <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, color: tone, lineHeight: 1 }}>{n}</span>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: tone, textTransform: "uppercase", letterSpacing: 0.5 }}>{PHASE_LABEL[ph]}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {totalActive > 0 && (
+                <div style={{ marginTop: 14, height: 8, borderRadius: 99, background: C.line, overflow: "hidden", display: "flex", gap: 1 }}>
+                  {PHASE_ORDER_PIPELINE.map((ph) => {
+                    const n = phaseCounts[ph] ?? 0;
+                    if (!n) return null;
+                    return <div key={ph} style={{ flex: n, background: PHASE_TONE[ph], borderRadius: 99 }} />;
+                  })}
+                </div>
+              )}
+            </div>
+
+            <h2 style={{ fontSize: 18, color: C.navy, margin: "24px 0 10px", fontFamily: HEAD }}>Action Queue</h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
               {plan.map((a) => (
                 <div key={a.id} onClick={() => setOpenId(a.cand.id)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 12, padding: "15px 18px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }}>
                   <span style={{ width: 96, fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: accent }}>{a.type}</span>
@@ -142,7 +188,7 @@ export default function WorkspaceClient({
         )}
 
         {tab === "playbook" && (
-          <PlaybookTab phases={phases} profile={profile} canEdit={canEdit} nameOf={nameOf} startTransition={startTransition} />
+          <PlaybookTab phases={phases} profile={profile} canEdit={canEdit} team={team} nameOf={nameOf} startTransition={startTransition} />
         )}
 
         {tab === "standings" && (
@@ -208,34 +254,70 @@ export default function WorkspaceClient({
 }
 
 // ---------------- PLAYBOOK TAB (read for fellows, edit for leads) ----------------
-function PlaybookTab({ phases, profile, canEdit, nameOf, startTransition }: {
-  phases: Phase[]; profile: Profile; canEdit: boolean;
+function PlaybookTab({ phases, profile, canEdit, team, nameOf, startTransition }: {
+  phases: Phase[]; profile: Profile; canEdit: boolean; team: TeamMember[];
   nameOf: (id: string | null) => string; startTransition: (cb: () => void) => void;
 }) {
   return (
     <>
       <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Playbook</h1>
-      <p style={{ color: C.grayMute }}>{canEdit ? "You can edit this plan. Assign tasks to teammates with a due date — they'll surface in This Week." : "Your team lead's plan for the cycle."}</p>
+      <p style={{ color: C.grayMute }}>{canEdit ? "Edit phase names, tasks, assignees, and due dates inline. Changes save on blur." : "Your team lead's plan for the cycle."}</p>
       {canEdit && (
-        <button onClick={() => startTransition(() => { addPhase(profile.school_id ?? "", "New month", "Untitled phase", phases.length); })}
+        <button onClick={() => startTransition(() => { addPhase(profile.school_id ?? "", "Month", "New phase", phases.length); })}
           style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", marginTop: 8 }}>+ Add phase</button>
       )}
       <div style={{ display: "grid", gap: 14, marginTop: 16 }}>
         {phases.map((p) => (
           <div key={p.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22 }}>
-            <div style={{ display: "flex", gap: 12, alignItems: "baseline", marginBottom: 12 }}>
-              <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 12, color: C.orange, textTransform: "uppercase" }}>{p.label}</span>
-              <h3 style={{ fontFamily: HEAD, fontSize: 19, fontWeight: 700, margin: 0, color: C.navy }}>{p.title}</h3>
-            </div>
+            {canEdit ? (
+              <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}>
+                <input defaultValue={p.label}
+                  onBlur={(e) => { if (e.target.value.trim() !== p.label) startTransition(() => { updatePhase(p.id, e.target.value.trim() || p.label, p.title); }); }}
+                  style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 11, color: C.orange, textTransform: "uppercase", border: "none", background: "transparent", width: 90, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
+                <input defaultValue={p.title}
+                  onBlur={(e) => { if (e.target.value.trim() !== p.title) startTransition(() => { updatePhase(p.id, p.label, e.target.value.trim() || p.title); }); }}
+                  style={{ fontFamily: HEAD, fontSize: 18, fontWeight: 700, color: C.navy, border: "none", background: "transparent", flex: 1, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
+                <button onClick={() => { if (confirm(`Delete phase "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
+                  style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6, whiteSpace: "nowrap" }}>
+                  Delete phase
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 12, alignItems: "baseline", marginBottom: 12 }}>
+                <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 12, color: C.orange, textTransform: "uppercase" }}>{p.label}</span>
+                <h3 style={{ fontFamily: HEAD, fontSize: 19, fontWeight: 700, margin: 0, color: C.navy }}>{p.title}</h3>
+              </div>
+            )}
             {p.playbook_tasks.map((t) => (
-              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 14, color: t.done ? C.grayMute : C.gray }}>
+              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${C.line}88`, fontSize: 14, color: t.done ? C.grayMute : C.gray }}>
                 <input type="checkbox" defaultChecked={t.done} disabled={!canEdit}
                   onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, due_date: t.due_date, done: e.target.checked }); })}
-                  style={{ accentColor: C.orange }} />
-                <span style={{ flex: 1, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
-                <span style={{ fontSize: 12, color: t.assignee_id ? C.navy2 : C.orange, fontWeight: 600 }}>{nameOf(t.assignee_id)}</span>
-                {t.due_date && <span style={{ fontSize: 12, color: C.grayMute }}>due {t.due_date.slice(5)}</span>}
-                {canEdit && <button onClick={() => startTransition(() => { deleteTask(t.id); })} style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16 }}>×</button>}
+                  style={{ accentColor: C.orange, flexShrink: 0 }} />
+                {canEdit ? (
+                  <input defaultValue={t.text}
+                    onBlur={(e) => { if (e.target.value.trim() !== t.text) startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: e.target.value.trim() || t.text, assignee_id: t.assignee_id, due_date: t.due_date, done: t.done }); }); }}
+                    style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none", outline: "none", minWidth: 0 }} />
+                ) : (
+                  <span style={{ flex: 1, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
+                )}
+                {canEdit ? (
+                  <select value={t.assignee_id ?? ""}
+                    onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: e.target.value || null, due_date: t.due_date, done: t.done }); })}
+                    style={{ fontSize: 12, fontWeight: 600, color: t.assignee_id ? C.navy2 : C.orange, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }}>
+                    <option value="">Unassigned</option>
+                    {team.map((tm) => <option key={tm.id} value={tm.id}>{tm.id === profile.id ? `${tm.full_name} (me)` : tm.full_name}</option>)}
+                  </select>
+                ) : (
+                  <span style={{ fontSize: 12, color: t.assignee_id ? C.navy2 : C.orange, fontWeight: 600 }}>{nameOf(t.assignee_id)}</span>
+                )}
+                {canEdit ? (
+                  <input type="date" value={t.due_date ?? ""}
+                    onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, due_date: e.target.value || null, done: t.done }); })}
+                    style={{ fontSize: 12, color: C.grayMute, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }} />
+                ) : (
+                  t.due_date && <span style={{ fontSize: 12, color: C.grayMute }}>due {t.due_date.slice(5)}</span>
+                )}
+                {canEdit && <button onClick={() => startTransition(() => { deleteTask(t.id); })} style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>}
               </div>
             ))}
             {canEdit && (
@@ -284,10 +366,24 @@ function CandidateDrawer({ c, onClose, startTransition }: {
     });
   };
 
+  const doDelConn = (id: string) => {
+    startTransition(() => {
+      deleteConnection(id);
+      setConns((prev) => (prev ?? []).filter((cn) => cn.id !== id));
+    });
+  };
+
   const doLog = (body: string) => startTransition(() => {
     logOutreach(c.id, body);
     setLog((prev) => [{ id: Math.random().toString(), body, created_at: new Date().toISOString() }, ...(prev ?? [])]);
   });
+
+  const doDelLog = (id: string) => {
+    startTransition(() => {
+      deleteOutreach(id);
+      setLog((prev) => (prev ?? []).filter((n) => n.id !== id));
+    });
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
@@ -329,7 +425,8 @@ function CandidateDrawer({ c, onClose, startTransition }: {
                 {conns.map((cn) => (
                   <div key={cn.id} style={{ fontSize: 13, color: C.gray, display: "flex", gap: 6, alignItems: "center" }}>
                     <span style={{ fontSize: 16 }}>●</span>
-                    <span><b>{cn.name}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span></span>
+                    <span style={{ flex: 1 }}><b>{cn.name}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span></span>
+                    <button onClick={() => doDelConn(cn.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px" }}>×</button>
                   </div>
                 ))}
               </div>
@@ -358,7 +455,12 @@ function CandidateDrawer({ c, onClose, startTransition }: {
             <button onClick={() => { if (draft.trim()) { doLog(draft.trim()); setDraft(""); } }} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 16px", borderRadius: 9, cursor: "pointer" }}>Log</button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(log ?? []).map((n) => <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray }}>{n.body}</div>)}
+            {(log ?? []).map((n) => (
+              <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <span style={{ flex: 1 }}>{n.body}</span>
+                <button onClick={() => doDelLog(n.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
+              </div>
+            ))}
             {(log ?? []).length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No outreach logged yet.</div>}
           </div>
         </div>

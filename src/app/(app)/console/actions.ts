@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { isSuper, isAdminPlus } from "@/lib/types";
 
@@ -112,7 +112,7 @@ export async function bulkImportCandidates(
 
 export async function upsertGoal(school_id: string, goal_sourced: number, goal_contacted: number, goal_applied: number) {
   const profile = await getCurrentProfile();
-  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const supabase = createServerSupabase();
   const { error } = await supabase
     .from("school_goals")
@@ -158,4 +158,93 @@ export async function getConnections(candidateId: string) {
       relationship: c.relationship as string,
     })),
   };
+}
+
+export async function deleteOutreach(logId: string) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("outreach_log").delete().eq("id", logId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function deleteConnection(connectionId: string) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("connections").delete().eq("id", connectionId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function updatePhase(phaseId: string, label: string, title: string) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("playbook_phases").update({ label, title }).eq("id", phaseId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function deletePhase(phaseId: string) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("playbook_phases").delete().eq("id", phaseId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function deduplicateCandidates() {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const serviceDb = createServiceClient();
+  const { data: allCands, error } = await serviceDb
+    .from("candidates")
+    .select("id, email, jazz_id")
+    .not("email", "is", null);
+  if (error) return { error: error.message };
+
+  const emailGroups = new Map<string, { id: string; jazz_id: string | null }[]>();
+  for (const c of allCands ?? []) {
+    if (!c.email) continue;
+    const key = (c.email as string).toLowerCase();
+    if (!emailGroups.has(key)) emailGroups.set(key, []);
+    emailGroups.get(key)!.push({ id: c.id, jazz_id: c.jazz_id });
+  }
+
+  const toDelete: string[] = [];
+  for (const [, group] of emailGroups) {
+    if (group.length <= 1) continue;
+    // Prefer records with a jazz_id (JazzHR-sourced); keep the first of those, delete rest
+    const sorted = [...group].sort((a, b) => {
+      if (a.jazz_id && !b.jazz_id) return -1;
+      if (!a.jazz_id && b.jazz_id) return 1;
+      return 0;
+    });
+    for (let i = 1; i < sorted.length; i++) toDelete.push(sorted[i].id);
+  }
+
+  if (toDelete.length > 0) {
+    const { error: delErr } = await serviceDb.from("candidates").delete().in("id", toDelete);
+    if (delErr) return { error: delErr.message };
+  }
+
+  revalidatePath("/console");
+  return { ok: true, removed: toDelete.length };
+}
+
+export async function inviteUser(email: string, full_name: string, role: string, school_id: string | null) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const serviceDb = createServiceClient();
+  const { data, error } = await serviceDb.auth.admin.inviteUserByEmail(email, {
+    data: { full_name, role, school_id },
+  });
+  if (error) return { error: error.message };
+  if (data?.user) {
+    await serviceDb.from("profiles").upsert(
+      { id: data.user.id, full_name, role, school_id },
+      { onConflict: "id" }
+    );
+  }
+  revalidatePath("/console");
+  return { ok: true };
 }

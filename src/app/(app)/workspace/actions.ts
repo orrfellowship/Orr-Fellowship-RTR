@@ -127,3 +127,35 @@ export async function deleteTask(taskId: string) {
   revalidatePath("/workspace");
   return { ok: true };
 }
+
+export async function deleteOutreach(logId: string) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("outreach_log").delete().eq("id", logId);
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function deleteConnection(connectionId: string) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("connections").delete().eq("id", connectionId);
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function updatePhase(phaseId: string, label: string, title: string) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("playbook_phases").update({ label, title }).eq("id", phaseId);
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function deletePhase(phaseId: string) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("playbook_phases").delete().eq("id", phaseId);
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
