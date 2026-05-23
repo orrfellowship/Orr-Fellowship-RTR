@@ -7,6 +7,7 @@ import {
   toggleFavorite, setNotInterested, logOutreach, reassignPointPerson,
   getOutreach, addConnection, upsertTask, deleteTask, addPhase,
 } from "./actions";
+import StandingsClient from "@/components/StandingsClient";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -21,10 +22,13 @@ type Cand = {
   resume_link: string | null; point_person_id: string | null;
   not_interested: boolean; is_favorite: boolean;
 };
-type School = { id: string; name: string; color_primary: string | null; logo_url: string | null };
-type TeamMember = { id: string; full_name: string };
-type Task = { id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean };
-type Phase = { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] };
+type School      = { id: string; name: string; color_primary: string | null; logo_url: string | null };
+type AllSchool   = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
+type AllCand     = { id: string; school_id: string | null; stage: string | null };
+type AllGoal     = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
+type TeamMember  = { id: string; full_name: string };
+type Task        = { id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean };
+type Phase       = { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] };
 
 const PHASE_OF: Record<string, string> = { new: "Sourced", contacted: "Contacted", applied: "Applied", bmi: "Advanced", finalist: "Finalist", fellow: "Fellow" };
 const phaseTone: Record<string, string> = { Sourced: C.navy3, Contacted: C.blue, Applied: C.navy2, Advanced: C.orange, Finalist: C.gold, Fellow: C.good };
@@ -35,9 +39,12 @@ function StagePill({ stage }: { stage: string | null }) {
 }
 
 export default function WorkspaceClient({
-  profile, school, candidates, team, phases,
-}: { profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[] }) {
-  const [tab, setTab] = useState<"plan" | "board" | "playbook">("plan");
+  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals,
+}: {
+  profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
+  allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[];
+}) {
+  const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings">("plan");
   const [openId, setOpenId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const canEdit = canEditPlaybook(profile.role);
@@ -74,7 +81,7 @@ export default function WorkspaceClient({
                 <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{profile.role === "team_lead" ? "Team Lead" : "Fellow"} Workspace</div>
               </div>
             </div>
-            {([["plan", `This Week (${plan.length})`], ["board", "My School"], ["playbook", "Playbook"]] as const).map(([k, l]) => (
+            {([["plan", `This Week (${plan.length})`], ["board", "My School"], ["playbook", "Playbook"], ["standings", "Standings"]] as const).map(([k, l]) => (
               <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent" }}>{l}</button>
             ))}
           </div>
@@ -135,6 +142,10 @@ export default function WorkspaceClient({
 
         {tab === "playbook" && (
           <PlaybookTab phases={phases} profile={profile} canEdit={canEdit} nameOf={nameOf} startTransition={startTransition} />
+        )}
+
+        {tab === "standings" && (
+          <StandingsClient schools={allSchools} candidates={allCandidates} goals={allGoals} mySchoolId={school?.id ?? null} />
         )}
       </div>
 

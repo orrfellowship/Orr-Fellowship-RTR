@@ -7,6 +7,7 @@ import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach,
   reassignPointPerson, addConnection, addPhase, upsertTask, deleteTask,
 } from "./actions";
+import StandingsClient from "@/components/StandingsClient";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -53,7 +54,7 @@ export default function ConsoleClient({
   profile: Profile; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[];
 }) {
-  const [tab, setTab] = useState<"overview" | "applicants" | "boards" | "playbooks" | "sync">("overview");
+  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "boards" | "playbooks" | "sync">("overview");
   const [scope, setScope] = useState<string>("Org-wide");
   const [boardSchool, setBoardSchool] = useState<string>(schools[0]?.id ?? "");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schools[0]?.id ?? "");
@@ -139,7 +140,7 @@ export default function ConsoleClient({
   const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
 
-  const TABS: [string, string][] = [["overview", "Overview"], ["applicants", "Applicants"], ["boards", "Boards"], ["playbooks", "Playbooks"]];
+  const TABS: [string, string][] = [["overview", "Overview"], ["applicants", "Applicants"], ["standings", "Standings"], ["boards", "Boards"], ["playbooks", "Playbooks"]];
   if (superUser) TABS.push(["sync", "Sync"]);
 
   return (
@@ -289,6 +290,16 @@ export default function ConsoleClient({
             </div>
           </>
         );})()}
+
+        {/* ---- STANDINGS ---- */}
+        {tab === "standings" && (
+          <StandingsClient
+            schools={schools}
+            candidates={candidates.map((c) => ({ id: c.id, school_id: c.school_id, stage: c.stage }))}
+            goals={goals}
+            mySchoolId={null}
+          />
+        )}
 
         {/* ---- BOARDS ---- */}
         {tab === "boards" && (

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentProfile } from "@/lib/auth";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import WorkspaceClient from "./WorkspaceClient";
 
 // Loads everything the fellow/lead workspace needs, server-side, then hands
@@ -41,6 +41,14 @@ export default async function WorkspacePage() {
     .eq("school_id", schoolId)
     .order("sort_order");
 
+  // Cross-school data for Standings — bypasses RLS so fellows/leads can see org-wide pipeline
+  const serviceDb = createServiceClient();
+  const [{ data: allSchools }, { data: allCandidates }, { data: allGoals }] = await Promise.all([
+    serviceDb.from("schools").select("id, name, tier, color_primary, logo_url").order("name"),
+    serviceDb.from("candidates").select("id, school_id, stage"),
+    serviceDb.from("school_goals").select("school_id, goal_sourced, goal_contacted, goal_applied"),
+  ]);
+
   const favSet = new Set((favs ?? []).map((f) => f.candidate_id));
   const enriched = (candidates ?? []).map((c) => ({ ...c, is_favorite: favSet.has(c.id) }));
 
@@ -51,6 +59,9 @@ export default async function WorkspacePage() {
       candidates={enriched}
       team={team ?? []}
       phases={phases ?? []}
+      allSchools={allSchools ?? []}
+      allCandidates={allCandidates ?? []}
+      allGoals={allGoals ?? []}
     />
   );
 }
