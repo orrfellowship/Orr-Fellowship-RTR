@@ -127,13 +127,13 @@ export default function WorkspaceClient({
         )}
 
         {tab === "playbook" && (
-          <PlaybookTab phases={phases} team={team} profile={profile} canEdit={canEdit} nameOf={nameOf} startTransition={startTransition} />
+          <PlaybookTab phases={phases} profile={profile} canEdit={canEdit} nameOf={nameOf} startTransition={startTransition} />
         )}
       </div>
 
       {open && (
         <CandidateDrawer
-          c={open} profile={profile} team={team} canEdit={true}
+          c={open} canEdit={true}
           onClose={() => setOpenId(null)} startTransition={startTransition}
         />
       )}
@@ -142,8 +142,8 @@ export default function WorkspaceClient({
 }
 
 // ---------------- PLAYBOOK TAB (read for fellows, edit for leads) ----------------
-function PlaybookTab({ phases, team, profile, canEdit, nameOf, startTransition }: {
-  phases: Phase[]; team: TeamMember[]; profile: Profile; canEdit: boolean;
+function PlaybookTab({ phases, profile, canEdit, nameOf, startTransition }: {
+  phases: Phase[]; profile: Profile; canEdit: boolean;
   nameOf: (id: string | null) => string; startTransition: (cb: () => void) => void;
 }) {
   return (
@@ -186,8 +186,8 @@ function PlaybookTab({ phases, team, profile, canEdit, nameOf, startTransition }
 }
 
 // ---------------- CANDIDATE DRAWER (outreach log + quick-log + warm intro) ----------------
-function CandidateDrawer({ c, profile, team, onClose, startTransition }: {
-  c: Cand; profile: Profile; team: TeamMember[]; canEdit: boolean;
+function CandidateDrawer({ c, onClose, startTransition }: {
+  c: Cand; canEdit: boolean;
   onClose: () => void; startTransition: (cb: () => void) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -230,8 +230,12 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition }: {
             </div>
           ))}
           <div style={{ display: "flex", gap: 8, margin: "16px 0 20px" }}>
-            <a href={c.linkedin ?? "#"} style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13 }}>LinkedIn ↗</a>
-            <a href={c.resume_link ?? "#"} style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13 }}>Résumé ↗</a>
+            <a href={c.linkedin ?? "#"} target="_blank" rel="noopener noreferrer"
+              style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>LinkedIn ↗</a>
+            <button
+              onClick={() => { if (c.resume_link) window.open(`/api/resume?url=${encodeURIComponent(c.resume_link)}`, "_blank"); }}
+              disabled={!c.resume_link}
+              style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.resume_link ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.resume_link ? "pointer" : "not-allowed" }}>Résumé ↗</button>
           </div>
 
           {/* warm-intro: shared club / same-major teammates */}

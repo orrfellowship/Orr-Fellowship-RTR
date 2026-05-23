@@ -145,7 +145,6 @@ export default function ConsoleClient({
   }, [scope, candidates, goals, schools]);
 
   const open = candidates.find((c) => c.id === openId) ?? null;
-  const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
 
   return (
     <div style={{ minHeight: "100vh", background: C.canvas }}>
@@ -429,8 +428,12 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition }: {
           )}
 
           <div style={{ display: "flex", gap: 8, margin: "16px 0 20px" }}>
-            <a href={c.linkedin ?? "#"} style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13 }}>LinkedIn ↗</a>
-            <a href={c.resume_link ?? "#"} style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13 }}>Résumé ↗</a>
+            <a href={c.linkedin ?? "#"} target="_blank" rel="noopener noreferrer"
+              style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>LinkedIn ↗</a>
+            <button
+              onClick={() => { if (c.resume_link) window.open(`/api/resume?url=${encodeURIComponent(c.resume_link)}`, "_blank"); }}
+              disabled={!c.resume_link}
+              style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.resume_link ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.resume_link ? "pointer" : "not-allowed" }}>Résumé ↗</button>
           </div>
 
           <div style={{ background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 9, padding: 13, fontSize: 12.5, color: C.grayMute, marginBottom: 20 }}>
