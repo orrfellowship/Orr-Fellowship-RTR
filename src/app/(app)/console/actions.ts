@@ -141,3 +141,21 @@ export async function addConnection(candidateId: string, relationship: string) {
   revalidatePath("/console");
   return { ok: true };
 }
+
+export async function getConnections(candidateId: string) {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("connections")
+    .select("id, fellow_id, relationship, profiles(full_name)")
+    .eq("candidate_id", candidateId);
+  if (error) return { error: error.message, connections: [] as any[] };
+  return {
+    ok: true,
+    connections: (data ?? []).map((c: any) => ({
+      id: c.id as string,
+      fellow_id: c.fellow_id as string,
+      name: (c.profiles as any)?.full_name ?? "Team member",
+      relationship: c.relationship as string,
+    })),
+  };
+}

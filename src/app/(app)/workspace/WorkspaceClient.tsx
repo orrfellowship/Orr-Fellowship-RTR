@@ -5,7 +5,7 @@ import type { Profile } from "@/lib/types";
 import { canReassign, canEditPlaybook } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, reassignPointPerson,
-  getOutreach, addConnection, upsertTask, deleteTask, addPhase,
+  getOutreach, addConnection, getConnections, upsertTask, deleteTask, addPhase,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 
@@ -251,6 +251,9 @@ function PlaybookTab({ phases, profile, canEdit, nameOf, startTransition }: {
   );
 }
 
+type Connection = { id: string; fellow_id: string; name: string; relationship: string };
+const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
+
 // ---------------- CANDIDATE DRAWER (outreach log + quick-log + warm intro) ----------------
 function CandidateDrawer({ c, onClose, startTransition }: {
   c: Cand; canEdit: boolean;
@@ -258,16 +261,28 @@ function CandidateDrawer({ c, onClose, startTransition }: {
 }) {
   const [draft, setDraft] = useState("");
   const [log, setLog] = useState<{ id: string; body: string; created_at: string }[] | null>(null);
+  const [conns, setConns] = useState<Connection[] | null>(null);
+  const [relDraft, setRelDraft] = useState("");
   const QUICK = ["Called — left voicemail", "Emailed", "Met in person", "Scheduled follow-up"];
 
-  // lazy-load outreach when drawer opens (proper effect, not a render side-effect)
   useEffect(() => {
     let active = true;
-    getOutreach(c.id).then((r) => {
-      if (active) setLog((("log" in r ? r.log : []) as any) ?? []);
+    Promise.all([getOutreach(c.id), getConnections(c.id)]).then(([outreach, connections]) => {
+      if (!active) return;
+      setLog((("log" in outreach ? outreach.log : []) as any) ?? []);
+      setConns(("connections" in connections ? connections.connections : []) as Connection[]);
     });
     return () => { active = false; };
   }, [c.id]);
+
+  const doAddConn = (rel: string) => {
+    if (!rel.trim()) return;
+    startTransition(() => {
+      addConnection(c.id, rel.trim());
+      setConns((prev) => [{ id: Math.random().toString(), fellow_id: "", name: "You", relationship: rel.trim() }, ...(prev ?? [])]);
+      setRelDraft("");
+    });
+  };
 
   const doLog = (body: string) => startTransition(() => {
     logOutreach(c.id, body);
@@ -304,11 +319,33 @@ function CandidateDrawer({ c, onClose, startTransition }: {
               style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>Résumé ↗</button>
           </div>
 
-          {/* warm-intro: shared club / same-major teammates */}
-          <div style={{ fontFamily: HEAD, fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 10 }}>Warm intro finder</div>
-          <div style={{ background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 9, padding: 13, fontSize: 12.5, color: C.grayMute, marginBottom: 20 }}>
-            Connections appear here from logged outreach and the team's connection list. Know this person?{" "}
-            <button onClick={() => startTransition(() => { addConnection(c.id, "knows personally"); })} style={{ border: "none", background: "none", color: C.orange, fontWeight: 700, cursor: "pointer", padding: 0 }}>Add a connection</button>.
+          {/* warm-intro finder */}
+          <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px", marginBottom: 20 }}>
+            <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 10, letterSpacing: 0.8 }}>Warm Intros</div>
+            {conns === null ? (
+              <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>Loading…</div>
+            ) : conns.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                {conns.map((cn) => (
+                  <div key={cn.id} style={{ fontSize: 13, color: C.gray, display: "flex", gap: 6, alignItems: "center" }}>
+                    <span style={{ fontSize: 16 }}>●</span>
+                    <span><b>{cn.name}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span></span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic", marginBottom: 10 }}>No connections logged yet.</div>
+            )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+              {REL_QUICK.map((r) => (
+                <button key={r} onClick={() => doAddConn(r)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 11.5, padding: "4px 10px", borderRadius: 999, cursor: "pointer" }}>+ {r}</button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 7 }}>
+              <input value={relDraft} onChange={(e) => setRelDraft(e.target.value)} placeholder="Custom relationship…"
+                style={{ flex: 1, padding: "8px 11px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 13 }} />
+              <button onClick={() => doAddConn(relDraft)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 13px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>Add</button>
+            </div>
           </div>
 
           {/* quick-log */}
