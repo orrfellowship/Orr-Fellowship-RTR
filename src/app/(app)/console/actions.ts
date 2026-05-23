@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
-import { isSuper } from "@/lib/types";
+import { isSuper, isAdminPlus } from "@/lib/types";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -81,6 +81,33 @@ export async function deleteTask(taskId: string) {
   if (error) return { error: error.message };
   revalidatePath("/console");
   return { ok: true };
+}
+
+export async function addCandidate(data: {
+  name: string; email: string | null; school_id: string | null;
+  stage: string | null; gpa: string | null; area_of_study: string | null;
+}) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("candidates").insert({ ...data, source: "user_created", not_interested: false });
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function bulkImportCandidates(
+  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null }[]
+) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("candidates").insert(
+    rows.map((r) => ({ ...r, source: "user_created", not_interested: false }))
+  );
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true, count: rows.length };
 }
 
 export async function upsertGoal(school_id: string, goal_sourced: number, goal_contacted: number, goal_applied: number) {

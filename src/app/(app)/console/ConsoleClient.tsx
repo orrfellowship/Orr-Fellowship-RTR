@@ -6,10 +6,10 @@ import { isSuper } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach,
   reassignPointPerson, addConnection, addPhase, upsertTask, deleteTask,
-  upsertGoal, updateUser,
+  upsertGoal, updateUser, addCandidate, bulkImportCandidates,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
-import { phaseOf } from "@/lib/stages";
+import { phaseOf, STAGE_CONFIG } from "@/lib/stages";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -65,6 +65,8 @@ export default function ConsoleClient({
   const [playbookSchool, setPlaybookSchool] = useState<string>(schools[0]?.id ?? "");
   const [openId, setOpenId] = useState<string | null>(null);
   const [showUnrouted, setShowUnrouted] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const superUser = isSuper(profile.role);
   const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a as AI])), [ai]);
@@ -268,6 +270,8 @@ export default function ConsoleClient({
                   <option>Org-wide</option>
                   {schools.map((s) => <option key={s.id}>{s.name}</option>)}
                 </select>
+                <button onClick={() => setAddOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add</button>
+                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
               </div>
             </div>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
@@ -603,6 +607,12 @@ export default function ConsoleClient({
       {open && (
         <CandidateDrawer c={open} profile={profile} team={team} onClose={() => setOpenId(null)} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
       )}
+      {addOpen && (
+        <AddCandidateModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} onClose={() => setAddOpen(false)} startTransition={startTransition} />
+      )}
+      {bulkOpen && (
+        <BulkImportModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} startTransition={startTransition} />
+      )}
     </div>
   );
 }
@@ -746,6 +756,168 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
             {(log ?? []).map((n) => <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray }}>{n.body}</div>)}
             {(log ?? []).length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No outreach logged yet.</div>}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Add Candidate Modal ----
+const EMPTY_FORM = { name: "", email: "", school_id: "", stage: "", gpa: "", area_of_study: "" };
+function AddCandidateModal({ schools, existingEmails, onClose, startTransition }: {
+  schools: School[]; existingEmails: Set<string>;
+  onClose: () => void; startTransition: (cb: () => void) => void;
+}) {
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const dupeEmail = form.email && existingEmails.has(form.email.toLowerCase());
+
+  const set = (k: keyof typeof EMPTY_FORM, v: string) => setForm((p) => ({ ...p, [k]: v }));
+
+  const submit = () => {
+    if (!form.name.trim()) { setError("Name is required."); return; }
+    setError(null);
+    startTransition(() => {
+      addCandidate({
+        name: form.name.trim(),
+        email: form.email.trim() || null,
+        school_id: form.school_id || null,
+        stage: form.stage || null,
+        gpa: form.gpa.trim() || null,
+        area_of_study: form.area_of_study.trim() || null,
+      }).then((r) => {
+        if ("error" in r && r.error) setError(r.error);
+        else { setSaved(true); setTimeout(onClose, 800); }
+      });
+    });
+  };
+
+  const field = (label: string, k: keyof typeof EMPTY_FORM, placeholder?: string) => (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>{label}</label>
+      <input value={form[k]} onChange={(e) => set(k, e.target.value)} placeholder={placeholder}
+        style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" }} />
+    </div>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.45)" }} />
+      <div style={{ position: "relative", background: "#fff", borderRadius: 16, padding: 28, width: 440, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto" }}>
+        <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 20px" }}>Add Candidate</h2>
+        {field("Name *", "name")}
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Email</label>
+          <input value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="email@example.com"
+            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${dupeEmail ? C.orange : C.line}`, fontSize: 14, boxSizing: "border-box" }} />
+          {dupeEmail && <div style={{ fontSize: 12, color: C.orange, marginTop: 4 }}>⚠ A candidate with this email already exists — duplicate will be created if you continue.</div>}
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>School</label>
+          <select value={form.school_id} onChange={(e) => set("school_id", e.target.value)}
+            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
+            <option value="">— Unassigned —</option>
+            {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Stage</label>
+          <select value={form.stage} onChange={(e) => set("stage", e.target.value)}
+            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
+            <option value="">— None —</option>
+            {STAGE_CONFIG.map((s) => <option key={s.key} value={s.key}>{s.key} ({s.phase})</option>)}
+          </select>
+        </div>
+        {field("GPA", "gpa", "3.5")}
+        {field("Major / Area of Study", "area_of_study", "Computer Science")}
+        {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E", marginBottom: 14 }}>{error}</div>}
+        {saved && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>✓ Candidate added!</div>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>Cancel</button>
+          <button onClick={submit} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: "pointer" }}>Add Candidate</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Bulk Import Modal ----
+function parseCSVRows(text: string): string[][] {
+  return text.trim().split("\n").filter((l) => l.trim()).map((line) =>
+    line.split(",").map((c) => c.trim().replace(/^"(.*)"$/, "$1").trim())
+  );
+}
+
+function BulkImportModal({ schools, existingEmails, onClose, startTransition }: {
+  schools: School[]; existingEmails: Set<string>;
+  onClose: () => void; startTransition: (cb: () => void) => void;
+}) {
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const schoolByName = new Map(schools.map((s) => [s.name.toLowerCase(), s.id]));
+
+  const parsed = (() => {
+    if (!text.trim()) return null;
+    const rows = parseCSVRows(text);
+    const header = rows[0]?.map((h) => h.toLowerCase()) ?? [];
+    const hasHeader = header.includes("name") || header.includes("email");
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    const iName = hasHeader ? header.indexOf("name") : 0;
+    const iEmail = hasHeader ? header.indexOf("email") : 1;
+    const iSchool = hasHeader ? header.indexOf("school") : 2;
+    const iStage = hasHeader ? header.indexOf("stage") : 3;
+    const iGpa = hasHeader ? header.indexOf("gpa") : 4;
+    const iMajor = hasHeader ? Math.max(header.indexOf("major"), header.indexOf("area_of_study")) : 5;
+    const items = dataRows.map((r) => ({
+      name: r[iName] ?? "",
+      email: r[iEmail] || null,
+      school_id: schoolByName.get((r[iSchool] ?? "").toLowerCase()) ?? null,
+      stage: r[iStage] || null,
+      gpa: r[iGpa] || null,
+      area_of_study: r[iMajor] || null,
+    })).filter((r) => r.name);
+    const dupes = items.filter((r) => r.email && existingEmails.has((r.email ?? "").toLowerCase()));
+    return { items, dupes };
+  })();
+
+  const doImport = () => {
+    if (!parsed || parsed.items.length === 0) { setError("No valid rows to import."); return; }
+    setError(null);
+    startTransition(() => {
+      bulkImportCandidates(parsed.items).then((r) => {
+        if ("error" in r && r.error) setError(r.error);
+        else setResult(`✓ Imported ${"count" in r ? r.count : parsed.items.length} candidate${parsed.items.length !== 1 ? "s" : ""}. Page will refresh.`);
+      });
+    });
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.45)" }} />
+      <div style={{ position: "relative", background: "#fff", borderRadius: 16, padding: 28, width: 560, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto" }}>
+        <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 8px" }}>Bulk Import</h2>
+        <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 16px" }}>
+          Paste CSV with columns: <code style={{ background: C.canvas, padding: "1px 5px", borderRadius: 4 }}>Name, Email, School, Stage, GPA, Major</code>. Header row is auto-detected.
+        </p>
+        <textarea value={text} onChange={(e) => { setText(e.target.value); setResult(null); setError(null); }}
+          placeholder={"Name,Email,School,Stage,GPA,Major\nJane Doe,jane@example.com,Purdue,new,3.7,Computer Science"}
+          rows={8} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 13, fontFamily: "monospace", resize: "vertical", boxSizing: "border-box" }} />
+        {parsed && (
+          <div style={{ margin: "12px 0", padding: "10px 14px", background: C.canvas, borderRadius: 9, fontSize: 13 }}>
+            <b style={{ color: C.navy }}>{parsed.items.length}</b> row{parsed.items.length !== 1 ? "s" : ""} parsed
+            {parsed.dupes.length > 0 && <span style={{ color: C.orange, marginLeft: 10 }}>⚠ {parsed.dupes.length} may be duplicate{parsed.dupes.length !== 1 ? "s" : ""} (email match)</span>}
+          </div>
+        )}
+        {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E", marginBottom: 14 }}>{error}</div>}
+        {result && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>{result}</div>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+          <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>Cancel</button>
+          <button onClick={doImport} disabled={!parsed || parsed.items.length === 0}
+            style={{ border: "none", background: parsed && parsed.items.length > 0 ? C.navy : C.navy3, color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: parsed && parsed.items.length > 0 ? "pointer" : "not-allowed" }}>
+            Import {parsed ? parsed.items.length : 0} rows
+          </button>
         </div>
       </div>
     </div>
