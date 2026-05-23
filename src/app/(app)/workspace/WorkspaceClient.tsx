@@ -24,7 +24,7 @@ type Cand = {
 };
 type School      = { id: string; name: string; color_primary: string | null; logo_url: string | null };
 type AllSchool   = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
-type AllCand     = { id: string; school_id: string | null; stage: string | null };
+type AllCand     = { id: string; name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; jazz_id: string | null; linkedin: string | null };
 type AllGoal     = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 type TeamMember  = { id: string; full_name: string };
 type Task        = { id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean };
@@ -44,7 +44,8 @@ export default function WorkspaceClient({
   profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[];
 }) {
-  const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings">("plan");
+  const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all">("plan");
+  const [allFilter, setAllFilter] = useState<string>("All schools");
   const [openId, setOpenId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const canEdit = canEditPlaybook(profile.role);
@@ -81,7 +82,7 @@ export default function WorkspaceClient({
                 <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{profile.role === "team_lead" ? "Team Lead" : "Fellow"} Workspace</div>
               </div>
             </div>
-            {([["plan", `This Week (${plan.length})`], ["board", "My School"], ["playbook", "Playbook"], ["standings", "Standings"]] as const).map(([k, l]) => (
+            {([["plan", `This Week (${plan.length})`], ["board", "My School"], ["playbook", "Playbook"], ["standings", "Standings"], ["all", "All Schools"]] as const).map(([k, l]) => (
               <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent" }}>{l}</button>
             ))}
           </div>
@@ -147,6 +148,53 @@ export default function WorkspaceClient({
         {tab === "standings" && (
           <StandingsClient schools={allSchools} candidates={allCandidates} goals={allGoals} mySchoolId={school?.id ?? null} />
         )}
+
+        {tab === "all" && (() => {
+          const visible = allFilter === "All schools"
+            ? allCandidates
+            : allCandidates.filter((c) => allSchools.find((s) => s.id === c.school_id)?.name === allFilter);
+          return (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
+                <div>
+                  <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>All Schools</h1>
+                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates · Read-only</p>
+                </div>
+                <select value={allFilter} onChange={(e) => setAllFilter(e.target.value)}
+                  style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                  <option>All schools</option>
+                  {allSchools.map((s) => <option key={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+                  <div>Candidate</div><div>School</div><div>Major</div><div>GPA</div><div>Stage</div><div></div>
+                </div>
+                {visible.map((c) => {
+                  const sc = allSchools.find((s) => s.id === c.school_id);
+                  const schoolAccent = sc?.color_primary ?? C.navy2;
+                  return (
+                    <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div>
+                        <div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div>
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: schoolAccent }}>{sc?.name ?? <span style={{ color: C.grayMute, fontStyle: "italic" }}>Unrouted</span>}</div>
+                      <div style={{ fontSize: 13 }}>{c.area_of_study ?? "—"}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{c.gpa ?? "—"}</div>
+                      <div><StagePill stage={c.stage} /></div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {c.linkedin && <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: C.navy2, textDecoration: "none", border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px" }}>in</a>}
+                        {c.jazz_id && <button onClick={() => window.open(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id!)}`, "_blank")} style={{ fontSize: 11, fontWeight: 700, color: C.navy2, border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px", background: "#fff", cursor: "pointer" }}>CV</button>}
+                      </div>
+                    </div>
+                  );
+                })}
+                {visible.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No candidates yet.</div>}
+              </div>
+            </>
+          );
+        })()}
       </div>
 
       {open && (

@@ -45,7 +45,7 @@ export default async function WorkspacePage() {
   const serviceDb = createServiceClient();
   const [{ data: allSchools }, { data: allCandidates }, { data: allGoals }] = await Promise.all([
     serviceDb.from("schools").select("id, name, tier, color_primary, logo_url").order("name"),
-    serviceDb.from("candidates").select("id, school_id, stage"),
+    serviceDb.from("candidates").select("id, name, email, school_id, stage, gpa, area_of_study, jazz_id, linkedin").order("name"),
     serviceDb.from("school_goals").select("school_id, goal_sourced, goal_contacted, goal_applied"),
   ]);
 
