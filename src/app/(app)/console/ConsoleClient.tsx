@@ -19,12 +19,13 @@ type School = { id: string; name: string; tier: string; color_primary: string | 
 type Cand = {
   id: string; jazz_id: string | null; name: string; email: string | null; school_id: string | null;
   stage: string | null; gpa: string | null; area_of_study: string | null; university_raw: string | null;
-  linkedin: string | null; resume_link: string | null;
+  linkedin: string | null; resume_link: string | null; grad_date: string | null;
   point_person_id: string | null; not_interested: boolean; is_favorite: boolean;
 };
 type TeamMember = { id: string; full_name: string };
 type Goal = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
-type AI = { candidate_id: string; resume_score: number | null };
+type AIFlag = { text: string; kind: "standout" | "concern" | "info" };
+type AI = { candidate_id: string; resume_score: number | null; summary: string | null; flags: AIFlag[]; analyzed_at: string | null };
 type Task = { id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean };
 type Phase = { id: string; label: string; title: string; sort_order: number; school_id: string; playbook_tasks: Task[] };
 
@@ -57,9 +58,10 @@ export default function ConsoleClient({
   const [boardSchool, setBoardSchool] = useState<string>(schools[0]?.id ?? "");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schools[0]?.id ?? "");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [showUnrouted, setShowUnrouted] = useState(false);
   const [pending, startTransition] = useTransition();
   const superUser = isSuper(profile.role);
-  const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a.resume_score])), [ai]);
+  const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a as AI])), [ai]);
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
 
   // ---- JazzHR sync (super-admin only) ----
@@ -225,29 +227,38 @@ export default function ConsoleClient({
         )}
 
         {/* ---- APPLICANTS ---- */}
-        {tab === "applicants" && (
+        {tab === "applicants" && (() => {
+          const scopeFiltered = candidates.filter((c) => scope === "Org-wide" || schools.find((s) => s.id === c.school_id)?.name === scope);
+          const unroutedCount = scopeFiltered.filter((c) => !c.school_id).length;
+          const visible = showUnrouted ? scopeFiltered.filter((c) => !c.school_id) : scopeFiltered;
+          return (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Applicants</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
-                  {candidates.filter((c) => scope === "Org-wide" || schools.find((s) => s.id === c.school_id)?.name === scope).length} candidates
-                  {superUser ? " · AI scores visible" : ""}
+                  {visible.length} candidates{superUser ? " · AI scores visible" : ""}
+                  {unroutedCount > 0 && !showUnrouted && <span style={{ color: C.orange }}> · {unroutedCount} unrouted</span>}
                 </p>
               </div>
-              <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                <option>Org-wide</option>
-                {schools.map((s) => <option key={s.id}>{s.name}</option>)}
-              </select>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <button onClick={() => setShowUnrouted((v) => !v)}
+                  style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${showUnrouted ? C.orange : C.line}`, fontSize: 13.5, background: showUnrouted ? "#FBE7DF" : "#fff", color: showUnrouted ? C.orange : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  {showUnrouted ? "✕ Unrouted only" : `Unrouted (${unroutedCount})`}
+                </button>
+                <select value={scope} onChange={(e) => { setScope(e.target.value); setShowUnrouted(false); }} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                  <option>Org-wide</option>
+                  {schools.map((s) => <option key={s.id}>{s.name}</option>)}
+                </select>
+              </div>
             </div>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
               <div style={{ display: "grid", gridTemplateColumns: `1.7fr 1fr 1fr 0.6fr 1fr${superUser ? " 0.8fr" : ""} 40px`, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                 <div>Applicant</div><div>School</div><div>Major</div><div>GPA</div><div>Stage</div>{superUser && <div>AI</div>}<div></div>
               </div>
-              {candidates
-                .filter((c) => scope === "Org-wide" || schools.find((s) => s.id === c.school_id)?.name === scope)
-                .map((c) => {
-                  const score = aiMap.get(c.id);
+              {visible.map((c) => {
+                  const aiRec = aiMap.get(c.id);
+                  const score = aiRec?.resume_score ?? null;
                   const scoreTone = score == null ? C.grayMute : score >= 16 ? C.good : score >= 12 ? C.gold : C.orange;
                   const schoolName = schools.find((s) => s.id === c.school_id)?.name;
                   return (
@@ -262,7 +273,7 @@ export default function ConsoleClient({
                       <div style={{ fontSize: 13.5 }}>
                         {schoolName
                           ? <span style={{ color: C.navy2, fontWeight: 600 }}>{schoolName}</span>
-                          : <span style={{ color: C.grayMute, fontStyle: "italic" }}>{c.university_raw ?? "—"}</span>}
+                          : <span style={{ color: C.orange, fontStyle: "italic", fontSize: 12 }}>{c.university_raw ?? "Unrouted"}</span>}
                       </div>
                       <div style={{ fontSize: 13.5 }}>{c.area_of_study}</div>
                       <div style={{ fontSize: 13.5, fontWeight: 600 }}>{c.gpa}</div>
@@ -272,12 +283,12 @@ export default function ConsoleClient({
                     </div>
                   );
                 })}
-              {candidates.filter((c) => scope === "Org-wide" || schools.find((s) => s.id === c.school_id)?.name === scope).length === 0 && (
-                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No applicants yet — run a sync.</div>
+              {visible.length === 0 && (
+                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{showUnrouted ? "No unrouted candidates — routing is complete!" : "No applicants yet — run a sync."}</div>
               )}
             </div>
           </>
-        )}
+        );})()}
 
         {/* ---- BOARDS ---- */}
         {tab === "boards" && (
@@ -439,16 +450,17 @@ export default function ConsoleClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} profile={profile} team={team} onClose={() => setOpenId(null)} startTransition={startTransition} />
+        <CandidateDrawer c={open} profile={profile} team={team} onClose={() => setOpenId(null)} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
       )}
     </div>
   );
 }
 
 // ---- Candidate Drawer ----
-function CandidateDrawer({ c, profile, team, onClose, startTransition }: {
+function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, superUser }: {
   c: Cand; profile: Profile; team: TeamMember[];
   onClose: () => void; startTransition: (cb: () => void) => void;
+  aiData: AI | null; superUser: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [log, setLog] = useState<{ id: string; body: string; created_at: string }[] | null>(null);
@@ -487,7 +499,7 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition }: {
             </button>
           </div>
 
-          {([["Email", c.email], ["GPA", c.gpa], ["University", c.university_raw]] as const).map(([k, v]) => (
+          {([["Email", c.email], ["GPA", c.gpa], ["Grad Date", c.grad_date], ["University", c.university_raw]] as [string, string | null][]).map(([k, v]) => (
             <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
               <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span>
               <span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>
@@ -513,6 +525,55 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition }: {
               style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>
               Résumé ↗
             </button>
+          </div>
+
+          {/* AI signal panel */}
+          <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px", marginBottom: 20 }}>
+            <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 10, letterSpacing: 0.8 }}>AI Analysis</div>
+            {superUser ? (
+              aiData ? (
+                <>
+                  {/* Score bar */}
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                      <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Résumé Score</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: HEAD, color: aiData.resume_score == null ? C.grayMute : aiData.resume_score >= 16 ? C.good : aiData.resume_score >= 12 ? C.gold : C.orange }}>
+                        {aiData.resume_score == null ? "—" : `${aiData.resume_score} / 20`}
+                      </span>
+                    </div>
+                    {aiData.resume_score != null && (
+                      <div style={{ height: 7, borderRadius: 99, background: C.line, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${(aiData.resume_score / 20) * 100}%`, background: aiData.resume_score >= 16 ? C.good : aiData.resume_score >= 12 ? C.gold : C.orange, borderRadius: 99 }} />
+                      </div>
+                    )}
+                  </div>
+                  {/* Summary */}
+                  {aiData.summary && (
+                    <p style={{ fontSize: 13, color: C.gray, margin: "0 0 12px", lineHeight: 1.5 }}>{aiData.summary}</p>
+                  )}
+                  {/* Flags */}
+                  {(aiData.flags ?? []).length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {(aiData.flags ?? []).map((f, i) => {
+                        const chipColor = f.kind === "standout" ? C.good : f.kind === "concern" ? C.orange : C.blue;
+                        return (
+                          <span key={i} style={{ fontSize: 11.5, fontWeight: 600, padding: "4px 10px", borderRadius: 999, background: `${chipColor}22`, color: chipColor, border: `1px solid ${chipColor}55` }}>
+                            {f.kind === "standout" ? "✓ " : f.kind === "concern" ? "⚠ " : "ℹ "}{f.text}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!aiData.summary && (aiData.flags ?? []).length === 0 && aiData.resume_score == null && (
+                    <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No AI data yet.</div>
+                  )}
+                </>
+              ) : (
+                <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No AI analysis yet for this candidate.</div>
+              )
+            ) : (
+              <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>AI restricted to Super-Admins.</div>
+            )}
           </div>
 
           <div style={{ background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 9, padding: 13, fontSize: 12.5, color: C.grayMute, marginBottom: 20 }}>

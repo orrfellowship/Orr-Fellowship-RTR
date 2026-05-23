@@ -18,7 +18,7 @@ export default async function ConsolePage() {
 
   const { data: candidates } = await supabase
     .from("candidates")
-    .select("id, jazz_id, name, email, school_id, stage, gpa, area_of_study, university_raw, linkedin, resume_link, point_person_id, not_interested")
+    .select("id, jazz_id, name, email, school_id, stage, gpa, area_of_study, university_raw, linkedin, resume_link, point_person_id, not_interested, grad_date")
     .order("name");
 
   const { data: favs } = await supabase
@@ -40,9 +40,9 @@ export default async function ConsolePage() {
     .select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, due_date, done)")
     .order("sort_order");
 
-  let ai: { candidate_id: string; resume_score: number | null }[] = [];
+  let ai: { candidate_id: string; resume_score: number | null; summary: string | null; flags: any; analyzed_at: string | null }[] = [];
   if (isSuper(profile.role)) {
-    const { data } = await supabase.from("candidate_ai").select("candidate_id, resume_score");
+    const { data } = await supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at");
     ai = data ?? [];
   }
 
