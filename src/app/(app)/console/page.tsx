@@ -4,8 +4,6 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { isSuper } from "@/lib/types";
 import ConsoleClient from "./ConsoleClient";
 
-// Admin & Super-Admin console loader. AI data fetched ONLY for super-admins
-// (RLS also enforces this — even if requested, non-supers get zero rows).
 export default async function ConsolePage() {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
@@ -20,24 +18,38 @@ export default async function ConsolePage() {
 
   const { data: candidates } = await supabase
     .from("candidates")
-    .select("id, name, school_id, stage, gpa, area_of_study, point_person_id");
+    .select("id, name, email, school_id, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested")
+    .order("name");
+
+  const { data: favs } = await supabase
+    .from("favorites")
+    .select("candidate_id")
+    .eq("user_id", profile.id);
+
+  const { data: team } = await supabase
+    .from("profiles")
+    .select("id, full_name")
+    .order("full_name");
 
   const { data: goals } = await supabase
     .from("school_goals")
     .select("school_id, goal_sourced, goal_contacted, goal_applied");
 
-  // AI signal — super-admin only.
   let ai: { candidate_id: string; resume_score: number | null }[] = [];
   if (isSuper(profile.role)) {
     const { data } = await supabase.from("candidate_ai").select("candidate_id, resume_score");
     ai = data ?? [];
   }
 
+  const favSet = new Set((favs ?? []).map((f) => f.candidate_id));
+  const enriched = (candidates ?? []).map((c) => ({ ...c, is_favorite: favSet.has(c.id) }));
+
   return (
     <ConsoleClient
       profile={profile}
       schools={schools ?? []}
-      candidates={candidates ?? []}
+      candidates={enriched}
+      team={team ?? []}
       goals={goals ?? []}
       ai={ai}
     />
