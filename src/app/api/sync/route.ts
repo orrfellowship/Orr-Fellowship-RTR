@@ -22,11 +22,22 @@ async function jazzGet(path: string, apiKey: string): Promise<any> {
   throw new Error(`JazzHR repeatedly rate-limited on ${path}`);
 }
 
-// pull a questionnaire answer by exact question string
-function q(detail: any, question: string): string | null {
+// Pull a questionnaire answer — tries exact match first, then case-insensitive
+// substring, so minor label differences in JazzHR don't silently drop data.
+function q(detail: any, ...labels: string[]): string | null {
   const arr = Array.isArray(detail?.questionnaire) ? detail.questionnaire : [];
-  const hit = arr.find((x: any) => x?.question === question);
-  return hit?.answer ?? null;
+  for (const label of labels) {
+    // exact match
+    const exact = arr.find((x: any) => x?.question === label);
+    if (exact?.answer) return exact.answer;
+  }
+  for (const label of labels) {
+    // case-insensitive substring match
+    const lower = label.toLowerCase();
+    const fuzzy = arr.find((x: any) => typeof x?.question === "string" && x.question.toLowerCase().includes(lower));
+    if (fuzzy?.answer) return fuzzy.answer;
+  }
+  return null;
 }
 
 // map a JazzHR applicant detail → our candidate row
@@ -35,7 +46,7 @@ function mapDetail(d: any) {
   const progresses = jobs.map((j: any) => j?.applicant_progress).filter(Boolean);
   const stage = mostAdvancedStage(progresses);
   const bestJob = jobs.find((j: any) => j?.applicant_progress && stageMatches(j.applicant_progress, stage));
-  const university = q(d, "University");
+  const university = q(d, "University", "University Name", "College", "School", "Institution", "College/University");
   return {
     jazz_id: d.id,
     name: [d.first_name, d.last_name].filter(Boolean).join(" ") || "Unknown",
@@ -47,9 +58,9 @@ function mapDetail(d: any) {
     stage,
     job_title: bestJob?.job_title ?? null,
     university_raw: university,
-    gpa: q(d, "Grade Point Average (GPA)"),
-    grad_date: q(d, "Expected Graduation Date"),
-    area_of_study: q(d, "Area of Study"),
+    gpa: q(d, "Grade Point Average (GPA)", "GPA", "Grade Point Average"),
+    grad_date: q(d, "Expected Graduation Date", "Graduation Date", "Expected Graduation"),
+    area_of_study: q(d, "Area of Study", "Major", "Field of Study", "Degree"),
     source: "jazzhr" as const,
     // NB: point_person, notes, AI fields, favorites, not_interested are
     // NEVER written by sync — they're local-only. Upsert only touches the
@@ -150,6 +161,42 @@ export async function POST(request: NextRequest) {
     { onConflict: "id" }
   );
   return NextResponse.json({ ok: true, mode, partial: false, written, routed, unrouted, failed });
+}
+
+// ---- PUT: re-route unrouted candidates using the current routing table -------
+// Fixes candidates whose school_id is null because the routing table was updated
+// or because the questionnaire label changed after the initial sync.
+export async function PUT(_request: NextRequest) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) {
+    return NextResponse.json({ error: "Forbidden — super-admin only" }, { status: 403 });
+  }
+  const db = createServiceClient();
+
+  // Fetch all candidates that have university_raw but no school_id
+  const { data: unrouted, error: fetchErr } = await db
+    .from("candidates")
+    .select("id, university_raw")
+    .is("school_id", null)
+    .not("university_raw", "is", null);
+  if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+
+  const { data: schools } = await db.from("schools").select("id, name");
+  const schoolMap = new Map((schools ?? []).map((s: any) => [s.name, s.id]));
+
+  let matched = 0, still_unrouted = 0;
+  for (const c of unrouted ?? []) {
+    const schoolName = routeToSchoolName(c.university_raw);
+    const school_id = schoolName ? schoolMap.get(schoolName) ?? null : null;
+    if (school_id) {
+      await db.from("candidates").update({ school_id }).eq("id", c.id);
+      matched++;
+    } else {
+      still_unrouted++;
+    }
+  }
+
+  return NextResponse.json({ ok: true, matched, still_unrouted });
 }
 
 // ---- GET: list jobs, or ?debug=1 to inspect the target-job mapping ----------

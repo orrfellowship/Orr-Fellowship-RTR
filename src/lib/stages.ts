@@ -110,10 +110,25 @@ export const SCHOOL_MATCH: SchoolMatch[] = [
   { school_name: "IWU", match: ["indiana wesleyan university", "indiana wesleyan", "iwu"] },
 ];
 
+// Normalize a raw university string before matching.
+// Strips punctuation, expands common abbreviations, collapses whitespace.
+function normalizeUniversity(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[.,\-()&]/g, " ")            // punctuation → space
+    .replace(/\bft\b/g, "fort")            // Ft. Wayne → fort wayne
+    .replace(/\bst\b/g, "saint")           // St. → saint (avoid matching "state")
+    .replace(/\bu\b(?=\s|$)/g, "university")  // trailing "U" → university
+    .replace(/\bcol\b/g, "college")
+    .replace(/\binst\b/g, "institute")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Returns the seeded school NAME this university routes to, or null (unrouted).
 export function routeToSchoolName(university: string | null): string | null {
   if (!university) return null;
-  const u = university.toLowerCase().trim();
+  const u = normalizeUniversity(university);
   for (const entry of SCHOOL_MATCH) {
     if (entry.match.some((m) => u.includes(m))) return entry.school_name;
   }

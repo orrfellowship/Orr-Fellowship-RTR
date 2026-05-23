@@ -4,9 +4,9 @@ import { getCurrentProfile } from "@/lib/auth";
 const JAZZ_BASE = "https://api.resumatorapi.com/v1";
 
 // Proxy a resume for a JazzHR applicant.
-// Fetches a fresh applicant record at click-time so the URL is never stale/expired,
-// then streams the file with ?apikey= (what JazzHR CDN actually accepts).
-// Usage: GET /api/resume?jazzId=<jazz_applicant_id>
+// Fetches fresh applicant at click-time to avoid stale/expired URLs.
+// Auth strategy: JazzHR resume_link may be pre-signed (no extra auth needed)
+// or may require ?apikey=. We try bare first, then fall back to ?apikey=.
 export async function GET(request: NextRequest) {
   const profile = await getCurrentProfile();
   if (!profile) {
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "JAZZHR_API_KEY not configured" }, { status: 500 });
   }
 
-  // Step 1: fetch fresh applicant record — avoids stale/pre-signed URL expiry
+  // Step 1: fetch fresh applicant record to get a current resume_link
   const applicantRes = await fetch(`${JAZZ_BASE}/applicants/${jazzId}?apikey=${apiKey}`);
   if (!applicantRes.ok) {
     return NextResponse.json(
@@ -37,12 +37,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "No resume on file for this applicant" }, { status: 404 });
   }
 
-  // Step 2: fetch the file — JazzHR CDN accepts ?apikey= (not Basic Auth)
-  const sep = resumeUrl.includes("?") ? "&" : "?";
-  const fileRes = await fetch(`${resumeUrl}${sep}apikey=${apiKey}`);
+  // Step 2: try the URL bare first — JazzHR may return pre-signed CDN links
+  // that carry their own auth in the URL and break if extra params are appended.
+  let fileRes = await fetch(resumeUrl);
+
+  // Fall back to ?apikey= if the bare request is rejected
+  if (fileRes.status === 401 || fileRes.status === 403) {
+    const sep = resumeUrl.includes("?") ? "&" : "?";
+    fileRes = await fetch(`${resumeUrl}${sep}apikey=${apiKey}`);
+  }
+
   if (!fileRes.ok) {
     return NextResponse.json(
-      { error: `Resume file fetch failed: ${fileRes.status}` },
+      { error: `Resume file fetch failed: ${fileRes.status}`, resumeUrl },
       { status: fileRes.status }
     );
   }

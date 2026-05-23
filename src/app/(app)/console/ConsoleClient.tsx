@@ -66,6 +66,8 @@ export default function ConsoleClient({
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [rerouting, setRerouting] = useState(false);
+  const [rerouteResult, setRerouteResult] = useState<string | null>(null);
   const [jobs, setJobs] = useState<{ id: string; title: string; status: string | null; city: string | null }[] | null>(null);
   const [listing, setListing] = useState(false);
   const [confirmText, setConfirmText] = useState("");
@@ -93,6 +95,17 @@ export default function ConsoleClient({
       else { setClearMsg(`Cleared ${data.deleted} candidates. Refresh to see the empty state.`); setConfirmText(""); }
     } catch (e: any) { setClearMsg(`Error: ${e?.message ?? "Request failed"}`); }
     finally { setClearing(false); }
+  }
+
+  async function runReroute() {
+    setRerouting(true); setRerouteResult(null); setSyncError(null);
+    try {
+      const res = await fetch("/api/sync", { method: "PUT" });
+      const data = await res.json();
+      if (!res.ok) setSyncError(typeof data.error === "string" ? data.error : JSON.stringify(data));
+      else setRerouteResult(`Routed ${data.matched} candidate${data.matched !== 1 ? "s" : ""} to schools · ${data.still_unrouted} still unrouted (likely out-of-state)`);
+    } catch (e: any) { setSyncError(e?.message ?? "Request failed"); }
+    finally { setRerouting(false); }
   }
 
   async function runSync(mode: "full" | "refresh") {
@@ -396,6 +409,20 @@ export default function ConsoleClient({
               {syncResult && <div style={{ marginTop: 16, background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: "#1B5E3F" }}>✓ {syncResult}</div>}
               {syncError && <div style={{ marginTop: 16, background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: "#8A3A1E", wordBreak: "break-word" }}>Sync error: {syncError}</div>}
             </div>
+
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
+              <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 4px", color: C.navy }}>Step 3 — Fix unrouted candidates</h3>
+              <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 12px" }}>
+                Re-runs school routing on every candidate whose university is set but school is missing.
+                Run this after updating the routing table or after improving questionnaire matching.
+              </p>
+              <button onClick={runReroute} disabled={rerouting}
+                style={{ border: `1px solid ${C.navy}`, background: rerouting ? C.canvas : "#fff", color: C.navy, fontWeight: 700, padding: "11px 18px", borderRadius: 10, cursor: rerouting ? "default" : "pointer", fontSize: 14 }}>
+                {rerouting ? "Re-routing…" : "Re-route unrouted candidates"}
+              </button>
+              {rerouteResult && <div style={{ marginTop: 14, background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: "#1B5E3F" }}>✓ {rerouteResult}</div>}
+            </div>
+
             <div style={{ background: "#fff", border: `1px solid ${C.orange}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
               <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 4px", color: C.orange }}>Danger zone — clear all candidates</h3>
               <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 12px", lineHeight: 1.5 }}>Deletes every candidate and their notes, favorites, and AI rows. Schools, users, playbook, and goals are kept. Type <b style={{ color: C.gray }}>{CONFIRM}</b> to confirm.</p>
