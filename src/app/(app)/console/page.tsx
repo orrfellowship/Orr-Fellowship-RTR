@@ -41,9 +41,14 @@ export default async function ConsolePage() {
     .order("sort_order");
 
   let ai: { candidate_id: string; resume_score: number | null; summary: string | null; flags: any; analyzed_at: string | null }[] = [];
+  let users: { id: string; full_name: string; email: string; role: string; school_id: string | null; is_active: boolean }[] = [];
   if (isSuper(profile.role)) {
-    const { data } = await supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at");
-    ai = data ?? [];
+    const [{ data: aiData }, { data: usersData }] = await Promise.all([
+      supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at"),
+      supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name"),
+    ]);
+    ai = aiData ?? [];
+    users = usersData ?? [];
   }
 
   const favSet = new Set((favs ?? []).map((f) => f.candidate_id));
@@ -58,6 +63,7 @@ export default async function ConsolePage() {
       goals={goals ?? []}
       ai={ai}
       phases={phases ?? []}
+      users={users}
     />
   );
 }

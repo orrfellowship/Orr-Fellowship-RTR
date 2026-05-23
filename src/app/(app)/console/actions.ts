@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { getCurrentProfile } from "@/lib/auth";
+import { isSuper } from "@/lib/types";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -76,6 +78,28 @@ export async function upsertTask(t: {
 export async function deleteTask(taskId: string) {
   const supabase = createServerSupabase();
   const { error } = await supabase.from("playbook_tasks").delete().eq("id", taskId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function upsertGoal(school_id: string, goal_sourced: number, goal_contacted: number, goal_applied: number) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const supabase = createServerSupabase();
+  const { error } = await supabase
+    .from("school_goals")
+    .upsert({ school_id, goal_sourced, goal_contacted, goal_applied }, { onConflict: "school_id" });
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function updateUser(user_id: string, role: string, school_id: string | null) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("profiles").update({ role, school_id }).eq("id", user_id);
   if (error) return { error: error.message };
   revalidatePath("/console");
   return { ok: true };

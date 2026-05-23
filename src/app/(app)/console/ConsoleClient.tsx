@@ -6,8 +6,10 @@ import { isSuper } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach,
   reassignPointPerson, addConnection, addPhase, upsertTask, deleteTask,
+  upsertGoal, updateUser,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
+import { phaseOf } from "@/lib/stages";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -29,6 +31,9 @@ type AIFlag = { text: string; kind: "standout" | "concern" | "info" };
 type AI = { candidate_id: string; resume_score: number | null; summary: string | null; flags: AIFlag[]; analyzed_at: string | null };
 type Task = { id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean };
 type Phase = { id: string; label: string; title: string; sort_order: number; school_id: string; playbook_tasks: Task[] };
+type UserProfile = { id: string; full_name: string; email: string; role: string; school_id: string | null; is_active: boolean };
+
+const ALL_ROLES = ["super_admin", "admin", "team_lead", "fellow"] as const;
 
 const PHASE_OF: Record<string, string> = { new: "Sourced", contacted: "Contacted", applied: "Applied", bmi: "Advanced", finalist: "Finalist", fellow: "Fellow" };
 const phaseTone: Record<string, string> = { Sourced: C.navy3, Contacted: C.blue, Applied: C.navy2, Advanced: C.orange, Finalist: C.gold, Fellow: C.good };
@@ -49,12 +54,12 @@ function fmtPct(actual: number, goal: number) {
 }
 
 export default function ConsoleClient({
-  profile, schools, candidates, team, goals, ai, phases,
+  profile, schools, candidates, team, goals, ai, phases, users,
 }: {
   profile: Profile; schools: School[]; candidates: Cand[]; team: TeamMember[];
-  goals: Goal[]; ai: AI[]; phases: Phase[];
+  goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
 }) {
-  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "boards" | "playbooks" | "sync">("overview");
+  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "boards" | "playbooks" | "schools" | "fellows" | "users" | "sync">("overview");
   const [scope, setScope] = useState<string>("Org-wide");
   const [boardSchool, setBoardSchool] = useState<string>(schools[0]?.id ?? "");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schools[0]?.id ?? "");
@@ -140,8 +145,20 @@ export default function ConsoleClient({
   const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
 
+  const fellowCands = useMemo(() => candidates.filter((c) => phaseOf(c.stage) === "fellow"), [candidates]);
+
+  // goal draft state: school_id → {sourced, contacted, applied}
+  const [goalDrafts, setGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
+  const goalDraft = (sid: string) => {
+    if (goalDrafts[sid]) return goalDrafts[sid];
+    const g = goals.find((g) => g.school_id === sid);
+    return { sourced: String(g?.goal_sourced ?? 0), contacted: String(g?.goal_contacted ?? 0), applied: String(g?.goal_applied ?? 0) };
+  };
+  const setGoalField = (sid: string, field: "sourced" | "contacted" | "applied", val: string) =>
+    setGoalDrafts((prev) => ({ ...prev, [sid]: { ...goalDraft(sid), [field]: val } }));
+
   const TABS: [string, string][] = [["overview", "Overview"], ["applicants", "Applicants"], ["standings", "Standings"], ["boards", "Boards"], ["playbooks", "Playbooks"]];
-  if (superUser) TABS.push(["sync", "Sync"]);
+  if (superUser) TABS.push(["schools", "Schools"], ["fellows", "Fellows"], ["users", "Users"], ["sync", "Sync"]);
 
   return (
     <div style={{ minHeight: "100vh", background: C.canvas }}>
@@ -390,6 +407,129 @@ export default function ConsoleClient({
                 </div>
               ))}
               {playbookPhases.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No playbook yet for this school — add the first phase.</div>}
+            </div>
+          </>
+        )}
+
+        {/* ---- SCHOOLS ---- */}
+        {tab === "schools" && superUser && (
+          <>
+            <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 6px" }}>Schools</h1>
+            <p style={{ color: C.grayMute, margin: "0 0 20px" }}>Goals, pipeline stats, and team size per school.</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {schools.map((s) => {
+                const accent = s.color_primary ?? C.navy2;
+                const sc = candidates.filter((c) => c.school_id === s.id);
+                const teamSize = users.filter((u) => u.school_id === s.id).length;
+                const g = goals.find((g) => g.school_id === s.id);
+                const draft = goalDraft(s.id);
+                const sourced = sc.filter((c) => c.stage && ["sourced","contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+                const contacted = sc.filter((c) => c.stage && ["contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+                const applied = sc.filter((c) => c.stage && ["applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+                return (
+                  <div key={s.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: "18px 22px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                      {s.logo_url && <img src={s.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 4 }} />}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.gray }}>{s.name}</div>
+                        <div style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{s.tier} · {teamSize} teammate{teamSize !== 1 ? "s" : ""}</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 16 }}>
+                        {([["Sourced", sourced, g?.goal_sourced], ["Contacted", contacted, g?.goal_contacted], ["Applied", applied, g?.goal_applied]] as [string, number, number | undefined][]).map(([lbl, act, goal]) => {
+                          const hasGoal = (goal ?? 0) > 0;
+                          const pct = hasGoal ? Math.round((act / (goal as number)) * 100) : 0;
+                          const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
+                          return (
+                            <div key={lbl} style={{ textAlign: "center" }}>
+                              <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: hasGoal ? tone : C.navy2 }}>{act}</div>
+                              <div style={{ fontSize: 10, color: C.grayMute, fontWeight: 600 }}>{lbl}{hasGoal ? ` · ${pct}%` : ""}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goals:</span>
+                      {(["sourced", "contacted", "applied"] as const).map((field) => (
+                        <label key={field} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{field}</span>
+                          <input type="number" min={0} value={draft[field]}
+                            onChange={(e) => setGoalField(s.id, field, e.target.value)}
+                            style={{ width: 60, padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.line}`, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center" }} />
+                        </label>
+                      ))}
+                      <button onClick={() => startTransition(() => {
+                        upsertGoal(s.id, Number(draft.sourced) || 0, Number(draft.contacted) || 0, Number(draft.applied) || 0);
+                      })} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>
+                        Save goals
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* ---- FELLOWS ---- */}
+        {tab === "fellows" && superUser && (
+          <>
+            <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 6px" }}>Fellows</h1>
+            <p style={{ color: C.grayMute, margin: "0 0 20px" }}>{fellowCands.length} candidate{fellowCands.length !== 1 ? "s" : ""} at the Fellow stage across all schools.</p>
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr 1fr 0.6fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+                <div>Fellow</div><div>School</div><div>Major</div><div>GPA</div><div>Email</div>
+              </div>
+              {fellowCands.map((c) => {
+                const school = schools.find((s) => s.id === c.school_id);
+                const accent = school?.color_primary ?? C.navy2;
+                return (
+                  <div key={c.id} onClick={() => setOpenId(c.id)}
+                    style={{ display: "grid", gridTemplateColumns: "1.8fr 1fr 1fr 0.6fr 1fr", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", borderLeft: `3px solid ${accent}` }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "#F0F4FA")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div>
+                    <div style={{ fontSize: 13, color: accent, fontWeight: 600 }}>{school?.name ?? <span style={{ color: C.grayMute, fontStyle: "italic" }}>Unrouted</span>}</div>
+                    <div style={{ fontSize: 13 }}>{c.area_of_study ?? "—"}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{c.gpa ?? "—"}</div>
+                    <div style={{ fontSize: 12, color: C.grayMute }}>{c.email ?? "—"}</div>
+                  </div>
+                );
+              })}
+              {fellowCands.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No fellows yet — sync candidates and advance them to the Fellow stage in JazzHR.</div>}
+            </div>
+          </>
+        )}
+
+        {/* ---- USERS ---- */}
+        {tab === "users" && superUser && (
+          <>
+            <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 6px" }}>Users</h1>
+            <p style={{ color: C.grayMute, margin: "0 0 20px" }}>{users.length} user{users.length !== 1 ? "s" : ""} in the system. Role and school changes take effect immediately.</p>
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+                <div>Name</div><div>Email</div><div>Role</div><div>School</div><div></div>
+              </div>
+              {users.map((u) => (
+                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5, color: C.gray }}>{u.full_name}{u.id === profile.id && <span style={{ marginLeft: 6, fontSize: 11, color: C.navy2, background: `${C.navy2}22`, padding: "1px 6px", borderRadius: 99 }}>you</span>}</div>
+                  <div style={{ fontSize: 13, color: C.grayMute }}>{u.email}</div>
+                  <select defaultValue={u.role}
+                    onChange={(e) => startTransition(() => { updateUser(u.id, e.target.value, u.school_id); })}
+                    disabled={u.id === profile.id}
+                    style={{ fontSize: 12.5, fontWeight: 600, color: C.navy, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff" }}>
+                    {ALL_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <select defaultValue={u.school_id ?? ""}
+                    onChange={(e) => startTransition(() => { updateUser(u.id, u.role, e.target.value || null); })}
+                    style={{ fontSize: 12.5, fontWeight: 600, color: u.school_id ? C.navy : C.grayMute, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff" }}>
+                    <option value="">— No school —</option>
+                    {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  <div style={{ width: 10, height: 10, borderRadius: 99, background: u.is_active ? C.good : C.line, margin: "0 auto" }} title={u.is_active ? "Active" : "Inactive"} />
+                </div>
+              ))}
+              {users.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No users found.</div>}
             </div>
           </>
         )}
