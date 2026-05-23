@@ -92,7 +92,9 @@ export default function ConsoleClient({
       if (!res.ok) {
         setSyncError(typeof data.error === "string" ? data.error : JSON.stringify(data));
       } else {
-        setSyncResult(`Mode: ${data.mode} · fetched ${data.fetched} · written ${data.written}`);
+        setSyncResult(
+          `${data.partial ? "Partial (re-run to continue)" : "Complete"} · written ${data.written} · routed ${data.routed} · unrouted ${data.unrouted}${data.failed ? ` · failed ${data.failed}` : ""}${data.remaining ? ` · ${data.remaining} remaining` : ""}`
+        );
       }
     } catch (e: any) {
       setSyncError(e?.message ?? "Request failed");

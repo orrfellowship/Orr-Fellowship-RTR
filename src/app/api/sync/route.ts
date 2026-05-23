@@ -76,12 +76,23 @@ export async function POST(request: NextRequest) {
   const { mode = "full" } = await request.json().catch(() => ({ mode: "full" }));
   const db = createServiceClient();
 
-  // 1. applicant stubs for the target job
+  // 1. applicant stubs for the target job.
+  //    JazzHR's ?job_id= filter is unreliable, so we page through the
+  //    applicants2jobs mapping and filter to TARGET_JOB ourselves.
   let stubs: { id: string }[];
   try {
-    const raw = await jazzGet(`/applicants2jobs?job_id=${TARGET_JOB}`, apiKey);
-    const arr = Array.isArray(raw) ? raw : [];
-    stubs = arr.map((x: any) => ({ id: x.applicant_id ?? x.id })).filter((x: any) => x.id);
+    const matched = new Set<string>();
+    for (let page = 1; page <= 30; page++) {
+      const raw = await jazzGet(`/applicants2jobs/page/${page}`, apiKey);
+      const arr = Array.isArray(raw) ? raw : [];
+      for (const x of arr) {
+        const jid = String(x.job_id ?? "");
+        const aid = x.applicant_id ?? x.id;
+        if (jid === TARGET_JOB && aid) matched.add(String(aid));
+      }
+      if (arr.length < 100) break; // last page
+    }
+    stubs = Array.from(matched).map((id) => ({ id }));
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 502 });
   }
@@ -141,14 +152,39 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ ok: true, mode, partial: false, written, routed, unrouted, failed });
 }
 
-// ---- GET: list jobs (read-only diagnostic) ----------------------------------
-export async function GET() {
+// ---- GET: list jobs, or ?debug=1 to inspect the target-job mapping ----------
+export async function GET(request: NextRequest) {
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) {
     return NextResponse.json({ error: "Forbidden — super-admin only" }, { status: 403 });
   }
   const apiKey = process.env.JAZZHR_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "JAZZHR_API_KEY not configured" }, { status: 500 });
+
+  // debug: how many applicants2jobs rows match TARGET_JOB vs total seen
+  if (request.nextUrl.searchParams.get("debug") === "1") {
+    try {
+      let total = 0, matched = 0;
+      const sampleJobIds = new Set<string>();
+      for (let page = 1; page <= 30; page++) {
+        const raw = await jazzGet(`/applicants2jobs/page/${page}`, apiKey);
+        const arr = Array.isArray(raw) ? raw : [];
+        for (const x of arr) {
+          total++;
+          const jid = String(x.job_id ?? "");
+          sampleJobIds.add(jid);
+          if (jid === TARGET_JOB) matched++;
+        }
+        if (arr.length < 100) break;
+      }
+      return NextResponse.json({
+        ok: true, target_job: TARGET_JOB, total_mappings_seen: total,
+        matched_for_target: matched, distinct_job_ids: Array.from(sampleJobIds).slice(0, 25),
+      });
+    } catch (e: any) {
+      return NextResponse.json({ error: e.message }, { status: 502 });
+    }
+  }
 
   try {
     const data = await jazzGet(`/jobs`, apiKey);
