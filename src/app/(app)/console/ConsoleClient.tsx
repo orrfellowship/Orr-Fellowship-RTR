@@ -15,7 +15,7 @@ const C = {
 };
 const HEAD = "'Cabin', sans-serif";
 
-type School = { id: string; name: string; tier: string };
+type School = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
 type Cand = {
   id: string; name: string; email: string | null; school_id: string | null;
   stage: string | null; gpa: string | null; area_of_study: string | null;
@@ -209,15 +209,22 @@ export default function ConsoleClient({
               </div>
               {schools.map((s) => {
                 const sc = candidates.filter((c) => c.school_id === s.id);
+                const accent = s.color_primary ?? C.navy2;
                 return (
                   <div key={s.id} onClick={() => { setScope(s.name); setTab("applicants"); }}
-                    style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer" }}
+                    style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", borderLeft: `4px solid ${accent}` }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = "#F0F4FA")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
-                    <div style={{ fontWeight: 700, color: C.gray }}>{s.name}<span style={{ fontSize: 11, color: C.grayMute, fontWeight: 400, marginLeft: 6 }}>{s.tier}</span></div>
-                    <div style={{ color: C.navy2, fontWeight: 600 }}>{sc.filter((c) => c.stage && SOURCED.has(c.stage)).length}</div>
-                    <div style={{ color: C.navy2, fontWeight: 600 }}>{sc.filter((c) => c.stage && CONTACTED.has(c.stage)).length}</div>
-                    <div style={{ color: C.navy2, fontWeight: 600 }}>{sc.filter((c) => c.stage && APPLIED.has(c.stage)).length}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {s.logo_url && <img src={s.logo_url} alt={s.name} style={{ height: 24, width: 24, objectFit: "contain", borderRadius: 4 }} />}
+                      <div>
+                        <div style={{ fontWeight: 700, color: C.gray }}>{s.name}</div>
+                        <div style={{ fontSize: 11, color: C.grayMute, textTransform: "capitalize" }}>{s.tier}</div>
+                      </div>
+                    </div>
+                    <div style={{ color: accent, fontWeight: 700 }}>{sc.filter((c) => c.stage && SOURCED.has(c.stage)).length}</div>
+                    <div style={{ color: accent, fontWeight: 700 }}>{sc.filter((c) => c.stage && CONTACTED.has(c.stage)).length}</div>
+                    <div style={{ color: accent, fontWeight: 700 }}>{sc.filter((c) => c.stage && APPLIED.has(c.stage)).length}</div>
                   </div>
                 );
               })}

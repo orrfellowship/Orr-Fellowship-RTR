@@ -13,7 +13,7 @@ export default async function ConsolePage() {
 
   const { data: schools } = await supabase
     .from("schools")
-    .select("id, name, tier")
+    .select("id, name, tier, color_primary, logo_url")
     .order("name");
 
   const { data: candidates } = await supabase

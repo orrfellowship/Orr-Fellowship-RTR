@@ -19,8 +19,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "JAZZHR_API_KEY not configured" }, { status: 500 });
   }
 
-  const sep = resumeUrl.includes("?") ? "&" : "?";
-  const upstream = await fetch(`${resumeUrl}${sep}apikey=${apiKey}`);
+  // JazzHR file downloads require HTTP Basic Auth (apikey as username, empty password).
+  // The ?apikey= query-param only works for their JSON API endpoints, not CDN URLs.
+  const upstream = await fetch(resumeUrl, {
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+    },
+  });
   if (!upstream.ok) {
     return NextResponse.json(
       { error: `JazzHR returned ${upstream.status}` },

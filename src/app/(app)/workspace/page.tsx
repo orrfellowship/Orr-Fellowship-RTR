@@ -13,6 +13,12 @@ export default async function WorkspacePage() {
   const supabase = createServerSupabase();
   const schoolId = profile.school_id ?? "";
 
+  const { data: school } = await supabase
+    .from("schools")
+    .select("id, name, color_primary, logo_url")
+    .eq("id", schoolId)
+    .maybeSingle();
+
   const { data: candidates } = await supabase
     .from("candidates")
     .select("id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested")
@@ -41,6 +47,7 @@ export default async function WorkspacePage() {
   return (
     <WorkspaceClient
       profile={profile}
+      school={school ?? null}
       candidates={enriched}
       team={team ?? []}
       phases={phases ?? []}

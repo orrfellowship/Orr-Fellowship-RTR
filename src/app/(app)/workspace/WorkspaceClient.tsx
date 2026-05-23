@@ -21,6 +21,7 @@ type Cand = {
   resume_link: string | null; point_person_id: string | null;
   not_interested: boolean; is_favorite: boolean;
 };
+type School = { id: string; name: string; color_primary: string | null; logo_url: string | null };
 type TeamMember = { id: string; full_name: string };
 type Task = { id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean };
 type Phase = { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] };
@@ -34,13 +35,14 @@ function StagePill({ stage }: { stage: string | null }) {
 }
 
 export default function WorkspaceClient({
-  profile, candidates, team, phases,
-}: { profile: Profile; candidates: Cand[]; team: TeamMember[]; phases: Phase[] }) {
+  profile, school, candidates, team, phases,
+}: { profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[] }) {
   const [tab, setTab] = useState<"plan" | "board" | "playbook">("plan");
   const [openId, setOpenId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const canEdit = canEditPlaybook(profile.role);
   const canAssign = canReassign(profile.role);
+  const accent = school?.color_primary ?? C.orange;
 
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
   const open = candidates.find((c) => c.id === openId) ?? null;
@@ -63,12 +65,17 @@ export default function WorkspaceClient({
       <div style={{ background: C.navy, padding: "0 28px" }}>
         <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 36 }}>
-            <div style={{ padding: "14px 0" }}>
-              <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16, color: "#fff" }}>Orr Recruiting</div>
-              <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{profile.role === "team_lead" ? "Team Lead" : "Fellow"} Workspace</div>
+            <div style={{ padding: "14px 0", display: "flex", alignItems: "center", gap: 10 }}>
+              {school?.logo_url && (
+                <img src={school.logo_url} alt={school.name} style={{ height: 32, width: 32, objectFit: "contain", borderRadius: 6, background: "rgba(255,255,255,.12)", padding: 3 }} />
+              )}
+              <div>
+                <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16, color: "#fff" }}>{school?.name ?? "Orr Recruiting"}</div>
+                <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{profile.role === "team_lead" ? "Team Lead" : "Fellow"} Workspace</div>
+              </div>
             </div>
             {([["plan", `This Week (${plan.length})`], ["board", "My School"], ["playbook", "Playbook"]] as const).map(([k, l]) => (
-              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${C.orange}` : "3px solid transparent" }}>{l}</button>
+              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent" }}>{l}</button>
             ))}
           </div>
           <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
@@ -82,8 +89,8 @@ export default function WorkspaceClient({
             <p style={{ color: C.grayMute }}>{plan.length} moves queued at your school.</p>
             <div style={{ display: "flex", flexDirection: "column", gap: 11, marginTop: 16 }}>
               {plan.map((a) => (
-                <div key={a.id} onClick={() => setOpenId(a.cand.id)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${C.orange}`, borderRadius: 12, padding: "15px 18px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }}>
-                  <span style={{ width: 96, fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.orange }}>{a.type}</span>
+                <div key={a.id} onClick={() => setOpenId(a.cand.id)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 12, padding: "15px 18px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }}>
+                  <span style={{ width: 96, fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: accent }}>{a.type}</span>
                   <div style={{ flex: 1 }}><div style={{ fontWeight: 700, color: C.gray }}>{a.cand.name}</div><div style={{ fontSize: 13, color: C.grayMute }}>{a.why} · {a.cand.area_of_study}</div></div>
                   <StagePill stage={a.cand.stage} />
                 </div>
