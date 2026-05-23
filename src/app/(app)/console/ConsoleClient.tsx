@@ -57,6 +57,29 @@ export default function ConsoleClient({
       setListing(false);
     }
   }
+
+  // ---- clear data (danger zone, typed confirmation) ----
+  const CONFIRM = "DELETE ALL CANDIDATES";
+  const [confirmText, setConfirmText] = useState("");
+  const [clearing, setClearing] = useState(false);
+  const [clearMsg, setClearMsg] = useState<string | null>(null);
+  async function clearData() {
+    setClearing(true); setClearMsg(null);
+    try {
+      const res = await fetch("/api/clear-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: confirmText }),
+      });
+      const data = await res.json();
+      if (!res.ok) setClearMsg(`Error: ${typeof data.error === "string" ? data.error : JSON.stringify(data)}`);
+      else { setClearMsg(`Cleared ${data.deleted} candidates. Refresh to see the empty state.`); setConfirmText(""); }
+    } catch (e: any) {
+      setClearMsg(`Error: ${e?.message ?? "Request failed"}`);
+    } finally {
+      setClearing(false);
+    }
+  }
   async function runSync(mode: "full" | "refresh") {
     setSyncing(true); setSyncResult(null); setSyncError(null);
     try {
@@ -236,6 +259,27 @@ export default function ConsoleClient({
               <p style={{ fontSize: 12.5, color: C.grayMute, marginTop: 16, fontStyle: "italic" }}>
                 First run is a connection + data-shape test. Synced candidates won't be sorted into schools until university normalization is added — that's the next step.
               </p>
+            </div>
+
+            {/* DANGER ZONE — typed-confirmation clear */}
+            <div style={{ background: "#fff", border: `1px solid ${C.orange}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
+              <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 4px", color: C.orange }}>Danger zone — clear all candidates</h3>
+              <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 12px", lineHeight: 1.5 }}>
+                Deletes every candidate and their notes, favorites, and AI rows so you can re-sync clean. Schools, users, playbook, and goals are kept. To confirm, type <b style={{ color: C.gray }}>{CONFIRM}</b> below.
+              </p>
+              <div style={{ display: "flex", gap: 10 }}>
+                <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={CONFIRM}
+                  style={{ flex: 1, padding: "11px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, fontFamily: "monospace" }} />
+                <button onClick={clearData} disabled={clearing || confirmText !== CONFIRM}
+                  style={{ border: "none", background: confirmText === CONFIRM && !clearing ? C.orange : "#E4B5A6", color: "#fff", fontWeight: 700, padding: "11px 18px", borderRadius: 10, cursor: confirmText === CONFIRM && !clearing ? "pointer" : "not-allowed", fontSize: 14, whiteSpace: "nowrap" }}>
+                  {clearing ? "Clearing…" : "Clear data"}
+                </button>
+              </div>
+              {clearMsg && (
+                <div style={{ marginTop: 14, background: clearMsg.startsWith("Error") ? "#FBE7DF" : "#E8F5EE", border: `1px solid ${clearMsg.startsWith("Error") ? C.orange : C.good}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: clearMsg.startsWith("Error") ? "#8A3A1E" : "#1B5E3F" }}>
+                  {clearMsg}
+                </div>
+              )}
             </div>
           </>
         )}

@@ -2,109 +2,160 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isSuper } from "@/lib/types";
+import { mostAdvancedStage, routeToSchoolName } from "@/lib/stages";
 
 const JAZZ_BASE = "https://api.resumatorapi.com/v1";
+const TARGET_JOB = "10815185"; // TEST Orr Fellowship 2027 — Early Career Dev Program
 
-// POST /api/sync   body: { mode: "full" | "refresh" }
-//  full     → initial pull of all applicants
-//  refresh  → weekly: add new applicants + re-sync stages on existing ones
-//
-// SECURITY: super-admin only. The JazzHR key lives in a server env var and is
-// never sent to the browser. The browser calls THIS endpoint, not JazzHR.
+// ---- helpers ----------------------------------------------------------------
+async function jazzGet(path: string, apiKey: string): Promise<any> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${JAZZ_BASE}${path}${path.includes("?") ? "&" : "?"}apikey=${apiKey}`);
+    if (res.status === 429) {
+      // rate limited — JazzHR window is ~62s
+      await new Promise((r) => setTimeout(r, 62000));
+      continue;
+    }
+    if (!res.ok) throw new Error(`JazzHR ${res.status} on ${path}`);
+    return res.json();
+  }
+  throw new Error(`JazzHR repeatedly rate-limited on ${path}`);
+}
+
+// pull a questionnaire answer by exact question string
+function q(detail: any, question: string): string | null {
+  const arr = Array.isArray(detail?.questionnaire) ? detail.questionnaire : [];
+  const hit = arr.find((x: any) => x?.question === question);
+  return hit?.answer ?? null;
+}
+
+// map a JazzHR applicant detail → our candidate row
+function mapDetail(d: any) {
+  const jobs = Array.isArray(d?.jobs) ? d.jobs : [];
+  const progresses = jobs.map((j: any) => j?.applicant_progress).filter(Boolean);
+  const stage = mostAdvancedStage(progresses);
+  const bestJob = jobs.find((j: any) => j?.applicant_progress && stageMatches(j.applicant_progress, stage));
+  const university = q(d, "University");
+  return {
+    jazz_id: d.id,
+    name: [d.first_name, d.last_name].filter(Boolean).join(" ") || "Unknown",
+    email: d.email ?? null,
+    phone: d.phone ?? null,
+    apply_date: d.apply_date ?? null,
+    linkedin: d.linkedin_url ?? null,
+    resume_link: d.resume_link ?? null,
+    stage,
+    job_title: bestJob?.job_title ?? null,
+    university_raw: university,
+    gpa: q(d, "Grade Point Average (GPA)"),
+    grad_date: q(d, "Expected Graduation Date"),
+    area_of_study: q(d, "Area of Study"),
+    source: "jazzhr" as const,
+    // NB: point_person, notes, AI fields, favorites, not_interested are
+    // NEVER written by sync — they're local-only. Upsert only touches the
+    // columns above, leaving those intact on existing rows.
+  };
+}
+function stageMatches(progress: string, stage: string | null): boolean {
+  return stage != null && progress.toLowerCase().trim() === stage;
+}
+
+// ---- POST: scoped, checkpointed sync ---------------------------------------
+// body: { mode: "full" | "refresh", batch?: number }
+//  Processes applicants for TARGET_JOB. Fetches detail 3-at-a-time, writes each
+//  batch immediately (checkpointed), records progress in sync_meta so a timed-out
+//  run can be re-triggered and continue. jazz_id upsert makes re-runs safe.
 export async function POST(request: NextRequest) {
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) {
     return NextResponse.json({ error: "Forbidden — super-admin only" }, { status: 403 });
   }
-
   const apiKey = process.env.JAZZHR_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: "JAZZHR_API_KEY not configured" }, { status: 500 });
+  if (!apiKey) return NextResponse.json({ error: "JAZZHR_API_KEY not configured" }, { status: 500 });
+
+  const { mode = "full" } = await request.json().catch(() => ({ mode: "full" }));
+  const db = createServiceClient();
+
+  // 1. applicant stubs for the target job
+  let stubs: { id: string }[];
+  try {
+    const raw = await jazzGet(`/applicants2jobs?job_id=${TARGET_JOB}`, apiKey);
+    const arr = Array.isArray(raw) ? raw : [];
+    stubs = arr.map((x: any) => ({ id: x.applicant_id ?? x.id })).filter((x: any) => x.id);
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 502 });
   }
 
-  const { mode = "refresh" } = await request.json().catch(() => ({ mode: "refresh" }));
-  const db = createServiceClient(); // bypasses RLS — trusted server context
-
-  // 1. page through JazzHR applicants (100/page until a short page)
-  const applicants: any[] = [];
-  for (let page = 1; page <= 50; page++) {
-    const res = await fetch(`${JAZZ_BASE}/applicants/page/${page}?apikey=${apiKey}`);
-    if (res.status === 429) {
-      // rate limited — back off briefly and retry the same page
-      await new Promise((r) => setTimeout(r, 2000));
-      page--;
-      continue;
-    }
-    if (!res.ok) {
-      return NextResponse.json({ error: `JazzHR ${res.status}` }, { status: 502 });
-    }
-    const batch = await res.json();
-    const arr = Array.isArray(batch) ? batch : [];
-    applicants.push(...arr);
-    if (arr.length < 100) break; // last page
+  // 2. checkpoint: skip applicants already synced when in "refresh"; in "full"
+  //    we still upsert everyone (cheap, and refreshes stages).
+  let toProcess = stubs;
+  if (mode === "refresh") {
+    const { data: existing } = await db.from("candidates").select("jazz_id");
+    const have = new Set((existing ?? []).map((c) => c.jazz_id));
+    toProcess = stubs.filter((s) => !have.has(s.id));
   }
 
-  // 2. map JazzHR → our candidate shape (stage = source of truth on applicant)
-  const rows = applicants.map((a) => ({
-    jazz_id: a.id,
-    name: [a.first_name, a.last_name].filter(Boolean).join(" ") || a.name || "Unknown",
-    email: a.email ?? null,
-    stage: a.workflow_step ?? a.prospect ?? null,
-    university_raw: a.university ?? null,
-    linkedin: a.linkedin ?? null,
-    resume_link: a.resume ?? null,
-    source: "jazzhr" as const,
-  }));
+  // 3. fetch detail 3-at-a-time, map + route, write each batch immediately
+  let written = 0, routed = 0, unrouted = 0, failed = 0;
+  const CONC = 3;
+  // soft time budget so we return before the function is killed; re-trigger continues
+  const startedAt = Date.now();
+  const TIME_BUDGET_MS = 50_000;
 
-  // 3. upsert on jazz_id. On "refresh" we still upsert all rows, but the
-  //    unique jazz_id means existing candidates get their stage updated in
-  //    place rather than duplicated — exactly the weekly re-sync behavior.
-  //    (Field-level "don't clobber fellow edits" handled later via a merge view.)
-  let written = 0;
-  for (let i = 0; i < rows.length; i += 100) {
-    const chunk = rows.slice(i, i + 100);
-    const { error } = await db
-      .from("candidates")
-      .upsert(chunk, { onConflict: "jazz_id" });
-    if (error) {
-      return NextResponse.json({ error: error.message, writtenSoFar: written }, { status: 500 });
+  for (let i = 0; i < toProcess.length; i += CONC) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      await db.from("sync_meta").upsert(
+        { id: 1, last_sync: new Date().toISOString(), total_cached: written, last_status: `${mode} partial — re-run to continue` },
+        { onConflict: "id" }
+      );
+      return NextResponse.json({ ok: true, mode, partial: true, written, routed, unrouted, failed, remaining: toProcess.length - i });
     }
-    written += chunk.length;
+    const slice = toProcess.slice(i, i + CONC);
+    const details = await Promise.all(
+      slice.map((s) => jazzGet(`/applicants/${s.id}`, apiKey).catch(() => null))
+    );
+    const rows = [] as any[];
+    for (const d of details) {
+      if (!d) { failed++; continue; }
+      const row = mapDetail(d);
+      const schoolName = routeToSchoolName(row.university_raw);
+      let school_id: string | null = null;
+      if (schoolName) {
+        const { data: sch } = await db.from("schools").select("id").eq("name", schoolName).maybeSingle();
+        school_id = sch?.id ?? null;
+      }
+      if (school_id) routed++; else unrouted++;
+      rows.push({ ...row, school_id });
+    }
+    if (rows.length) {
+      const { error } = await db.from("candidates").upsert(rows, { onConflict: "jazz_id" });
+      if (error) return NextResponse.json({ error: error.message, writtenSoFar: written }, { status: 500 });
+      written += rows.length;
+    }
   }
 
-  // 4. record the sync run
   await db.from("sync_meta").upsert(
-    { id: 1, last_sync: new Date().toISOString(), total_cached: rows.length, last_status: `${mode} ok` },
+    { id: 1, last_sync: new Date().toISOString(), total_cached: written, last_status: `${mode} complete` },
     { onConflict: "id" }
   );
-
-  return NextResponse.json({ ok: true, mode, fetched: rows.length, written });
+  return NextResponse.json({ ok: true, mode, partial: false, written, routed, unrouted, failed });
 }
 
-// GET /api/sync  → list JazzHR jobs (read-only diagnostic, writes nothing).
-// Confirms the API key works and shows job IDs so the scoped sync can target one.
+// ---- GET: list jobs (read-only diagnostic) ----------------------------------
 export async function GET() {
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) {
     return NextResponse.json({ error: "Forbidden — super-admin only" }, { status: 403 });
   }
   const apiKey = process.env.JAZZHR_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: "JAZZHR_API_KEY not configured" }, { status: 500 });
-  }
+  if (!apiKey) return NextResponse.json({ error: "JAZZHR_API_KEY not configured" }, { status: 500 });
 
-  const res = await fetch(`${JAZZ_BASE}/jobs?apikey=${apiKey}`);
-  if (!res.ok) {
-    return NextResponse.json({ error: `JazzHR ${res.status}` }, { status: 502 });
+  try {
+    const data = await jazzGet(`/jobs`, apiKey);
+    const arr = Array.isArray(data) ? data : [];
+    const jobs = arr.map((j: any) => ({ id: j.id, title: j.title ?? j.name ?? "(untitled)", status: j.status ?? null, city: j.city ?? null }));
+    return NextResponse.json({ ok: true, count: jobs.length, jobs });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 502 });
   }
-  const data = await res.json();
-  const arr = Array.isArray(data) ? data : [];
-  // return a trimmed shape: id, title, status, and applicant count if present
-  const jobs = arr.map((j: any) => ({
-    id: j.id,
-    title: j.title ?? j.name ?? "(untitled)",
-    status: j.status ?? null,
-    city: j.city ?? null,
-  }));
-  return NextResponse.json({ ok: true, count: jobs.length, jobs });
 }
