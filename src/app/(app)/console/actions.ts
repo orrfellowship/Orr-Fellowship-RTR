@@ -53,6 +53,34 @@ export async function getOutreach(candidateId: string) {
   return { ok: true, log: data ?? [] };
 }
 
+export async function addPhase(schoolId: string, label: string, title: string, sortOrder: number) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase
+    .from("playbook_phases")
+    .insert({ school_id: schoolId, label, title, sort_order: sortOrder });
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function upsertTask(t: {
+  id?: string; phase_id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean;
+}) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("playbook_tasks").upsert(t.id ? t : { ...t, id: undefined });
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function deleteTask(taskId: string) {
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("playbook_tasks").delete().eq("id", taskId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
 export async function addConnection(candidateId: string, relationship: string) {
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();

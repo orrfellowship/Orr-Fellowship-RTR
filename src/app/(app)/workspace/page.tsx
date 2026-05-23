@@ -21,7 +21,7 @@ export default async function WorkspacePage() {
 
   const { data: candidates } = await supabase
     .from("candidates")
-    .select("id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested")
+    .select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested")
     .eq("school_id", schoolId)
     .order("name");
 

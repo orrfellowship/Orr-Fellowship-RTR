@@ -16,7 +16,7 @@ const C = {
 const HEAD = "'Cabin', sans-serif";
 
 type Cand = {
-  id: string; name: string; email: string | null; stage: string | null;
+  id: string; jazz_id: string | null; name: string; email: string | null; stage: string | null;
   gpa: string | null; area_of_study: string | null; linkedin: string | null;
   resume_link: string | null; point_person_id: string | null;
   not_interested: boolean; is_favorite: boolean;
@@ -240,9 +240,9 @@ function CandidateDrawer({ c, onClose, startTransition }: {
             <a href={c.linkedin ?? "#"} target="_blank" rel="noopener noreferrer"
               style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>LinkedIn ↗</a>
             <button
-              onClick={() => { if (c.resume_link) window.open(`/api/resume?url=${encodeURIComponent(c.resume_link)}`, "_blank"); }}
-              disabled={!c.resume_link}
-              style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.resume_link ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.resume_link ? "pointer" : "not-allowed" }}>Résumé ↗</button>
+              onClick={() => { if (c.jazz_id) window.open(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id)}`, "_blank"); }}
+              disabled={!c.jazz_id}
+              style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>Résumé ↗</button>
           </div>
 
           {/* warm-intro: shared club / same-major teammates */}

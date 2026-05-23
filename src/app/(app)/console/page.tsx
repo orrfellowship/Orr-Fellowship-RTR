@@ -18,7 +18,7 @@ export default async function ConsolePage() {
 
   const { data: candidates } = await supabase
     .from("candidates")
-    .select("id, name, email, school_id, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested")
+    .select("id, jazz_id, name, email, school_id, stage, gpa, area_of_study, university_raw, linkedin, resume_link, point_person_id, not_interested")
     .order("name");
 
   const { data: favs } = await supabase
@@ -34,6 +34,11 @@ export default async function ConsolePage() {
   const { data: goals } = await supabase
     .from("school_goals")
     .select("school_id, goal_sourced, goal_contacted, goal_applied");
+
+  const { data: phases } = await supabase
+    .from("playbook_phases")
+    .select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, due_date, done)")
+    .order("sort_order");
 
   let ai: { candidate_id: string; resume_score: number | null }[] = [];
   if (isSuper(profile.role)) {
@@ -52,6 +57,7 @@ export default async function ConsolePage() {
       team={team ?? []}
       goals={goals ?? []}
       ai={ai}
+      phases={phases ?? []}
     />
   );
 }
