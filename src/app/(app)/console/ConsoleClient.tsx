@@ -6,7 +6,7 @@ import { isSuper, isAdminPlus } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
   reassignPointPerson, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
-  upsertGoal, updateUser, addCandidate, bulkImportCandidates, deleteOutreach, deleteConnection,
+  upsertGoal, updateUser, updateUserName, addCandidate, bulkImportCandidates, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
@@ -147,8 +147,13 @@ export default function ConsoleClient({
   }, [scope, candidates, goals, schools]);
 
   const open = candidates.find((c) => c.id === openId) ?? null;
-  const boardCands = candidates.filter((c) => c.school_id === boardSchool);
   const boardSchoolObj = schools.find((s) => s.id === boardSchool);
+  const boardTier = boardSchoolObj?.tier ?? null;
+  const isTierBoard = boardTier === "satellite" || boardTier === "bonus";
+  const tierBoardIds = isTierBoard ? new Set(schools.filter((s) => s.tier === boardTier).map((s) => s.id)) : null;
+  const boardCands = isTierBoard && tierBoardIds
+    ? candidates.filter((c) => c.school_id && tierBoardIds.has(c.school_id))
+    : candidates.filter((c) => c.school_id === boardSchool);
   const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
 
@@ -339,10 +344,10 @@ export default function ConsoleClient({
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>
-                  {boardSchoolObj?.logo_url && <img src={boardSchoolObj.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 5, marginRight: 10, verticalAlign: "middle" }} />}
-                  {boardSchoolObj?.name ?? "School"} Board
+                  {!isTierBoard && boardSchoolObj?.logo_url && <img src={boardSchoolObj.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 5, marginRight: 10, verticalAlign: "middle" }} />}
+                  {isTierBoard ? (boardTier === "satellite" ? "Satellite Group" : "Bonus Group") : (boardSchoolObj?.name ?? "School")} Board
                 </h1>
-                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardCands.length} candidates</p>
+                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardCands.length} candidates{isTierBoard ? ` across ${tierBoardIds?.size ?? 0} schools` : ""}</p>
               </div>
               <select value={boardSchool} onChange={(e) => setBoardSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
                 {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -574,7 +579,12 @@ export default function ConsoleClient({
               </div>
               {users.map((u) => (
                 <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13.5, color: C.gray }}>{u.full_name}{u.id === profile.id && <span style={{ marginLeft: 6, fontSize: 11, color: C.navy2, background: `${C.navy2}22`, padding: "1px 6px", borderRadius: 99 }}>you</span>}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input defaultValue={u.full_name}
+                      onBlur={(e) => { const n = e.target.value.trim(); if (n && n !== u.full_name) startTransition(() => { updateUserName(u.id, n); }); }}
+                      style={{ fontWeight: 700, fontSize: 13.5, color: C.gray, border: "none", background: "transparent", outline: "none", borderBottom: `1px solid ${C.line}`, flex: 1, padding: "2px 0", minWidth: 0 }} />
+                    {u.id === profile.id && <span style={{ fontSize: 11, color: C.navy2, background: `${C.navy2}22`, padding: "1px 6px", borderRadius: 99, flexShrink: 0 }}>you</span>}
+                  </div>
                   <div style={{ fontSize: 13, color: C.grayMute }}>{u.email}</div>
                   <select defaultValue={u.role}
                     onChange={(e) => startTransition(() => { updateUser(u.id, e.target.value, u.school_id); })}
@@ -796,7 +806,13 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
               style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>
               LinkedIn ↗
             </a>
-            <button onClick={() => { if (c.jazz_id) window.open(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id)}`, "_blank"); }}
+            <button
+              onClick={async () => {
+                if (!c.jazz_id) return;
+                const res = await fetch(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id)}`);
+                if (res.ok) { const url = URL.createObjectURL(await res.blob()); window.open(url, "_blank"); }
+                else { alert("Resume unavailable (private file) — view this candidate directly in JazzHR."); }
+              }}
               disabled={!c.jazz_id}
               style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>
               Résumé ↗

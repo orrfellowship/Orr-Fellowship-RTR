@@ -48,10 +48,10 @@ export async function GET(request: NextRequest) {
   }
 
   if (!fileRes.ok) {
-    // Last resort: redirect the browser directly to the URL.
-    // Works when JazzHR returns a CDN/public URL that the server can't follow
-    // but the browser can (different IP, cookie, etc.).
-    return NextResponse.redirect(resumeUrl, 307);
+    return NextResponse.json(
+      { unavailable: true, error: "Resume file is private — view this candidate directly in JazzHR." },
+      { status: 422 }
+    );
   }
 
   const contentType = fileRes.headers.get("content-type") ?? "application/octet-stream";

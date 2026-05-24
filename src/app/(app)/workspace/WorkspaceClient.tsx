@@ -41,10 +41,10 @@ function StagePill({ stage }: { stage: string | null }) {
 }
 
 export default function WorkspaceClient({
-  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals,
+  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName,
 }: {
   profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
-  allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[];
+  allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
 }) {
   const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all">("plan");
   const [allFilter, setAllFilter] = useState<string>("All schools");
@@ -57,9 +57,9 @@ export default function WorkspaceClient({
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
   const open = candidates.find((c) => c.id === openId) ?? null;
 
-  const PHASE_ORDER_PIPELINE = ["sourced", "contacted", "applied", "advanced", "finalist", "fellow"] as const;
-  const PHASE_LABEL: Record<string, string> = { sourced: "Sourced", contacted: "Contacted", applied: "Applied", advanced: "Advanced", finalist: "Finalist", fellow: "Fellow" };
-  const PHASE_TONE: Record<string, string> = { sourced: C.navy3, contacted: C.blue, applied: C.navy2, advanced: C.orange, finalist: C.gold, fellow: C.good };
+  const PHASE_ORDER_PIPELINE = ["sourced", "contacted", "applied"] as const;
+  const PHASE_LABEL: Record<string, string> = { sourced: "Sourced", contacted: "Contacted", applied: "Applied" };
+  const PHASE_TONE: Record<string, string> = { sourced: C.navy3, contacted: C.blue, applied: C.navy2 };
 
   const phaseCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -96,7 +96,7 @@ export default function WorkspaceClient({
                 <img src={school.logo_url} alt={school.name} style={{ height: 32, width: 32, objectFit: "contain", borderRadius: 6, background: "rgba(255,255,255,.12)", padding: 3 }} />
               )}
               <div>
-                <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16, color: "#fff" }}>{school?.name ?? "Orr Recruiting"}</div>
+                <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16, color: "#fff" }}>{groupName ?? school?.name ?? "Orr Recruiting"}</div>
                 <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{profile.role === "team_lead" ? "Team Lead" : "Fellow"} Workspace</div>
               </div>
             </div>
@@ -231,7 +231,11 @@ export default function WorkspaceClient({
                       <div><StagePill stage={c.stage} /></div>
                       <div style={{ display: "flex", gap: 6 }}>
                         {c.linkedin && <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: C.navy2, textDecoration: "none", border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px" }}>in</a>}
-                        {c.jazz_id && <button onClick={() => window.open(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id!)}`, "_blank")} style={{ fontSize: 11, fontWeight: 700, color: C.navy2, border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px", background: "#fff", cursor: "pointer" }}>CV</button>}
+                        {c.jazz_id && <button onClick={async () => {
+                          const res = await fetch(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id!)}`);
+                          if (res.ok) { const url = URL.createObjectURL(await res.blob()); window.open(url, "_blank"); }
+                          else { alert("Resume unavailable (private file) — view this candidate directly in JazzHR."); }
+                        }} style={{ fontSize: 11, fontWeight: 700, color: C.navy2, border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px", background: "#fff", cursor: "pointer" }}>CV</button>}
                       </div>
                     </div>
                   );
@@ -410,7 +414,12 @@ function CandidateDrawer({ c, onClose, startTransition }: {
             <a href={c.linkedin ?? "#"} target="_blank" rel="noopener noreferrer"
               style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>LinkedIn ↗</a>
             <button
-              onClick={() => { if (c.jazz_id) window.open(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id)}`, "_blank"); }}
+              onClick={async () => {
+                if (!c.jazz_id) return;
+                const res = await fetch(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id)}`);
+                if (res.ok) { const url = URL.createObjectURL(await res.blob()); window.open(url, "_blank"); }
+                else { alert("Resume unavailable (private file) — view this candidate directly in JazzHR."); }
+              }}
               disabled={!c.jazz_id}
               style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>Résumé ↗</button>
           </div>

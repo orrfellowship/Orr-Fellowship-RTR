@@ -11,38 +11,58 @@ export default async function WorkspacePage() {
   if (profile.role === "admin" || profile.role === "super_admin") redirect("/console");
 
   const supabase = createServerSupabase();
+  const serviceDb = createServiceClient();
   const schoolId = profile.school_id ?? "";
 
   const { data: school } = await supabase
     .from("schools")
-    .select("id, name, color_primary, logo_url")
+    .select("id, name, tier, color_primary, logo_url")
     .eq("id", schoolId)
     .maybeSingle();
 
-  const { data: candidates } = await supabase
-    .from("candidates")
-    .select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested")
-    .eq("school_id", schoolId)
-    .order("name");
+  // Satellite/bonus schools are ONE team — fetch all schools in the same tier.
+  const tier = (school as any)?.tier ?? null;
+  const isTierGroup = tier === "satellite" || tier === "bonus";
+  let tierSchoolIds: string[] = [schoolId];
+  let groupName: string | null = null;
 
-  const { data: favs } = await supabase
-    .from("favorites")
-    .select("candidate_id")
-    .eq("user_id", profile.id);
+  if (isTierGroup) {
+    const { data: tierSchools } = await serviceDb
+      .from("schools")
+      .select("id")
+      .eq("tier", tier);
+    tierSchoolIds = (tierSchools ?? []).map((s: any) => s.id);
+    groupName = tier === "satellite" ? "Satellite Group" : "Bonus Group";
+  }
 
-  const { data: team } = await supabase
-    .from("profiles")
-    .select("id, full_name")
-    .eq("school_id", schoolId);
+  // Fetch candidates, team, and phases scoped to the full tier (or just the school).
+  const [
+    { data: candidates },
+    { data: favs },
+    { data: team },
+    { data: phases },
+  ] = await Promise.all([
+    serviceDb
+      .from("candidates")
+      .select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested")
+      .in("school_id", tierSchoolIds)
+      .order("name"),
+    supabase
+      .from("favorites")
+      .select("candidate_id")
+      .eq("user_id", profile.id),
+    serviceDb
+      .from("profiles")
+      .select("id, full_name")
+      .in("school_id", tierSchoolIds),
+    serviceDb
+      .from("playbook_phases")
+      .select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, due_date, done)")
+      .in("school_id", tierSchoolIds)
+      .order("sort_order"),
+  ]);
 
-  const { data: phases } = await supabase
-    .from("playbook_phases")
-    .select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, due_date, done)")
-    .eq("school_id", schoolId)
-    .order("sort_order");
-
-  // Cross-school data for Standings — bypasses RLS so fellows/leads can see org-wide pipeline
-  const serviceDb = createServiceClient();
+  // Cross-school data for Standings — serviceDb bypasses RLS so fellows/leads can see org-wide pipeline
   const [{ data: allSchools }, { data: allCandidates }, { data: allGoals }] = await Promise.all([
     serviceDb.from("schools").select("id, name, tier, color_primary, logo_url").order("name"),
     serviceDb.from("candidates").select("id, name, email, school_id, stage, gpa, area_of_study, jazz_id, linkedin").order("name"),
@@ -55,13 +75,14 @@ export default async function WorkspacePage() {
   return (
     <WorkspaceClient
       profile={profile}
-      school={school ?? null}
+      school={school ? { id: school.id, name: school.name, color_primary: (school as any).color_primary, logo_url: (school as any).logo_url } : null}
       candidates={enriched}
       team={team ?? []}
       phases={phases ?? []}
       allSchools={allSchools ?? []}
       allCandidates={allCandidates ?? []}
       allGoals={allGoals ?? []}
+      groupName={groupName}
     />
   );
 }

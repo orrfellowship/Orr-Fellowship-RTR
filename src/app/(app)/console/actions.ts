@@ -132,6 +132,16 @@ export async function updateUser(user_id: string, role: string, school_id: strin
   return { ok: true };
 }
 
+export async function updateUserName(user_id: string, full_name: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("profiles").update({ full_name }).eq("id", user_id);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
 export async function addConnection(candidateId: string, relationship: string) {
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
