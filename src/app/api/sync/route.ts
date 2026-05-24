@@ -43,9 +43,12 @@ function q(detail: any, ...labels: string[]): string | null {
 // map a JazzHR applicant detail → our candidate row
 function mapDetail(d: any) {
   const jobs = Array.isArray(d?.jobs) ? d.jobs : d?.jobs ? [d.jobs] : [];
-  const progresses = jobs.map((j: any) => j?.applicant_progress).filter(Boolean);
-  const stage = mostAdvancedStage(progresses) ?? "new";
-  const bestJob = jobs.find((j: any) => j?.applicant_progress && stageMatches(j.applicant_progress, stage));
+  // Applicants are pre-filtered to TARGET_JOB via applicants2jobs, but their
+  // detail may include other job entries (e.g., applied to a prior cohort too).
+  // Read stage only from the TARGET_JOB entry; fall back to first job if absent.
+  const targetJob = jobs.find((j: any) => j?.job_id === TARGET_JOB) ?? jobs[0] ?? null;
+  const progressText = targetJob?.applicant_progress ?? "";
+  const stage = mostAdvancedStage(progressText ? [progressText] : []) ?? "new";
   const university = q(d, "University", "University Name", "College", "School", "Institution", "College/University");
   return {
     jazz_id: d.id,
@@ -56,7 +59,7 @@ function mapDetail(d: any) {
     linkedin: d.linkedin_url ?? null,
     resume_link: d.resume_link ?? null,
     stage,
-    job_title: bestJob?.job_title ?? null,
+    job_title: targetJob?.job_title ?? null,
     university_raw: university,
     gpa: q(d, "Grade Point Average (GPA)", "GPA", "Grade Point Average"),
     grad_date: q(d, "Expected Graduation Date", "Graduation Date", "Expected Graduation"),
@@ -66,9 +69,6 @@ function mapDetail(d: any) {
     // NEVER written by sync — they're local-only. Upsert only touches the
     // columns above, leaving those intact on existing rows.
   };
-}
-function stageMatches(progress: string, stage: string | null): boolean {
-  return stage != null && progress.toLowerCase().trim() === stage;
 }
 
 // ---- POST: scoped, checkpointed sync ---------------------------------------
