@@ -42,7 +42,7 @@ function q(detail: any, ...labels: string[]): string | null {
 
 // map a JazzHR applicant detail → our candidate row
 function mapDetail(d: any) {
-  const jobs = Array.isArray(d?.jobs) ? d.jobs : [];
+  const jobs = Array.isArray(d?.jobs) ? d.jobs : d?.jobs ? [d.jobs] : [];
   const progresses = jobs.map((j: any) => j?.applicant_progress).filter(Boolean);
   const stage = mostAdvancedStage(progresses) ?? "new";
   const bestJob = jobs.find((j: any) => j?.applicant_progress && stageMatches(j.applicant_progress, stage));
