@@ -160,6 +160,7 @@ export default function ConsoleClient({
 
   // goal draft state: school_id → {sourced, contacted, applied}
   const [goalDrafts, setGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
+  const [goalSaved, setGoalSaved] = useState<Record<string, "saved" | "error">>({});
   const [expandedTiers, setExpandedTiers] = useState<Set<string>>(new Set());
   const toggleTier = (tier: string) => setExpandedTiers((prev) => {
     const next = new Set(prev);
@@ -188,7 +189,9 @@ export default function ConsoleClient({
               <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{superUser ? "Super Admin" : "Admin"} Console</div>
             </div>
             {TABS.map(([k, l]) => (
-              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${C.orange}` : "3px solid transparent" }}>{l}</button>
+              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${C.orange}` : "3px solid transparent" }}>
+                {k === "standings" ? <>Sc<em style={{ color: C.orange, fontStyle: "italic" }}>orr</em> B<em style={{ color: C.orange, fontStyle: "italic" }}>orr</em>d</> : l}
+              </button>
             ))}
           </div>
           <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
@@ -498,10 +501,13 @@ export default function ConsoleClient({
                         style={{ width: 60, padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.line}`, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center" }} />
                     </label>
                   ))}
-                  <button onClick={() => startTransition(() => {
-                    upsertGoal(s.id, Number(draft.sourced) || 0, Number(draft.contacted) || 0, Number(draft.applied) || 0);
-                  })} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>
-                    Save goals
+                  <button onClick={async () => {
+                    const result = await upsertGoal(s.id, Number(draft.sourced) || 0, Number(draft.contacted) || 0, Number(draft.applied) || 0);
+                    const status = result.error ? "error" : "saved";
+                    setGoalSaved((prev) => ({ ...prev, [s.id]: status }));
+                    setTimeout(() => setGoalSaved((prev) => { const n = { ...prev }; delete n[s.id]; return n; }), 2500);
+                  }} style={{ border: "none", background: goalSaved[s.id] === "saved" ? C.good : goalSaved[s.id] === "error" ? C.orange : C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, transition: "background .2s", minWidth: 90 }}>
+                    {goalSaved[s.id] === "saved" ? "Saved ✓" : goalSaved[s.id] === "error" ? "Error ✕" : "Save goals"}
                   </button>
                 </div>
               </div>

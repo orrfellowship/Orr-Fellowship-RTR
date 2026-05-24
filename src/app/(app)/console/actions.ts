@@ -113,12 +113,13 @@ export async function bulkImportCandidates(
 export async function upsertGoal(school_id: string, goal_sourced: number, goal_contacted: number, goal_applied: number) {
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
-  const supabase = createServerSupabase();
-  const { error } = await supabase
+  const db = createServiceClient();
+  const { error } = await db
     .from("school_goals")
     .upsert({ school_id, goal_sourced, goal_contacted, goal_applied }, { onConflict: "school_id" });
   if (error) return { error: error.message };
   revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true };
 }
 
