@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { isSuper, isAdminPlus } from "@/lib/types";
+import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -66,7 +67,9 @@ export async function addPhase(schoolId: string, label: string, title: string, s
 }
 
 export async function upsertTask(t: {
-  id?: string; phase_id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean;
+  id?: string; phase_id: string; text: string; assignee_id: string | null;
+  assignee_label: string | null; month_label: string | null; notes: string | null;
+  due_date: string | null; done: boolean;
 }) {
   const supabase = createServerSupabase();
   const { error } = await supabase.from("playbook_tasks").upsert(t.id ? t : { ...t, id: undefined });
@@ -114,9 +117,25 @@ export async function upsertGoal(school_id: string, goal_sourced: number, goal_c
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
-  const { error } = await db
-    .from("school_goals")
-    .upsert({ school_id, goal_sourced, goal_contacted, goal_applied }, { onConflict: "school_id" });
+  await db.from("school_goals").delete().eq("school_id", school_id);
+  const { error } = await db.from("school_goals").insert({ school_id, goal_sourced, goal_contacted, goal_applied });
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function upsertGroupGoal(schoolIds: string[], goal_sourced: number, goal_contacted: number, goal_applied: number) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!schoolIds.length) return { ok: true };
+  const db = createServiceClient();
+  for (const school_id of schoolIds) {
+    await db.from("school_goals").delete().eq("school_id", school_id);
+  }
+  const { error } = await db.from("school_goals").insert(
+    schoolIds.map((school_id) => ({ school_id, goal_sourced, goal_contacted, goal_applied }))
+  );
   if (error) return { error: error.message };
   revalidatePath("/console");
   revalidatePath("/workspace");
@@ -257,5 +276,44 @@ export async function inviteUser(email: string, full_name: string, role: string,
     );
   }
   revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function seedPlaybook(schoolId: string, force = false) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+
+  if (!force) {
+    const { count } = await db.from("playbook_phases").select("id", { count: "exact", head: true }).eq("school_id", schoolId);
+    if ((count ?? 0) > 0) return { error: "already_seeded" };
+  } else {
+    await db.from("playbook_phases").delete().eq("school_id", schoolId);
+  }
+
+  for (let i = 0; i < PLAYBOOK_DEFAULTS.length; i++) {
+    const role = PLAYBOOK_DEFAULTS[i];
+    const { data: phase, error: phaseErr } = await db
+      .from("playbook_phases")
+      .insert({ school_id: schoolId, title: role.title, label: role.title, sort_order: i })
+      .select("id")
+      .single();
+    if (phaseErr || !phase) continue;
+
+    const tasks = role.tasks.map((t) => ({
+      phase_id: phase.id,
+      text: t.text,
+      month_label: t.month,
+      done: false,
+      assignee_id: null,
+      assignee_label: role.title === "Oct/Nov Milestones" ? "team" : null,
+      notes: null,
+      due_date: null,
+    }));
+    if (tasks.length) await db.from("playbook_tasks").insert(tasks);
+  }
+
+  revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true };
 }

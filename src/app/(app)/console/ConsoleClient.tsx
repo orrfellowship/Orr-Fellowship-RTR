@@ -6,8 +6,8 @@ import { isSuper, isAdminPlus } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
   reassignPointPerson, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
-  upsertGoal, updateUser, updateUserName, addCandidate, bulkImportCandidates, deleteOutreach, deleteConnection,
-  deduplicateCandidates, inviteUser,
+  upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, bulkImportCandidates, deleteOutreach, deleteConnection,
+  deduplicateCandidates, inviteUser, seedPlaybook,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import { phaseOf, STAGE_CONFIG } from "@/lib/stages";
@@ -30,7 +30,7 @@ type TeamMember = { id: string; full_name: string };
 type Goal = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 type AIFlag = { text: string; kind: "standout" | "concern" | "info" };
 type AI = { candidate_id: string; resume_score: number | null; summary: string | null; flags: AIFlag[]; analyzed_at: string | null };
-type Task = { id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean };
+type Task = { id: string; text: string; assignee_id: string | null; assignee_label: string | null; month_label: string | null; notes: string | null; due_date: string | null; done: boolean };
 type Phase = { id: string; label: string; title: string; sort_order: number; school_id: string; playbook_tasks: Task[] };
 type UserProfile = { id: string; full_name: string; email: string; role: string; school_id: string | null; is_active: boolean };
 
@@ -60,9 +60,8 @@ export default function ConsoleClient({
   profile: Profile; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
 }) {
-  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "boards" | "playbooks" | "schools" | "users" | "sync">("overview");
+  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "users" | "sync">("overview");
   const [scope, setScope] = useState<string>("Org-wide");
-  const [boardSchool, setBoardSchool] = useState<string>(schools[0]?.id ?? "");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schools[0]?.id ?? "");
   const [openId, setOpenId] = useState<string | null>(null);
   const [showUnrouted, setShowUnrouted] = useState(false);
@@ -147,26 +146,15 @@ export default function ConsoleClient({
   }, [scope, candidates, goals, schools]);
 
   const open = candidates.find((c) => c.id === openId) ?? null;
-  const boardSchoolObj = schools.find((s) => s.id === boardSchool);
-  const boardTier = boardSchoolObj?.tier ?? null;
-  const isTierBoard = boardTier === "satellite" || boardTier === "bonus";
-  const tierBoardIds = isTierBoard ? new Set(schools.filter((s) => s.tier === boardTier).map((s) => s.id)) : null;
-  const boardCands = isTierBoard && tierBoardIds
-    ? candidates.filter((c) => c.school_id && tierBoardIds.has(c.school_id))
-    : candidates.filter((c) => c.school_id === boardSchool);
   const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
-
 
   // goal draft state: school_id → {sourced, contacted, applied}
   const [goalDrafts, setGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
   const [goalSaved, setGoalSaved] = useState<Record<string, "saved" | "error">>({});
-  const [expandedTiers, setExpandedTiers] = useState<Set<string>>(new Set());
-  const toggleTier = (tier: string) => setExpandedTiers((prev) => {
-    const next = new Set(prev);
-    next.has(tier) ? next.delete(tier) : next.add(tier);
-    return next;
-  });
+  // group goal draft state: tier → {sourced, contacted, applied}
+  const [groupGoalDrafts, setGroupGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
+  const [groupGoalSaved, setGroupGoalSaved] = useState<Record<string, "saved" | "error">>({});
   const goalDraft = (sid: string) => {
     if (goalDrafts[sid]) return goalDrafts[sid];
     const g = goals.find((g) => g.school_id === sid);
@@ -174,8 +162,16 @@ export default function ConsoleClient({
   };
   const setGoalField = (sid: string, field: "sourced" | "contacted" | "applied", val: string) =>
     setGoalDrafts((prev) => ({ ...prev, [sid]: { ...goalDraft(sid), [field]: val } }));
+  const groupGoalDraft = (tier: string, tierSchoolIds: string[]) => {
+    if (groupGoalDrafts[tier]) return groupGoalDrafts[tier];
+    // Use first school's goal as the shared group goal (all should be the same)
+    const g = goals.find((g) => tierSchoolIds.includes(g.school_id));
+    return { sourced: String(g?.goal_sourced ?? 0), contacted: String(g?.goal_contacted ?? 0), applied: String(g?.goal_applied ?? 0) };
+  };
+  const setGroupGoalField = (tier: string, tierSchoolIds: string[], field: "sourced" | "contacted" | "applied", val: string) =>
+    setGroupGoalDrafts((prev) => ({ ...prev, [tier]: { ...groupGoalDraft(tier, tierSchoolIds), [field]: val } }));
 
-  const TABS: [string, string][] = [["overview", "Overview"], ["applicants", "Applicants"], ["standings", "Standings"], ["boards", "Boards"], ["playbooks", "Playbooks"]];
+  const TABS: [string, string][] = [["overview", "Overview"], ["applicants", "Applicants"], ["standings", "Standings"], ["playbook", "Playbook"]];
   if (adminPlus) TABS.push(["schools", "Schools"]);
   if (superUser) TABS.push(["users", "Users"], ["sync", "Sync"]);
 
@@ -244,10 +240,8 @@ export default function ConsoleClient({
                 const sc = candidates.filter((c) => c.school_id === s.id);
                 const accent = s.color_primary ?? C.navy2;
                 return (
-                  <div key={s.id} onClick={() => { setBoardSchool(s.id); setTab("boards"); }}
-                    style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", borderLeft: `4px solid ${accent}` }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "#F0F4FA")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                  <div key={s.id}
+                    style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", borderLeft: `4px solid ${accent}` }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       {s.logo_url && <img src={s.logo_url} alt={s.name} style={{ height: 24, width: 24, objectFit: "contain", borderRadius: 4 }} />}
                       <div>
@@ -341,52 +335,8 @@ export default function ConsoleClient({
           />
         )}
 
-        {/* ---- BOARDS ---- */}
-        {tab === "boards" && (
-          <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
-              <div>
-                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>
-                  {!isTierBoard && boardSchoolObj?.logo_url && <img src={boardSchoolObj.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 5, marginRight: 10, verticalAlign: "middle" }} />}
-                  {isTierBoard ? (boardTier === "satellite" ? "Satellite Group" : "Bonus Group") : (boardSchoolObj?.name ?? "School")} Board
-                </h1>
-                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardCands.length} candidates{isTierBoard ? ` across ${tierBoardIds?.size ?? 0} schools` : ""}</p>
-              </div>
-              <select value={boardSchool} onChange={(e) => setBoardSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                <div>Candidate</div><div>Major</div><div>GPA</div><div>Stage</div><div>Owner</div><div></div>
-              </div>
-              {boardCands.map((c) => (
-                <div key={c.id}
-                  style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: c.not_interested ? 0.5 : 1 }}>
-                  <div onClick={() => setOpenId(c.id)} style={{ cursor: "pointer" }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div>
-                    <div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div>
-                  </div>
-                  <div style={{ fontSize: 13.5 }}>{c.area_of_study}</div>
-                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{c.gpa}</div>
-                  <div><StagePill stage={c.stage} /></div>
-                  <div>
-                    <select value={c.point_person_id ?? ""} onChange={(e) => startTransition(() => { reassignPointPerson(c.id, e.target.value || null); })}
-                      style={{ fontSize: 12.5, fontWeight: 600, color: c.point_person_id ? C.navy : C.orange, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff" }}>
-                      <option value="">Unassigned</option>
-                      {team.map((t) => <option key={t.id} value={t.id}>{t.id === profile.id ? `${t.full_name} (me)` : t.full_name}</option>)}
-                    </select>
-                  </div>
-                  <div onClick={() => startTransition(() => { toggleFavorite(c.id, !c.is_favorite); })} style={{ cursor: "pointer", fontSize: 18, color: c.is_favorite ? C.gold : "#D8DCE5", textAlign: "center" }}>{c.is_favorite ? "★" : "☆"}</div>
-                </div>
-              ))}
-              {boardCands.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No candidates for this school yet.</div>}
-            </div>
-          </>
-        )}
-
-        {/* ---- PLAYBOOKS ---- */}
-        {tab === "playbooks" && (
+        {/* ---- PLAYBOOK ---- */}
+        {tab === "playbook" && (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
@@ -396,9 +346,20 @@ export default function ConsoleClient({
                 </h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>Edit phase names, tasks, assignees, and due dates inline. Changes save on blur.</p>
               </div>
-              <select value={playbookSchool} onChange={(e) => setPlaybookSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <select value={playbookSchool} onChange={(e) => setPlaybookSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                  {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <button onClick={async () => {
+                  const res = await seedPlaybook(playbookSchool);
+                  if (res.error === "already_seeded") {
+                    if (!confirm("This school already has a playbook. Reseed from defaults? (existing tasks will be deleted)")) return;
+                    await seedPlaybook(playbookSchool, true);
+                  }
+                }} style={{ border: "none", background: C.orange, color: "#fff", fontWeight: 700, fontSize: 13, padding: "10px 16px", borderRadius: 10, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  Seed Defaults
+                </button>
+              </div>
             </div>
             <button onClick={() => startTransition(() => { addPhase(playbookSchool, "Month", "New phase", playbookPhases.length); })}
               style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", marginTop: 16 }}>
@@ -422,24 +383,24 @@ export default function ConsoleClient({
                   {p.playbook_tasks.map((t) => (
                     <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${C.line}88` }}>
                       <input type="checkbox" defaultChecked={t.done}
-                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, due_date: t.due_date, done: e.target.checked }); })}
+                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: e.target.checked }); })}
                         style={{ accentColor: C.orange, flexShrink: 0 }} />
                       <input defaultValue={t.text}
-                        onBlur={(e) => { if (e.target.value.trim() !== t.text) startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: e.target.value.trim() || t.text, assignee_id: t.assignee_id, due_date: t.due_date, done: t.done }); }); }}
+                        onBlur={(e) => { if (e.target.value.trim() !== t.text) startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: e.target.value.trim() || t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: t.done }); }); }}
                         style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none", outline: "none", minWidth: 0 }} />
                       <select value={t.assignee_id ?? ""}
-                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: e.target.value || null, due_date: t.due_date, done: t.done }); })}
+                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: e.target.value || null, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: t.done }); })}
                         style={{ fontSize: 12, fontWeight: 600, color: t.assignee_id ? C.navy2 : C.orange, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }}>
                         <option value="">Unassigned</option>
                         {team.map((tm) => <option key={tm.id} value={tm.id}>{tm.id === profile.id ? `${tm.full_name} (me)` : tm.full_name}</option>)}
                       </select>
                       <input type="date" value={t.due_date ?? ""}
-                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, due_date: e.target.value || null, done: t.done }); })}
+                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: e.target.value || null, done: t.done }); })}
                         style={{ fontSize: 12, color: C.grayMute, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }} />
                       <button onClick={() => startTransition(() => { deleteTask(t.id); })} style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>
                     </div>
                   ))}
-                  <button onClick={() => startTransition(() => { upsertTask({ phase_id: p.id, text: "New task", assignee_id: null, due_date: null, done: false }); })}
+                  <button onClick={() => startTransition(() => { upsertTask({ phase_id: p.id, text: "New task", assignee_id: null, assignee_label: null, month_label: null, notes: null, due_date: null, done: false }); })}
                     style={{ marginTop: 10, border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, padding: "8px 14px", borderRadius: 9, cursor: "pointer", width: "100%" }}>
                     + Add task
                   </button>
@@ -460,18 +421,18 @@ export default function ConsoleClient({
             schools: schools.filter((s) => s.tier === tier),
           })).filter((g) => g.schools.length > 0);
 
-          const renderSchoolCard = (s: typeof schools[0]) => {
+          const renderSchoolCard = (s: typeof schools[0], showGoalForm = true) => {
             const accent = s.color_primary ?? C.navy2;
             const sc = candidates.filter((c) => c.school_id === s.id);
             const teamSize = users.filter((u) => u.school_id === s.id).length;
             const g = goals.find((g) => g.school_id === s.id);
             const draft = goalDraft(s.id);
-            const sourced = sc.filter((c) => ["sourced","contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
-            const contacted = sc.filter((c) => ["contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
-            const applied = sc.filter((c) => ["applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
+            const sourced = sc.filter((c) => SOURCED.has(c.stage ?? "")).length;
+            const contacted = sc.filter((c) => CONTACTED.has(c.stage ?? "")).length;
+            const applied = sc.filter((c) => APPLIED.has(c.stage ?? "")).length;
             return (
               <div key={s.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: "18px 22px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: showGoalForm ? 14 : 0 }}>
                   {s.logo_url && <img src={s.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 4 }} />}
                   <div style={{ flex: 1 }}>
                     <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.gray }}>{s.name}</div>
@@ -491,25 +452,27 @@ export default function ConsoleClient({
                     })}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goals:</span>
-                  {(["sourced", "contacted", "applied"] as const).map((field) => (
-                    <label key={field} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                      <span style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{field}</span>
-                      <input type="number" min={0} value={draft[field]}
-                        onChange={(e) => setGoalField(s.id, field, e.target.value)}
-                        style={{ width: 60, padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.line}`, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center" }} />
-                    </label>
-                  ))}
-                  <button onClick={async () => {
-                    const result = await upsertGoal(s.id, Number(draft.sourced) || 0, Number(draft.contacted) || 0, Number(draft.applied) || 0);
-                    const status = result.error ? "error" : "saved";
-                    setGoalSaved((prev) => ({ ...prev, [s.id]: status }));
-                    setTimeout(() => setGoalSaved((prev) => { const n = { ...prev }; delete n[s.id]; return n; }), 2500);
-                  }} style={{ border: "none", background: goalSaved[s.id] === "saved" ? C.good : goalSaved[s.id] === "error" ? C.orange : C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, transition: "background .2s", minWidth: 90 }}>
-                    {goalSaved[s.id] === "saved" ? "Saved ✓" : goalSaved[s.id] === "error" ? "Error ✕" : "Save goals"}
-                  </button>
-                </div>
+                {showGoalForm && (
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goals:</span>
+                    {(["sourced", "contacted", "applied"] as const).map((field) => (
+                      <label key={field} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{field}</span>
+                        <input type="number" min={0} value={draft[field]}
+                          onChange={(e) => setGoalField(s.id, field, e.target.value)}
+                          style={{ width: 60, padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.line}`, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center" }} />
+                      </label>
+                    ))}
+                    <button onClick={async () => {
+                      const result = await upsertGoal(s.id, Number(draft.sourced) || 0, Number(draft.contacted) || 0, Number(draft.applied) || 0);
+                      const status = result.error ? "error" : "saved";
+                      setGoalSaved((prev) => ({ ...prev, [s.id]: status }));
+                      setTimeout(() => setGoalSaved((prev) => { const n = { ...prev }; delete n[s.id]; return n; }), 2500);
+                    }} style={{ border: "none", background: goalSaved[s.id] === "saved" ? C.good : goalSaved[s.id] === "error" ? C.orange : C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, transition: "background .2s", minWidth: 90 }}>
+                      {goalSaved[s.id] === "saved" ? "Saved ✓" : goalSaved[s.id] === "error" ? "Error ✕" : "Save goals"}
+                    </button>
+                  </div>
+                )}
               </div>
             );
           };
@@ -520,26 +483,27 @@ export default function ConsoleClient({
               <p style={{ color: C.grayMute, margin: "0 0 20px" }}>Pipeline stats and goals per school. Satellite and bonus schools are grouped.</p>
               {schoolsByTier.map(({ tier, schools: tierSchools }) => {
                 const isGrouped = tier === "satellite" || tier === "bonus";
+                const tierSchoolIds = tierSchools.map((s) => s.id);
                 const groupCands = tierSchools.flatMap((s) => candidates.filter((c) => c.school_id === s.id));
-                const groupSourced = groupCands.filter((c) => ["sourced","contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
-                const groupContacted = groupCands.filter((c) => ["contacted","applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
-                const groupApplied = groupCands.filter((c) => ["applied","advanced","finalist","fellow"].includes(phaseOf(c.stage) ?? "")).length;
-                const groupGoals = tierSchools.reduce((acc, s) => {
-                  const g = goals.find((g) => g.school_id === s.id);
-                  return { sourced: acc.sourced + (g?.goal_sourced ?? 0), contacted: acc.contacted + (g?.goal_contacted ?? 0), applied: acc.applied + (g?.goal_applied ?? 0) };
-                }, { sourced: 0, contacted: 0, applied: 0 });
+                const groupSourced = groupCands.filter((c) => SOURCED.has(c.stage ?? "")).length;
+                const groupContacted = groupCands.filter((c) => CONTACTED.has(c.stage ?? "")).length;
+                const groupApplied = groupCands.filter((c) => APPLIED.has(c.stage ?? "")).length;
+                // All schools in a group share the same goal value — read from any one
+                const repGoal = goals.find((g) => tierSchoolIds.includes(g.school_id));
+                const groupGoalActual = { sourced: repGoal?.goal_sourced ?? 0, contacted: repGoal?.goal_contacted ?? 0, applied: repGoal?.goal_applied ?? 0 };
+                const gDraft = isGrouped ? groupGoalDraft(tier, tierSchoolIds) : null;
 
                 return (
                   <div key={tier} style={{ marginBottom: 28 }}>
                     <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 1, marginBottom: 10 }}>
                       {tier === "core" ? "Core Schools" : tier === "satellite" ? "Satellite Group" : "Bonus Group"}
                     </div>
-                    {isGrouped && (
-                      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${C.navy2}`, borderRadius: 14, padding: "14px 18px", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: C.gray }}>{tier === "satellite" ? "Satellite Schools" : "Bonus Schools"} ({tierSchools.length})</div>
-                          <div style={{ display: "flex", gap: 16, marginTop: 4 }}>
-                            {([["Sourced", groupSourced, groupGoals.sourced], ["Contacted", groupContacted, groupGoals.contacted], ["Applied", groupApplied, groupGoals.applied]] as [string, number, number][]).map(([lbl, act, goal]) => {
+                    {isGrouped && gDraft ? (
+                      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${C.navy2}`, borderRadius: 14, padding: "18px 22px" }}>
+                        <div style={{ marginBottom: 14 }}>
+                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: C.gray, marginBottom: 6 }}>{tier === "satellite" ? "Satellite Group" : "Bonus Group"} ({tierSchools.length} schools)</div>
+                          <div style={{ display: "flex", gap: 16 }}>
+                            {([["Sourced", groupSourced, groupGoalActual.sourced], ["Contacted", groupContacted, groupGoalActual.contacted], ["Applied", groupApplied, groupGoalActual.applied]] as [string, number, number][]).map(([lbl, act, goal]) => {
                               const hasGoal = goal > 0;
                               const pct = hasGoal ? Math.round((act / goal) * 100) : 0;
                               const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
@@ -551,13 +515,27 @@ export default function ConsoleClient({
                             })}
                           </div>
                         </div>
-                        <button onClick={() => toggleTier(tier)}
-                          style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 13, padding: "7px 14px", borderRadius: 8, cursor: "pointer" }}>
-                          {expandedTiers.has(tier) ? "Collapse ▲" : `Expand (${tierSchools.length}) ▼`}
-                        </button>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", paddingTop: 10, borderTop: `1px solid ${C.line}` }}>
+                          <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goals:</span>
+                          {(["sourced", "contacted", "applied"] as const).map((field) => (
+                            <label key={field} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{field}</span>
+                              <input type="number" min={0} value={gDraft[field]}
+                                onChange={(e) => setGroupGoalField(tier, tierSchoolIds, field, e.target.value)}
+                                style={{ width: 60, padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.line}`, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center" }} />
+                            </label>
+                          ))}
+                          <button onClick={async () => {
+                            const result = await upsertGroupGoal(tierSchoolIds, Number(gDraft.sourced) || 0, Number(gDraft.contacted) || 0, Number(gDraft.applied) || 0);
+                            const status = result.error ? "error" : "saved";
+                            setGroupGoalSaved((prev) => ({ ...prev, [tier]: status }));
+                            setTimeout(() => setGroupGoalSaved((prev) => { const n = { ...prev }; delete n[tier]; return n; }), 2500);
+                          }} style={{ border: "none", background: groupGoalSaved[tier] === "saved" ? C.good : groupGoalSaved[tier] === "error" ? C.orange : C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, transition: "background .2s", minWidth: 90 }}>
+                            {groupGoalSaved[tier] === "saved" ? "Saved ✓" : groupGoalSaved[tier] === "error" ? "Error ✕" : "Save goals"}
+                          </button>
+                        </div>
                       </div>
-                    )}
-                    {(!isGrouped || expandedTiers.has(tier)) && (
+                    ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                         {tierSchools.map((s) => renderSchoolCard(s))}
                       </div>

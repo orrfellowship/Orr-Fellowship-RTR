@@ -110,7 +110,9 @@ export async function addPhase(schoolId: string, label: string, title: string, s
 }
 
 export async function upsertTask(t: {
-  id?: string; phase_id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean;
+  id?: string; phase_id: string; text: string; assignee_id: string | null;
+  assignee_label: string | null; month_label: string | null; notes: string | null;
+  due_date: string | null; done: boolean;
 }) {
   const supabase = createServerSupabase();
   const payload = t.id ? t : { ...t, id: undefined };

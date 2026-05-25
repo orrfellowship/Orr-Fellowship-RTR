@@ -37,7 +37,7 @@ export default async function ConsolePage() {
 
   const { data: phases } = await supabase
     .from("playbook_phases")
-    .select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, due_date, done)")
+    .select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)")
     .order("sort_order");
 
   let ai: { candidate_id: string; resume_score: number | null; summary: string | null; flags: any; analyzed_at: string | null }[] = [];

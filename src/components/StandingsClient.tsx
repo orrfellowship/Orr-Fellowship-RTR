@@ -56,10 +56,15 @@ function computeStats(schools: SchoolRow[], candidates: CandRow[], goals: GoalRo
 
 type SchoolStats = ReturnType<typeof computeStats>[number];
 
-function SummaryCard({ label, value, color, sub }: { label: string; value: string | number; color: string; sub?: string }) {
+function SummaryCard({ label, value, color, sub, tooltip }: { label: string; value: string | number; color: string; sub?: string; tooltip?: string }) {
   return (
-    <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 20px" }}>
-      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.2, color: C.grayMute, fontFamily: HEAD, marginBottom: 6 }}>{label}</div>
+    <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 20px", position: "relative" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.2, color: C.grayMute, fontFamily: HEAD }}>{label}</div>
+        {tooltip && (
+          <span title={tooltip} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, borderRadius: "50%", background: C.line, color: C.grayMute, fontSize: 9, fontWeight: 700, cursor: "help", flexShrink: 0 }}>?</span>
+        )}
+      </div>
       <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 32, color, lineHeight: 1 }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: C.grayMute, marginTop: 4 }}>{sub}</div>}
     </div>
@@ -218,21 +223,35 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
 
   return (
     <div>
-      <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 4px", fontFamily: HEAD }}>
-        Sc<em style={{ color: C.orange, fontStyle: "italic" }}>orr</em> B<em style={{ color: C.orange, fontStyle: "italic" }}>orr</em>d
-      </h1>
+      <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 4px", fontFamily: HEAD }}>Standings</h1>
       <p style={{ color: C.grayMute, margin: "0 0 20px" }}>Live pipeline across all participating schools.</p>
 
       {/* Summary cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 26 }}>
-        <SummaryCard label="Overall % to Goal" value={totalGoalApplied > 0 ? `${overallPct}%` : "—"} color={totalGoalApplied > 0 ? goalTone(overallPct) : C.grayMute} />
-        <SummaryCard label="Schools at Goal" value={atGoalCount} color={C.good} />
-        <SummaryCard label="Schools at Risk" value={atRiskCount} color={C.orange} />
+        <SummaryCard
+          label="Overall % to Goal"
+          value={totalGoalApplied > 0 ? `${overallPct}%` : "—"}
+          color={totalGoalApplied > 0 ? goalTone(overallPct) : C.grayMute}
+          tooltip="Org-wide applied count as a percentage of the total applied goal across all schools."
+        />
+        <SummaryCard
+          label="Schools at Goal"
+          value={atGoalCount}
+          color={C.good}
+          tooltip="Schools that have met or exceeded their applied candidate goal."
+        />
+        <SummaryCard
+          label="Schools at Risk"
+          value={atRiskCount}
+          color={C.orange}
+          tooltip="Schools with an Orr Score below 50 — flagged as needing extra attention."
+        />
         <SummaryCard
           label="Top Performer"
           value={topSchool?.school.name.split(" ")[0] ?? "—"}
           color={C.navy}
           sub={topSchool ? `${topSchool.orrScore} Orr Score` : undefined}
+          tooltip="School with the highest Orr Score this cycle."
         />
       </div>
 

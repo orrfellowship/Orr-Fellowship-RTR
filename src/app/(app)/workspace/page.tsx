@@ -57,7 +57,7 @@ export default async function WorkspacePage() {
       .in("school_id", tierSchoolIds),
     serviceDb
       .from("playbook_phases")
-      .select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, due_date, done)")
+      .select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)")
       .in("school_id", tierSchoolIds)
       .order("sort_order"),
   ]);

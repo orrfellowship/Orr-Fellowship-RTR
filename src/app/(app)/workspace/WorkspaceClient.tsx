@@ -29,7 +29,10 @@ type AllSchool   = { id: string; name: string; tier: string; color_primary: stri
 type AllCand     = { id: string; name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; jazz_id: string | null; linkedin: string | null };
 type AllGoal     = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 type TeamMember  = { id: string; full_name: string };
-type Task        = { id: string; text: string; assignee_id: string | null; due_date: string | null; done: boolean };
+type Task        = {
+  id: string; text: string; assignee_id: string | null; assignee_label: string | null;
+  month_label: string | null; notes: string | null; due_date: string | null; done: boolean;
+};
 type Phase       = { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] };
 
 const PHASE_OF: Record<string, string> = { new: "Sourced", contacted: "Contacted", applied: "Applied", bmi: "Advanced", finalist: "Finalist", fellow: "Fellow" };
@@ -39,6 +42,10 @@ function StagePill({ stage }: { stage: string | null }) {
   const tone = phaseTone[ph];
   return <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: tone, background: `${tone}22`, padding: "4px 9px", borderRadius: 999 }}>{stage ?? "—"}</span>;
 }
+
+const SOURCED  = new Set(["new", "contacted", "applied", "bmi", "finalist", "fellow"]);
+const CONTACTD = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
+const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
   profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName,
@@ -54,7 +61,12 @@ export default function WorkspaceClient({
   const canAssign = canReassign(profile.role);
   const accent = school?.color_primary ?? C.orange;
 
-  const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
+  const nameOf = (id: string | null, label?: string | null): string => {
+    if (label === "team") return "Team";
+    if (!id) return "Unassigned";
+    if (id === profile.id) return "You";
+    return team.find((t) => t.id === id)?.full_name ?? "—";
+  };
   const open = candidates.find((c) => c.id === openId) ?? null;
 
   const PHASE_ORDER_PIPELINE = ["sourced", "contacted", "applied"] as const;
@@ -73,6 +85,23 @@ export default function WorkspaceClient({
 
   const totalActive = PHASE_ORDER_PIPELINE.reduce((s, ph) => s + (phaseCounts[ph] ?? 0), 0);
 
+  // Goal-aware pipeline stats for the school
+  const schoolGoal = useMemo(() => {
+    if (!school) return null;
+    return allGoals.find((g) => g.school_id === school.id) ?? null;
+  }, [allGoals, school]);
+
+  const pipelineBoard = useMemo(() => {
+    const sourced   = candidates.filter((c) => c.stage && SOURCED.has(c.stage)).length;
+    const contacted = candidates.filter((c) => c.stage && CONTACTD.has(c.stage)).length;
+    const applied   = candidates.filter((c) => c.stage && APPLIED.has(c.stage)).length;
+    return [
+      { label: "Sourced",   actual: sourced,   goal: schoolGoal?.goal_sourced   ?? 0 },
+      { label: "Contacted", actual: contacted, goal: schoolGoal?.goal_contacted ?? 0 },
+      { label: "Applied",   actual: applied,   goal: schoolGoal?.goal_applied   ?? 0 },
+    ];
+  }, [candidates, schoolGoal]);
+
   const plan = useMemo(() => {
     const out: { id: string; type: string; cand: Cand; why: string }[] = [];
     candidates.forEach((c) => {
@@ -85,6 +114,21 @@ export default function WorkspaceClient({
   }, [candidates]);
 
   const onFav = (c: Cand) => startTransition(() => { toggleFavorite(c.id, !c.is_favorite); });
+
+  // My tasks for weekly snapshot
+  const myTasks = useMemo(() => {
+    const results: { task: Task; roleTitle: string }[] = [];
+    for (const p of phases) {
+      for (const t of p.playbook_tasks) {
+        if (t.assignee_id === profile.id || t.assignee_label === "team") {
+          results.push({ task: t, roleTitle: p.title });
+        }
+      }
+    }
+    return results;
+  }, [phases, profile.id]);
+
+  const MONTHS = ["July", "August", "September", "Oct/Nov"];
 
   return (
     <div style={{ minHeight: "100vh", background: C.canvas }}>
@@ -100,10 +144,14 @@ export default function WorkspaceClient({
                 <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{profile.role === "team_lead" ? "Team Lead" : "Fellow"} Workspace</div>
               </div>
             </div>
-            {([["plan", `This Week (${plan.length})`], ["board", "My School"], ["playbook", "Playbook"], ["standings", "Standings"], ["all", "All Schools"]] as const).map(([k, l]) => (
-              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent" }}>
-                {k === "standings" ? <>Sc<em style={{ color: accent, fontStyle: "italic" }}>orr</em> B<em style={{ color: accent, fontStyle: "italic" }}>orr</em>d</> : l}
-              </button>
+            {([
+              ["plan",      `Weekly Snapshot`],
+              ["board",     "My School"],
+              ["playbook",  "Playbook"],
+              ["standings", "Standings"],
+              ["all",       "Applicants"],
+            ] as const).map(([k, l]) => (
+              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent" }}>{l}</button>
             ))}
           </div>
           <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
@@ -111,14 +159,45 @@ export default function WorkspaceClient({
       </div>
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "30px 28px 80px", opacity: pending ? 0.7 : 1 }}>
+
+        {/* ---- WEEKLY SNAPSHOT ---- */}
         {tab === "plan" && (
           <>
-            <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>This Week</h1>
+            <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Weekly Snapshot</h1>
             <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{plan.length} move{plan.length !== 1 ? "s" : ""} queued · {totalActive} active candidates</p>
 
-            {/* Pipeline snapshot */}
-            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 20px", marginTop: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 12 }}>Pipeline Snapshot</div>
+            {/* Pipeline overview cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginTop: 18 }}>
+              {pipelineBoard.map((b) => {
+                const hasGoal = b.goal > 0;
+                const pct = hasGoal ? (b.actual / b.goal) * 100 : 0;
+                const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
+                return (
+                  <div key={b.label} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
+                    <div style={{ background: C.navy, color: "#fff", padding: "14px 18px", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", opacity: 0.8 }}>{b.label}</div>
+                      <div style={{ fontFamily: HEAD, fontSize: 36, fontWeight: 700, marginTop: 2, lineHeight: 1 }}>{b.actual}</div>
+                    </div>
+                    {hasGoal ? (
+                      <div style={{ padding: "10px 18px", textAlign: "center", background: `${tone}14` }}>
+                        <div style={{ fontSize: 11, color: C.grayMute, fontWeight: 600 }}>Goal {b.goal} · {Math.round(pct)}%</div>
+                        <div style={{ marginTop: 6, height: 5, borderRadius: 99, background: C.line, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: tone, borderRadius: 99 }} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ padding: "10px 18px", textAlign: "center" }}>
+                        <div style={{ fontSize: 11, color: C.grayMute }}>No goal set</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Stage breakdown bar */}
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 20px", marginTop: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 12 }}>Pipeline Breakdown</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {PHASE_ORDER_PIPELINE.map((ph) => {
                   const n = phaseCounts[ph] ?? 0;
@@ -142,6 +221,38 @@ export default function WorkspaceClient({
               )}
             </div>
 
+            {/* My tasks snapshot */}
+            {myTasks.length > 0 && (
+              <div style={{ marginTop: 22 }}>
+                <h2 style={{ fontSize: 18, color: C.navy, margin: "0 0 10px", fontFamily: HEAD }}>
+                  My Tasks
+                  <span style={{ marginLeft: 10, fontSize: 13, fontWeight: 600, color: C.grayMute }}>{myTasks.filter((m) => m.task.done).length}/{myTasks.length} complete</span>
+                </h2>
+                {MONTHS.map((month) => {
+                  const monthTasks = myTasks.filter((m) => m.task.month_label === month);
+                  if (!monthTasks.length) return null;
+                  return (
+                    <div key={month} style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 8 }}>{month}</div>
+                      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
+                        {monthTasks.map(({ task: t, roleTitle }) => (
+                          <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${C.line}`, opacity: t.done ? 0.55 : 1 }}>
+                            <input type="checkbox" checked={t.done}
+                              onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: "", text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label, month_label: t.month_label, notes: t.notes, due_date: t.due_date, done: e.target.checked }); })}
+                              style={{ accentColor: accent, flexShrink: 0 }} />
+                            <span style={{ flex: 1, fontSize: 13.5, color: C.gray, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
+                            <span style={{ fontSize: 11, color: C.grayMute, flexShrink: 0 }}>{roleTitle}</span>
+                            {t.assignee_label === "team" && <span style={{ fontSize: 10, fontWeight: 700, color: C.navy2, background: `${C.navy2}18`, padding: "2px 7px", borderRadius: 99, flexShrink: 0 }}>Team</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Action queue */}
             <h2 style={{ fontSize: 18, color: C.navy, margin: "24px 0 10px", fontFamily: HEAD }}>Action Queue</h2>
             <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
               {plan.map((a) => (
@@ -156,10 +267,11 @@ export default function WorkspaceClient({
           </>
         )}
 
+        {/* ---- MY SCHOOL BOARD ---- */}
         {tab === "board" && (
           <>
             <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>My School Board</h1>
-            <p style={{ color: C.grayMute }}>{candidates.length} candidates. AI résumé score hidden here (Super-Admin only).</p>
+            <p style={{ color: C.grayMute }}>{candidates.length} candidates.</p>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                 <div>Candidate</div><div>Major</div><div>GPA</div><div>Stage</div><div>Owner</div><div></div>
@@ -189,14 +301,17 @@ export default function WorkspaceClient({
           </>
         )}
 
+        {/* ---- PLAYBOOK ---- */}
         {tab === "playbook" && (
-          <PlaybookTab phases={phases} profile={profile} canEdit={canEdit} team={team} nameOf={nameOf} startTransition={startTransition} />
+          <PlaybookTab phases={phases} profile={profile} canEdit={canEdit} team={team} nameOf={nameOf} accent={accent} startTransition={startTransition} />
         )}
 
+        {/* ---- STANDINGS ---- */}
         {tab === "standings" && (
           <StandingsClient schools={allSchools} candidates={allCandidates} goals={allGoals} mySchoolId={school?.id ?? null} />
         )}
 
+        {/* ---- APPLICANTS ---- */}
         {tab === "all" && (() => {
           const visible = allFilter === "All schools"
             ? allCandidates
@@ -205,7 +320,7 @@ export default function WorkspaceClient({
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
                 <div>
-                  <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>All Schools</h1>
+                  <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Applicants</h1>
                   <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates · Read-only</p>
                 </div>
                 <select value={allFilter} onChange={(e) => setAllFilter(e.target.value)}
@@ -250,99 +365,231 @@ export default function WorkspaceClient({
       </div>
 
       {open && (
-        <CandidateDrawer
-          c={open} canEdit={true}
-          onClose={() => setOpenId(null)} startTransition={startTransition}
-        />
+        <CandidateDrawer c={open} canEdit={true} onClose={() => setOpenId(null)} startTransition={startTransition} />
       )}
     </div>
   );
 }
 
-// ---------------- PLAYBOOK TAB (read for fellows, edit for leads) ----------------
-function PlaybookTab({ phases, profile, canEdit, team, nameOf, startTransition }: {
-  phases: Phase[]; profile: Profile; canEdit: boolean; team: TeamMember[];
-  nameOf: (id: string | null) => string; startTransition: (cb: () => void) => void;
+// ---- PLAYBOOK TAB ----
+const MONTHS = ["July", "August", "September", "Oct/Nov"] as const;
+
+function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTransition }: {
+  phases: { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] }[];
+  profile: Profile; canEdit: boolean; team: { id: string; full_name: string }[];
+  nameOf: (id: string | null, label?: string | null) => string;
+  accent: string;
+  startTransition: (cb: () => void) => void;
 }) {
+  const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set(phases.map((p) => p.id)));
+  const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
+
+  const toggleRole = (id: string) => setExpandedRoles((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const toggleNote = (id: string) => setExpandedNotes((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  // Completion overview
+  const totalTasks = phases.reduce((s, p) => s + p.playbook_tasks.length, 0);
+  const doneTasks  = phases.reduce((s, p) => s + p.playbook_tasks.filter((t) => t.done).length, 0);
+  const overallPct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+
+  function makeTask(phaseId: string, monthLabel: string) {
+    startTransition(() => {
+      upsertTask({ phase_id: phaseId, text: "New task", assignee_id: null, assignee_label: null, month_label: monthLabel, notes: null, due_date: null, done: false });
+    });
+  }
+
   return (
     <>
-      <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Playbook</h1>
-      <p style={{ color: C.grayMute }}>{canEdit ? "Edit phase names, tasks, assignees, and due dates inline. Changes save on blur." : "Your team lead's plan for the cycle."}</p>
-      {canEdit && (
-        <button onClick={() => startTransition(() => { addPhase(profile.school_id ?? "", "Month", "New phase", phases.length); })}
-          style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", marginTop: 8 }}>+ Add phase</button>
-      )}
-      <div style={{ display: "grid", gap: 14, marginTop: 16 }}>
-        {phases.map((p) => (
-          <div key={p.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22 }}>
-            {canEdit ? (
-              <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}>
-                <input defaultValue={p.label}
-                  onBlur={(e) => { if (e.target.value.trim() !== p.label) startTransition(() => { updatePhase(p.id, e.target.value.trim() || p.label, p.title); }); }}
-                  style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 11, color: C.orange, textTransform: "uppercase", border: "none", background: "transparent", width: 90, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
-                <input defaultValue={p.title}
-                  onBlur={(e) => { if (e.target.value.trim() !== p.title) startTransition(() => { updatePhase(p.id, p.label, e.target.value.trim() || p.title); }); }}
-                  style={{ fontFamily: HEAD, fontSize: 18, fontWeight: 700, color: C.navy, border: "none", background: "transparent", flex: 1, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
-                <button onClick={() => { if (confirm(`Delete phase "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
-                  style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6, whiteSpace: "nowrap" }}>
-                  Delete phase
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: "flex", gap: 12, alignItems: "baseline", marginBottom: 12 }}>
-                <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 12, color: C.orange, textTransform: "uppercase" }}>{p.label}</span>
-                <h3 style={{ fontFamily: HEAD, fontSize: 19, fontWeight: 700, margin: 0, color: C.navy }}>{p.title}</h3>
-              </div>
-            )}
-            {p.playbook_tasks.map((t) => (
-              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${C.line}88`, fontSize: 14, color: t.done ? C.grayMute : C.gray }}>
-                <input type="checkbox" defaultChecked={t.done} disabled={!canEdit}
-                  onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, due_date: t.due_date, done: e.target.checked }); })}
-                  style={{ accentColor: C.orange, flexShrink: 0 }} />
-                {canEdit ? (
-                  <input defaultValue={t.text}
-                    onBlur={(e) => { if (e.target.value.trim() !== t.text) startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: e.target.value.trim() || t.text, assignee_id: t.assignee_id, due_date: t.due_date, done: t.done }); }); }}
-                    style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none", outline: "none", minWidth: 0 }} />
-                ) : (
-                  <span style={{ flex: 1, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
-                )}
-                {canEdit ? (
-                  <select value={t.assignee_id ?? ""}
-                    onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: e.target.value || null, due_date: t.due_date, done: t.done }); })}
-                    style={{ fontSize: 12, fontWeight: 600, color: t.assignee_id ? C.navy2 : C.orange, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }}>
-                    <option value="">Unassigned</option>
-                    {team.map((tm) => <option key={tm.id} value={tm.id}>{tm.id === profile.id ? `${tm.full_name} (me)` : tm.full_name}</option>)}
-                  </select>
-                ) : (
-                  <span style={{ fontSize: 12, color: t.assignee_id ? C.navy2 : C.orange, fontWeight: 600 }}>{nameOf(t.assignee_id)}</span>
-                )}
-                {canEdit ? (
-                  <input type="date" value={t.due_date ?? ""}
-                    onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, due_date: e.target.value || null, done: t.done }); })}
-                    style={{ fontSize: 12, color: C.grayMute, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }} />
-                ) : (
-                  t.due_date && <span style={{ fontSize: 12, color: C.grayMute }}>due {t.due_date.slice(5)}</span>
-                )}
-                {canEdit && <button onClick={() => startTransition(() => { deleteTask(t.id); })} style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>}
-              </div>
-            ))}
-            {canEdit && (
-              <button onClick={() => startTransition(() => { upsertTask({ phase_id: p.id, text: "New task", assignee_id: null, due_date: null, done: false }); })}
-                style={{ marginTop: 10, border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, padding: "8px 14px", borderRadius: 9, cursor: "pointer", width: "100%" }}>+ Add task</button>
-            )}
-            {p.playbook_tasks.length === 0 && !canEdit && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No tasks yet.</div>}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 6 }}>
+        <div>
+          <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Playbook</h1>
+          <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{canEdit ? "Role-based recruitment plan. Edit inline — changes save automatically." : "Your team's recruitment plan."}</p>
+        </div>
+        {canEdit && (
+          <button onClick={() => startTransition(() => { addPhase(profile.school_id ?? "", "Role", `New Role ${phases.length + 1}`, phases.length); })}
+            style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", fontSize: 13.5 }}>+ Add role</button>
+        )}
+      </div>
+
+      {/* Completion overview */}
+      {totalTasks > 0 && (
+        <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 20px", marginBottom: 22 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: C.navy }}>{doneTasks} / {totalTasks} tasks complete</div>
+            <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 22, color: overallPct >= 80 ? C.good : overallPct >= 50 ? C.gold : C.orange }}>{overallPct}%</div>
           </div>
-        ))}
-        {phases.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No playbook yet{canEdit ? " — add the first phase." : "."}</div>}
+          <div style={{ height: 8, borderRadius: 99, background: C.line, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${overallPct}%`, background: overallPct >= 80 ? C.good : overallPct >= 50 ? C.gold : C.orange, borderRadius: 99, transition: "width .6s" }} />
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", marginTop: 12 }}>
+            {phases.map((p) => {
+              const total = p.playbook_tasks.length;
+              const done  = p.playbook_tasks.filter((t) => t.done).length;
+              const pct   = total > 0 ? Math.round((done / total) * 100) : 0;
+              return (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180 }}>
+                  <div style={{ fontSize: 12, color: C.grayMute, fontWeight: 600, flex: 1 }}>{p.title}</div>
+                  <div style={{ width: 60, height: 4, borderRadius: 99, background: C.line, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${pct}%`, background: pct >= 80 ? C.good : pct >= 50 ? C.gold : C.orange, borderRadius: 99 }} />
+                  </div>
+                  <div style={{ fontSize: 11, color: C.grayMute, width: 30, textAlign: "right" }}>{pct}%</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Roles */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {phases.map((p) => {
+          const isExpanded = expandedRoles.has(p.id);
+          const roleDone  = p.playbook_tasks.filter((t) => t.done).length;
+          return (
+            <div key={p.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14 }}>
+              {/* Role header */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: isExpanded ? `1px solid ${C.line}` : "none", cursor: "pointer" }}
+                onClick={() => toggleRole(p.id)}>
+                {canEdit ? (
+                  <input defaultValue={p.title} onClick={(e) => e.stopPropagation()}
+                    onBlur={(e) => { if (e.target.value.trim() !== p.title) startTransition(() => { updatePhase(p.id, p.label, e.target.value.trim() || p.title); }); }}
+                    style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.navy, border: "none", background: "transparent", flex: 1, outline: "none", cursor: "text" }} />
+                ) : (
+                  <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.navy, flex: 1 }}>{p.title}</div>
+                )}
+                <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>{roleDone}/{p.playbook_tasks.length}</span>
+                {canEdit && (
+                  <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete role "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
+                    style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, padding: "2px 6px", borderRadius: 6 }}>Delete</button>
+                )}
+                <span style={{ color: C.grayMute, fontSize: 16 }}>{isExpanded ? "▲" : "▼"}</span>
+              </div>
+
+              {/* Month groups */}
+              {isExpanded && (
+                <div style={{ padding: "0 18px 14px" }}>
+                  {MONTHS.map((month) => {
+                    const mTasks = p.playbook_tasks.filter((t) => (t.month_label ?? "July") === month);
+                    if (!mTasks.length && !canEdit) return null;
+                    return (
+                      <div key={month} style={{ marginTop: 16 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: accent, letterSpacing: 0.8, flex: 1 }}>{month}</div>
+                          {canEdit && (
+                            <button onClick={() => makeTask(p.id, month)}
+                              style={{ border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, fontSize: 11, padding: "3px 10px", borderRadius: 7, cursor: "pointer" }}>+ Add task</button>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          {mTasks.map((t) => (
+                            <TaskRow key={t.id} task={t} phase={p} canEdit={canEdit} team={team} profile={profile}
+                              noteOpen={expandedNotes.has(t.id)} onToggleNote={() => toggleNote(t.id)}
+                              nameOf={nameOf} startTransition={startTransition} />
+                          ))}
+                          {mTasks.length === 0 && (
+                            <div style={{ fontSize: 12, color: C.grayMute, fontStyle: "italic", padding: "4px 0" }}>No tasks for {month} — add one above.</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {phases.length === 0 && (
+          <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>
+            {canEdit ? "No roles yet — add the first role above." : "No playbook yet."}
+          </div>
+        )}
       </div>
     </>
+  );
+}
+
+function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNote, nameOf, startTransition }: {
+  task: Task; phase: { id: string; title: string };
+  canEdit: boolean; team: { id: string; full_name: string }[];
+  profile: Profile; noteOpen: boolean; onToggleNote: () => void;
+  nameOf: (id: string | null, label?: string | null) => string;
+  startTransition: (cb: () => void) => void;
+}) {
+  const [noteText, setNoteText] = useState(t.notes ?? "");
+
+  const save = (patch: Partial<Task>) => startTransition(() => {
+    upsertTask({ id: t.id, phase_id: phase.id, text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label, month_label: t.month_label, notes: t.notes, due_date: t.due_date, done: t.done, ...patch });
+  });
+
+  const assigneeValue = t.assignee_label === "team" ? "team" : (t.assignee_id ?? "");
+
+  return (
+    <div style={{ borderRadius: 8, border: `1px solid ${C.line}`, background: t.done ? "#FAFBFE" : "#fff", marginBottom: 3 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px" }}>
+        <input type="checkbox" checked={t.done} disabled={!canEdit}
+          onChange={(e) => save({ done: e.target.checked })}
+          style={{ accentColor: "#11123E", flexShrink: 0 }} />
+
+        {canEdit ? (
+          <input defaultValue={t.text}
+            onBlur={(e) => { if (e.target.value.trim() !== t.text) save({ text: e.target.value.trim() || t.text }); }}
+            style={{ flex: 1, border: "none", background: "transparent", fontSize: 13.5, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none", outline: "none", minWidth: 0 }} />
+        ) : (
+          <span style={{ flex: 1, fontSize: 13.5, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
+        )}
+
+        {canEdit ? (
+          <select value={assigneeValue}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === "team") save({ assignee_id: null, assignee_label: "team" });
+              else save({ assignee_id: val || null, assignee_label: null });
+            }}
+            style={{ fontSize: 12, fontWeight: 600, color: t.assignee_label === "team" ? C.navy2 : (t.assignee_id ? C.navy2 : C.orange), border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }}>
+            <option value="">Unassigned</option>
+            <option value="team">Team</option>
+            {team.map((tm) => <option key={tm.id} value={tm.id}>{tm.id === profile.id ? `${tm.full_name} (me)` : tm.full_name}</option>)}
+          </select>
+        ) : (
+          <span style={{ fontSize: 12, color: t.assignee_label === "team" ? C.navy2 : (t.assignee_id ? C.navy2 : C.orange), fontWeight: 600, flexShrink: 0 }}>
+            {nameOf(t.assignee_id, t.assignee_label)}
+          </span>
+        )}
+
+        <button onClick={onToggleNote} title={noteOpen ? "Hide notes" : "Show notes"}
+          style={{ border: "none", background: "none", cursor: "pointer", fontSize: 15, color: (t.notes?.trim()) ? C.navy2 : C.grayMute, flexShrink: 0, padding: "0 4px" }}>
+          {noteOpen ? "▲" : "📝"}
+        </button>
+
+        {canEdit && (
+          <button onClick={() => startTransition(() => { deleteTask(t.id); })}
+            style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16, flexShrink: 0, padding: "0 2px" }}>×</button>
+        )}
+      </div>
+
+      {noteOpen && (
+        <div style={{ padding: "0 12px 10px 36px" }}>
+          <textarea value={noteText} onChange={(e) => setNoteText(e.target.value)}
+            onBlur={() => { if (noteText !== (t.notes ?? "")) save({ notes: noteText || null }); }}
+            placeholder="Add notes…" disabled={!canEdit}
+            style={{ width: "100%", minHeight: 60, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 13, color: C.gray, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", background: canEdit ? "#fff" : "#F7F8FB" }} />
+        </div>
+      )}
+    </div>
   );
 }
 
 type Connection = { id: string; fellow_id: string; name: string; relationship: string };
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
-// ---------------- CANDIDATE DRAWER (outreach log + quick-log + warm intro) ----------------
 function CandidateDrawer({ c, onClose, startTransition }: {
   c: Cand; canEdit: boolean;
   onClose: () => void; startTransition: (cb: () => void) => void;
@@ -456,7 +703,6 @@ function CandidateDrawer({ c, onClose, startTransition }: {
             </div>
           </div>
 
-          {/* quick-log */}
           <div style={{ fontFamily: HEAD, fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 10 }}>Outreach log</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
             {QUICK.map((q) => <button key={q} onClick={() => doLog(q)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 12, padding: "6px 11px", borderRadius: 999, cursor: "pointer" }}>+ {q}</button>)}
