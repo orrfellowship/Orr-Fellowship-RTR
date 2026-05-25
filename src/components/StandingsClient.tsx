@@ -22,6 +22,48 @@ function goalTone(pct: number): string {
   return pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
 }
 
+// Merge satellite/bonus schools into single virtual group entries before computing stats
+function buildMergedData(
+  schools: SchoolRow[], candidates: CandRow[], goals: GoalRow[], mySchoolId: string | null
+): { schools: SchoolRow[]; candidates: CandRow[]; goals: GoalRow[]; mySchoolId: string | null } {
+  const GROUPED = new Set(["satellite", "bonus"]);
+  const byTierMap = new Map<string, SchoolRow[]>();
+  for (const tier of GROUPED) {
+    const ts = schools.filter((s) => s.tier === tier);
+    if (ts.length > 0) byTierMap.set(tier, ts);
+  }
+  if (byTierMap.size === 0) return { schools, candidates, goals, mySchoolId };
+
+  const idToGroup = new Map<string, string>();
+  for (const [tier, ts] of byTierMap) {
+    for (const s of ts) idToGroup.set(s.id, `group-${tier}`);
+  }
+
+  const mergedSchools: SchoolRow[] = [
+    ...Array.from(byTierMap.entries()).map(([tier]) => ({
+      id: `group-${tier}`,
+      name: tier === "satellite" ? "Satellite Group" : "Bonus Group",
+      tier,
+      color_primary: C.navy2,
+      logo_url: null,
+    })),
+    ...schools.filter((s) => !GROUPED.has(s.tier)),
+  ];
+
+  const mergedCandidates = candidates.map((c) =>
+    c.school_id && idToGroup.has(c.school_id) ? { ...c, school_id: idToGroup.get(c.school_id)! } : c
+  );
+
+  const mergedGoals: GoalRow[] = goals.filter((g) => !idToGroup.has(g.school_id));
+  for (const [tier, ts] of byTierMap) {
+    const rep = goals.find((g) => ts.some((s) => s.id === g.school_id));
+    if (rep) mergedGoals.push({ school_id: `group-${tier}`, goal_sourced: rep.goal_sourced, goal_contacted: rep.goal_contacted, goal_applied: rep.goal_applied });
+  }
+
+  const mergedMyId = mySchoolId && idToGroup.has(mySchoolId) ? idToGroup.get(mySchoolId)! : mySchoolId;
+  return { schools: mergedSchools, candidates: mergedCandidates, goals: mergedGoals, mySchoolId: mergedMyId };
+}
+
 function computeStats(schools: SchoolRow[], candidates: CandRow[], goals: GoalRow[]) {
   const goalMap = new Map(goals.map((g) => [g.school_id, g]));
   return schools.map((s) => {
@@ -186,12 +228,21 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
   const [subTab, setSubTab] = useState<"goal" | "funnel" | "h2h">("goal");
   const [drillId, setDrillId] = useState<string | null>(null);
 
-  const initialA = mySchoolId ?? schools[0]?.id ?? "";
-  const [h2hA, setH2hA] = useState(initialA);
-  const [h2hB, setH2hB] = useState(schools.find((s) => s.id !== initialA)?.id ?? "");
+  const merged = useMemo(
+    () => buildMergedData(schools, candidates, goals, mySchoolId),
+    [schools, candidates, goals, mySchoolId]
+  );
+  const resolvedMyId = merged.mySchoolId;
 
-  const stats    = useMemo(() => computeStats(schools, candidates, goals), [schools, candidates, goals]);
+  const initialA = resolvedMyId ?? merged.schools[0]?.id ?? "";
+  const [h2hA, setH2hA] = useState(initialA);
+  const [h2hB, setH2hB] = useState(merged.schools.find((s) => s.id !== initialA)?.id ?? "");
+
+  const stats    = useMemo(() => computeStats(merged.schools, merged.candidates, merged.goals), [merged]);
   const statsMap = useMemo(() => new Map(stats.map((s) => [s.school.id, s])), [stats]);
+
+  const tierLabel = (tier: string) =>
+    tier === "core" ? "Core Schools" : tier === "satellite" ? "Satellite Group" : tier === "bonus" ? "Bonus Group" : tier;
 
   const byTier = useMemo(() => {
     const tiers = [...new Set(stats.map((s) => s.school.tier))].sort();
@@ -268,11 +319,11 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
           {byTier.map(({ tier, rows }) => (
             <div key={tier} style={{ marginBottom: 32 }}>
               <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 1, marginBottom: 10 }}>
-                {tier}
+                {tierLabel(tier)}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {rows.map((s, rank) => {
-                  const isMe  = s.school.id === mySchoolId;
+                  const isMe  = s.school.id === resolvedMyId;
                   const color = s.school.color_primary ?? C.navy2;
                   const pct   = s.pctToAppliedGoal;
                   const tone  = s.g.goal_applied > 0 ? goalTone(pct) : C.grayMute;
@@ -349,7 +400,7 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
             <span style={{ color: C.navy2 }}>▮ Applied</span>
           </div>
           {funnelSorted.map((s) => {
-            const isMe  = s.school.id === mySchoolId;
+            const isMe  = s.school.id === resolvedMyId;
             const color = s.school.color_primary ?? C.navy2;
             const gPct  = s.g.goal_sourced > 0 ? `${Math.round((s.sourced / s.g.goal_sourced) * 100)}%` : null;
             const srcOnly  = Math.max(s.sourced  - s.contacted, 0);
@@ -401,12 +452,12 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
             <div style={{ display: "flex", gap: 12, marginBottom: 28, flexWrap: "wrap", alignItems: "center" }}>
               <select value={h2hA} onChange={(e) => setH2hA(e.target.value)}
                 style={{ padding: "10px 14px", borderRadius: 10, border: `2px solid ${colA}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 700 }}>
-                {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {merged.schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               <span style={{ color: C.grayMute, fontWeight: 700, fontSize: 16 }}>vs</span>
               <select value={h2hB} onChange={(e) => setH2hB(e.target.value)}
                 style={{ padding: "10px 14px", borderRadius: 10, border: `2px solid ${colB}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 700 }}>
-                {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {merged.schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
 
@@ -455,7 +506,7 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
 
       {/* ─── DRILL-IN MODAL ─── */}
       {drillStats && (
-        <DrillModal stats={drillStats} mySchoolId={mySchoolId} onClose={() => setDrillId(null)} />
+        <DrillModal stats={drillStats} mySchoolId={resolvedMyId} onClose={() => setDrillId(null)} />
       )}
     </div>
   );
