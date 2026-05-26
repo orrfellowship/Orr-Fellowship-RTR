@@ -271,7 +271,7 @@ export async function inviteUser(email: string, full_name: string, role: string,
   if (error) return { error: error.message };
   if (data?.user) {
     await serviceDb.from("profiles").upsert(
-      { id: data.user.id, full_name, role, school_id },
+      { id: data.user.id, full_name, role, school_id, email: (data.user.email as string) ?? null },
       { onConflict: "id" }
     );
   }

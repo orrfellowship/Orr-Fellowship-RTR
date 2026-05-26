@@ -10,6 +10,19 @@ export default function LoginPage() {
 
   async function signIn() {
     setError(null);
+    // Check invite status server-side first
+    try {
+      const res = await fetch("/api/check-invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        setError(json?.error === "inactive" ? "Your account is inactive. Contact an admin." : "This email is not invited.");
+        return;
+      }
+    } catch (e: any) {
+      setError("Invite check failed — try again later.");
+      return;
+    }
+
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithOtp({
       email,
