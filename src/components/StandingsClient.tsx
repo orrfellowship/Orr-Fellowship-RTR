@@ -9,12 +9,52 @@ const C = {
   line: "#E4E7EE", canvas: "#F7F8FB", gold: "#C9A227", good: "#2F8F6B",
 };
 const HEAD = "'Cabin', sans-serif";
+const BODY = "'Open Sans', sans-serif";
 
 type SchoolRow = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
 type CandRow   = { id: string; school_id: string | null; stage: string | null };
 type GoalRow   = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 
-// Merge satellite/bonus schools into single virtual group entries before computing stats.
+// ---- Tooltip ----
+function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span style={{ position: "relative", display: "inline-flex", alignItems: "center", cursor: "help" }}
+      onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      {children}
+      {show && (
+        <span style={{
+          position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+          marginBottom: 6, zIndex: 60, background: C.navy, color: "#fff", fontSize: 10,
+          fontFamily: BODY, borderRadius: 8, padding: "6px 10px", whiteSpace: "nowrap",
+          boxShadow: "0 4px 16px rgba(0,0,0,.25)", pointerEvents: "none",
+          maxWidth: 220, whiteSpaceCollapse: "preserve" as any,
+        } as React.CSSProperties}>
+          {text}
+          <span style={{
+            position: "absolute", top: "100%", left: "50%", transform: "translateX(-50%)",
+            borderWidth: 4, borderStyle: "solid",
+            borderColor: `${C.navy} transparent transparent transparent`,
+          }} />
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ---- School logo / initials ----
+function SchoolBadge({ m, size = 26 }: { m: SchoolMetric; size?: number }) {
+  return m.logo ? (
+    <img src={m.logo} alt="" style={{ height: size, width: size, objectFit: "contain", borderRadius: 4, flexShrink: 0 }}
+      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+  ) : (
+    <div style={{ height: size, width: size, borderRadius: 4, background: m.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontFamily: HEAD, fontWeight: 700, fontSize: Math.round(size * 0.45), flexShrink: 0 }}>
+      {m.short[0]}
+    </div>
+  );
+}
+
+// ---- Merge satellite/bonus schools into virtual group entries ----
 function buildMergedData(
   schools: SchoolRow[], candidates: CandRow[], goals: GoalRow[], mySchoolId: string | null
 ): { schools: SchoolRow[]; candidates: CandRow[]; goals: GoalRow[]; mySchoolId: string | null } {
@@ -27,17 +67,14 @@ function buildMergedData(
   if (byTierMap.size === 0) return { schools, candidates, goals, mySchoolId };
 
   const idToGroup = new Map<string, string>();
-  for (const [tier, ts] of byTierMap) {
+  for (const [tier, ts] of byTierMap)
     for (const s of ts) idToGroup.set(s.id, `group-${tier}`);
-  }
 
   const mergedSchools: SchoolRow[] = [
     ...Array.from(byTierMap.entries()).map(([tier]) => ({
       id: `group-${tier}`,
       name: tier === "satellite" ? "Satellite Group" : "Bonus Group",
-      tier,
-      color_primary: C.navy2,
-      logo_url: null,
+      tier, color_primary: C.navy2, logo_url: null,
     })),
     ...schools.filter((s) => !GROUPED.has(s.tier)),
   ];
@@ -65,7 +102,9 @@ function SummaryCard({ label, value, color, sub, tooltip }: {
       <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
         <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.2, color: C.grayMute, fontFamily: HEAD }}>{label}</div>
         {tooltip && (
-          <span title={tooltip} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, borderRadius: "50%", background: C.line, color: C.grayMute, fontSize: 9, fontWeight: 700, cursor: "help", flexShrink: 0 }}>?</span>
+          <Tooltip text={tooltip}>
+            <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, borderRadius: "50%", background: C.line, color: C.grayMute, fontSize: 9, fontWeight: 700 }}>?</span>
+          </Tooltip>
         )}
       </div>
       <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 32, color, lineHeight: 1 }}>{value}</div>
@@ -98,8 +137,7 @@ function RadarChart({ m, color }: { m: SchoolMetric; color: string }) {
   return (
     <svg width={SZ} height={SZ}>
       {rings.map((s) => (
-        <polygon key={s}
-          points={Array.from({ length: N }, (_, i) => pt(i, s).join(",")).join(" ")}
+        <polygon key={s} points={Array.from({ length: N }, (_, i) => pt(i, s).join(",")).join(" ")}
           fill="none" stroke={C.line} strokeWidth={s === 1 ? 1.5 : 0.75} />
       ))}
       {Array.from({ length: N }, (_, i) => {
@@ -120,7 +158,7 @@ function RadarChart({ m, color }: { m: SchoolMetric; color: string }) {
   );
 }
 
-// ---- Drill-in modal ----
+// ---- Drill-in modal (centered) ----
 function DrillModal({ m, mySchoolId, onClose }: { m: SchoolMetric; mySchoolId: string | null; onClose: () => void }) {
   const tone = m.goal > 0 ? goalColor(m.pctToGoal) : C.navy2;
   const isMe = m.key === mySchoolId;
@@ -135,21 +173,14 @@ function DrillModal({ m, mySchoolId, onClose }: { m: SchoolMetric; mySchoolId: s
   ];
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "flex-end", justifyContent: "center", background: "rgba(0,0,0,.32)" }}
+    <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.38)", padding: 20 }}
       onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: "20px 20px 0 0", border: `1px solid ${C.line}`, padding: "24px 28px 32px", width: "100%", maxWidth: 440, boxShadow: "0 -8px 40px rgba(0,0,0,.14)", position: "relative" }}
+      <div style={{ background: "#fff", borderRadius: 20, border: `1px solid ${C.line}`, padding: "24px 28px 28px", width: "100%", maxWidth: 440, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,.2)", position: "relative" }}
         onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: `${C.grayMute}22`, border: "none", color: C.grayMute, width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16, fontWeight: 700 }}>×</button>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-          {m.logo ? (
-            <img src={m.logo} alt="" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 8, background: `${m.color}18`, padding: 4, flexShrink: 0 }}
-              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-          ) : (
-            <div style={{ width: 36, height: 36, borderRadius: 8, background: m.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontFamily: HEAD, fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
-              {m.short[0]}
-            </div>
-          )}
+          <SchoolBadge m={m} size={36} />
           <div>
             <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 18, color: C.navy }}>
               {m.name}
@@ -157,7 +188,6 @@ function DrillModal({ m, mySchoolId, onClose }: { m: SchoolMetric; mySchoolId: s
             </div>
             <div style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>
               {m.tier} · {m.active} active candidate{m.active !== 1 ? "s" : ""}
-              {m.enrollment > 0 ? ` · Enrollment ~${m.enrollment.toLocaleString()}` : ""}
             </div>
           </div>
         </div>
@@ -187,11 +217,13 @@ function DrillModal({ m, mySchoolId, onClose }: { m: SchoolMetric; mySchoolId: s
   );
 }
 
+// ---- Main component ----
 export default function StandingsClient({ schools, candidates, goals, mySchoolId }: {
   schools: SchoolRow[]; candidates: CandRow[]; goals: GoalRow[]; mySchoolId: string | null;
 }) {
   const [subTab, setSubTab] = useState<"goal" | "funnel" | "matrix" | "h2h">("goal");
   const [drillId, setDrillId] = useState<string | null>(null);
+  const [hoveredBar, setHoveredBar] = useState<string | null>(null);
 
   const merged = useMemo(
     () => buildMergedData(schools, candidates, goals, mySchoolId),
@@ -203,14 +235,11 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
   const [h2hA, setH2hA] = useState(initialA);
   const [h2hB, setH2hB] = useState(merged.schools.find((s) => s.id !== initialA)?.id ?? "");
 
-  const stats    = useMemo(
-    () => computeSchoolMetrics(merged.candidates, merged.schools, merged.goals),
-    [merged]
-  );
+  const stats    = useMemo(() => computeSchoolMetrics(merged.candidates, merged.schools, merged.goals), [merged]);
   const statsMap = useMemo(() => new Map(stats.map((m) => [m.key, m])), [stats]);
 
-  const tierLabel = (tier: string) =>
-    tier === "core" ? "Core Schools" : tier === "satellite" ? "Satellite Group" : tier === "bonus" ? "Bonus Group" : tier;
+  const tierLabel = (t: string) =>
+    t === "core" ? "Core Schools" : t === "satellite" ? "Satellite Group" : t === "bonus" ? "Bonus Group" : t;
 
   const byTier = useMemo(() => {
     const tiers = [...new Set(stats.map((m) => m.tier))].sort();
@@ -220,18 +249,29 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
     }));
   }, [stats]);
 
-  const funnelSorted = useMemo(() => [...stats].sort((a, b) => b.sourced - a.sourced), [stats]);
-  const maxSourced   = useMemo(() => Math.max(...funnelSorted.map((m) => m.sourced), 1), [funnelSorted]);
-
   // Summary stats
   const totalGoal    = stats.reduce((s, m) => s + m.goal, 0);
   const totalApplied = stats.reduce((s, m) => s + m.applied, 0);
   const overallPct   = totalGoal > 0 ? Math.round((totalApplied / totalGoal) * 100) : 0;
   const atGoalCount  = stats.filter((m) => m.atGoal).length;
   const atRiskCount  = stats.filter((m) => m.atRisk).length;
-  const topSchool    = stats[0] ?? null; // already sorted by orrScore desc
+  const topSchool    = stats[0] ?? null;
 
   const drillMetric = drillId ? statsMap.get(drillId) ?? null : null;
+
+  // Funnel tab helpers
+  const logVal = (v: number) => v > 0 ? Math.log10(v + 1) : 0;
+  const maxLog = useMemo(() => Math.max(...stats.map((m) => logVal(m.sourced)), 0.1), [stats]);
+
+  const bestYield   = useMemo(() => [...stats].sort((a, b) => b.yield - a.yield)[0] ?? null, [stats]);
+  const bestContact = useMemo(() => [...stats].filter((m) => m.sourced > 0).sort((a, b) => (b.contacted / b.sourced) - (a.contacted / a.sourced))[0] ?? null, [stats]);
+  const bestApply   = useMemo(() => [...stats].filter((m) => m.contacted > 0).sort((a, b) => (b.applied / b.contacted) - (a.applied / a.contacted))[0] ?? null, [stats]);
+
+  const METRIC_TIPS = {
+    sourced:   "Sourced: Candidates identified or reached out to — the top of the funnel.",
+    contacted: "Contacted: Candidates who were actively engaged and responded to outreach.",
+    applied:   "Applied: Candidates who submitted a full application to the Orr Fellowship.",
+  };
 
   const subBtnStyle = (k: string): React.CSSProperties => ({
     border: "none", background: "none", cursor: "pointer", padding: "10px 18px",
@@ -247,31 +287,16 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
 
       {/* Summary cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 26 }}>
-        <SummaryCard
-          label="Overall % to Goal"
-          value={totalGoal > 0 ? `${overallPct}%` : "—"}
+        <SummaryCard label="Overall % to Goal" value={totalGoal > 0 ? `${overallPct}%` : "—"}
           color={totalGoal > 0 ? goalColor(overallPct) : C.grayMute}
-          tooltip="Org-wide applied count as a percentage of the total applied goal across all schools."
-        />
-        <SummaryCard
-          label="Schools at Goal"
-          value={atGoalCount}
-          color={C.good}
-          tooltip="Schools that have met or exceeded their applied candidate goal."
-        />
-        <SummaryCard
-          label="Schools at Risk"
-          value={atRiskCount}
-          color={C.orange}
-          tooltip="Schools with fewer than 50% to goal AND active candidates in the pipeline."
-        />
-        <SummaryCard
-          label="Top Performer"
-          value={topSchool?.short ?? "—"}
-          color={C.navy}
+          tooltip="Org-wide applied count as a % of the total applied goal across all schools." />
+        <SummaryCard label="Schools at Goal" value={atGoalCount} color={C.good}
+          tooltip="Schools that have met or exceeded their applied candidate goal." />
+        <SummaryCard label="Schools at Risk" value={atRiskCount} color={C.orange}
+          tooltip="Schools below 50% to goal with active pipeline candidates." />
+        <SummaryCard label="Top Performer" value={topSchool?.short ?? "—"} color={C.navy}
           sub={topSchool ? `${topSchool.orrScore} Orr Score` : undefined}
-          tooltip="School with the highest Orr Score this cycle."
-        />
+          tooltip="School with the highest Orr Score (50% goal attainment + 35% yield + 15% depth)." />
       </div>
 
       {/* Sub-tabs */}
@@ -293,63 +318,55 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {rows.map((m, rank) => {
                   const isMe = m.key === resolvedMyId;
-                  const tone = m.goal > 0 ? goalColor(m.pctToGoal) : C.grayMute;
                   return (
-                    <div key={m.key} onClick={() => setDrillId(m.key)} style={{
-                      background: isMe ? `${m.color}0F` : "#fff",
-                      border: `1px solid ${isMe ? m.color : C.line}`,
-                      borderLeft: `4px solid ${m.color}`,
-                      borderRadius: 12, padding: "14px 18px", cursor: "pointer",
-                    }}
-                    onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = isMe ? `${m.color}18` : "#F0F4FA"; }}
-                    onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = isMe ? `${m.color}0F` : "#fff"; }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 18, color: C.navy3, width: 28, textAlign: "center", flexShrink: 0 }}>
-                          #{rank + 1}
+                    <div key={m.key} onClick={() => setDrillId(m.key)}
+                      style={{ background: isMe ? `${m.color}0F` : "#fff", border: `1px solid ${isMe ? m.color : C.line}`, borderLeft: `4px solid ${m.color}`, borderRadius: 12, padding: "14px 18px", cursor: "pointer" }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = isMe ? `${m.color}18` : "#F0F4FA"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = isMe ? `${m.color}0F` : "#fff"; }}>
+
+                      {/* School header row */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                        <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16, color: C.navy3, width: 28, textAlign: "center", flexShrink: 0 }}>#{rank + 1}</div>
+                        <SchoolBadge m={m} size={24} />
+                        <div style={{ flex: 1, fontWeight: 700, color: C.gray, fontSize: 15 }}>
+                          {m.name}
+                          {isMe && <span style={{ marginLeft: 8, fontSize: 11, color: m.color, background: `${m.color}22`, padding: "2px 7px", borderRadius: 99, fontWeight: 700 }}>You</span>}
                         </div>
-                        {m.logo ? (
-                          <img src={m.logo} alt="" style={{ height: 26, width: 26, objectFit: "contain", borderRadius: 4, flexShrink: 0 }} />
-                        ) : (
-                          <div style={{ height: 26, width: 26, borderRadius: 4, background: m.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: HEAD, flexShrink: 0 }}>
-                            {m.short[0]}
-                          </div>
-                        )}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, color: C.gray, fontSize: 15 }}>
-                            {m.name}
-                            {isMe && <span style={{ marginLeft: 8, fontSize: 11, color: m.color, background: `${m.color}22`, padding: "2px 7px", borderRadius: 99, fontWeight: 700 }}>You</span>}
-                          </div>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 9 }}>
-                            {([
-                              ["Sourced",   m.sourced,   m.goalSourced,   m.gS],
-                              ["Contacted", m.contacted, m.goalContacted, m.gC],
-                              ["Applied",   m.applied,   m.goal,          m.gA],
-                            ] as [string, number, number, number][]).map(([lbl, act, gl, ratio]) => (
-                              <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <span style={{ fontSize: 10, color: C.grayMute, fontWeight: 600, width: 58, flexShrink: 0 }}>{lbl}</span>
-                                <div style={{ flex: 1, height: 5, borderRadius: 99, background: C.line, overflow: "hidden" }}>
-                                  <div style={{ height: "100%", width: `${Math.min(ratio * 100, 100)}%`, background: gl > 0 ? goalColor(Math.round(ratio * 100)) : C.navy3, borderRadius: 99 }} />
-                                </div>
-                                <span style={{ fontSize: 10, color: C.grayMute, width: 44, textAlign: "right", flexShrink: 0 }}>
-                                  {act}{gl > 0 ? `/${gl}` : ""}
-                                </span>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: C.navy2, lineHeight: 1 }}>{m.orrScore}</div>
+                          <div style={{ fontSize: 9, color: C.grayMute, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8 }}>Orr Score</div>
+                        </div>
+                      </div>
+
+                      {/* Three metric boxes side by side */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginLeft: 38 }}>
+                        {([
+                          { label: "Sourced",   act: m.sourced,   goal: m.goalSourced,   ratio: m.gS },
+                          { label: "Contacted", act: m.contacted, goal: m.goalContacted, ratio: m.gC },
+                          { label: "Applied",   act: m.applied,   goal: m.goal,          ratio: m.gA },
+                        ]).map(({ label, act, goal, ratio }) => {
+                          const pct  = goal > 0 ? Math.round(ratio * 100) : 0;
+                          const tone = goal > 0 ? goalColor(pct) : C.navy3;
+                          return (
+                            <div key={label} style={{ background: isMe ? `${m.color}0A` : C.canvas, borderRadius: 8, padding: "8px 10px" }}>
+                              <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: C.grayMute, marginBottom: 4, fontFamily: HEAD }}>{label}</div>
+                              <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 5 }}>
+                                <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: goal > 0 ? tone : C.navy2, lineHeight: 1 }}>{act}</span>
+                                {goal > 0 && <span style={{ fontSize: 10, color: C.grayMute }}>/ {goal}</span>}
                               </div>
-                            ))}
-                          </div>
-                        </div>
-                        <div style={{ textAlign: "right", flexShrink: 0, minWidth: 64 }}>
-                          {m.goal > 0 ? (
-                            <>
-                              <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 28, color: tone, lineHeight: 1 }}>{m.pctToGoal}%</div>
-                              <div style={{ fontSize: 10, color: C.grayMute, fontWeight: 600 }}>to goal</div>
-                            </>
-                          ) : (
-                            <>
-                              <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 26, color: C.navy2, lineHeight: 1 }}>{m.orrScore}</div>
-                              <div style={{ fontSize: 10, color: C.grayMute, fontWeight: 600 }}>Orr Score</div>
-                            </>
-                          )}
-                        </div>
+                              {goal > 0 ? (
+                                <>
+                                  <div style={{ height: 4, borderRadius: 99, background: C.line, overflow: "hidden", marginBottom: 3 }}>
+                                    <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: tone, borderRadius: 99 }} />
+                                  </div>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: tone }}>{pct}%</div>
+                                </>
+                              ) : (
+                                <div style={{ fontSize: 10, color: C.grayMute }}>No goal set</div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -363,46 +380,146 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
 
       {/* ─── FUNNEL COMPARISON ─── */}
       {subTab === "funnel" && (
-        <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", padding: "12px 18px 12px 160px", borderBottom: `1px solid ${C.line}`, gap: 16, fontFamily: HEAD, fontSize: 11, fontWeight: 700, color: C.grayMute, textTransform: "uppercase" }}>
-            <span style={{ color: C.navy3 }}>▮ Sourced</span>
-            <span style={{ color: C.blue }}>▮ Contacted</span>
-            <span style={{ color: C.navy2 }}>▮ Applied</span>
-          </div>
-          {funnelSorted.map((m) => {
-            const isMe    = m.key === resolvedMyId;
-            const gPct    = m.goalSourced > 0 ? `${Math.round((m.sourced / m.goalSourced) * 100)}%` : null;
-            const srcOnly  = Math.max(m.sourced  - m.contacted, 0);
-            const cntdOnly = Math.max(m.contacted - m.applied,  0);
-            return (
-              <div key={m.key} onClick={() => setDrillId(m.key)} style={{ display: "flex", alignItems: "center", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, background: isMe ? `${m.color}08` : undefined, gap: 12, cursor: "pointer" }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = isMe ? `${m.color}18` : "#F0F4FA"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = isMe ? `${m.color}08` : ""; }}>
-                <div style={{ width: 140, display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                  {m.logo ? (
-                    <img src={m.logo} alt="" style={{ height: 20, width: 20, objectFit: "contain", borderRadius: 3, flexShrink: 0 }} />
-                  ) : (
-                    <div style={{ height: 20, width: 20, borderRadius: 3, background: m.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 9, fontWeight: 700, fontFamily: HEAD, flexShrink: 0 }}>
-                      {m.short[0]}
-                    </div>
-                  )}
-                  <span style={{ fontSize: 13, fontWeight: isMe ? 700 : 600, color: C.gray, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
-                </div>
-                <div style={{ flex: 1, height: 18, display: "flex", alignItems: "center" }}>
-                  <div style={{ width: `${(m.sourced / maxSourced) * 100}%`, height: "100%", display: "flex", borderRadius: 4, overflow: "hidden", gap: 1 }}>
-                    {srcOnly  > 0 && <div style={{ flex: srcOnly,  background: `${C.navy3}66` }} />}
-                    {cntdOnly > 0 && <div style={{ flex: cntdOnly, background: C.blue, opacity: 0.85 }} />}
-                    {m.applied > 0 && <div style={{ flex: m.applied, background: C.navy2 }} />}
-                  </div>
-                </div>
-                <div style={{ width: 110, display: "flex", gap: 6, justifyContent: "flex-end", fontSize: 12, color: C.grayMute, flexShrink: 0, fontFamily: HEAD }}>
-                  <span><b style={{ color: C.gray }}>{m.sourced}</b> / <b style={{ color: C.navy2 }}>{m.applied}</b></span>
-                  {gPct && <span style={{ color: m.goalSourced > 0 && m.sourced >= m.goalSourced ? C.good : C.orange, fontWeight: 700 }}>{gPct}</span>}
-                </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          {/* Pipeline depth chart */}
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.line}`, padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.navy, fontFamily: HEAD }}>Pipeline Depth by School</h3>
+              <span style={{ fontSize: 10, color: C.grayMute, fontFamily: BODY }}>Bar width scaled logarithmically</span>
+            </div>
+
+            {/* Legend */}
+            <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 16, flexWrap: "wrap" }}>
+              {([
+                { key: "sourced",   label: "Sourced",   bg: `${C.navy3}40` },
+                { key: "contacted", label: "Contacted", bg: C.blue },
+                { key: "applied",   label: "Applied",   bg: C.navy },
+              ] as const).map(({ key, label, bg }) => (
+                <Tooltip key={key} text={METRIC_TIPS[key]}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 12, height: 12, borderRadius: 3, background: bg, display: "inline-block" }} />
+                    <span style={{ fontSize: 10, color: C.grayMute, fontFamily: BODY, textDecoration: "underline dotted" }}>{label} ⓘ</span>
+                  </span>
+                </Tooltip>
+              ))}
+            </div>
+
+            {/* Column headers */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, paddingLeft: 148 }}>
+              <div style={{ flex: 1 }} />
+              <div style={{ display: "flex", gap: 8, width: 120, flexShrink: 0 }}>
+                {([
+                  { label: "Src ⓘ",  tip: METRIC_TIPS.sourced,   color: C.navy3 },
+                  { label: "Con ⓘ",  tip: METRIC_TIPS.contacted, color: C.blue  },
+                  { label: "App ⓘ",  tip: METRIC_TIPS.applied,   color: C.navy  },
+                ]).map(({ label, tip, color }) => (
+                  <Tooltip key={label} text={tip}>
+                    <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color, fontFamily: BODY, width: 32, textAlign: "center", textDecoration: "underline dotted" }}>{label}</span>
+                  </Tooltip>
+                ))}
               </div>
-            );
-          })}
-          {funnelSorted.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No data yet.</div>}
+            </div>
+
+            {/* School rows */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {stats.map((m) => {
+                const totalW       = maxLog > 0 ? (logVal(m.sourced) / maxLog) * 100 : 0;
+                const contactedW   = m.sourced > 0 ? (logVal(m.contacted) / logVal(m.sourced)) * 100 : 0;
+                const appliedW     = m.sourced > 0 ? (logVal(m.applied)   / logVal(m.sourced)) * 100 : 0;
+                const contactedBarW = (totalW * contactedW) / 100;
+                const appliedBarW   = (totalW * appliedW)   / 100;
+                const isMe = m.key === resolvedMyId;
+                return (
+                  <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    onMouseEnter={() => setHoveredBar(m.key)}
+                    onMouseLeave={() => setHoveredBar(null)}>
+                    <div style={{ width: 140, flexShrink: 0, display: "flex", alignItems: "center", gap: 5, justifyContent: "flex-end" }}>
+                      <span style={{ fontSize: 11, color: isMe ? m.color : C.gray, fontFamily: BODY, fontWeight: isMe ? 700 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.short}</span>
+                    </div>
+                    <div style={{ flex: 1, position: "relative", height: 20, background: C.canvas, borderRadius: 99, overflow: "hidden", cursor: "pointer" }}
+                      onClick={() => setDrillId(m.key)}>
+                      {/* Sourced — faint background */}
+                      <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${totalW}%`, background: m.color + "22", border: `1px solid ${m.color}33`, borderRadius: 99 }} />
+                      {/* Contacted — hatched */}
+                      <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${contactedBarW}%`, borderRadius: 99, background: `repeating-linear-gradient(45deg, ${m.color}66 0px, ${m.color}66 3px, transparent 3px, transparent 6px)` }} />
+                      {/* Applied — solid */}
+                      <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${appliedBarW}%`, borderRadius: 99, background: m.color + "DD" }} />
+                      {/* Hover-revealed counts */}
+                      {hoveredBar === m.key && appliedBarW > 8 && (
+                        <div style={{ position: "absolute", top: "50%", left: `${appliedBarW / 2}%`, transform: "translate(-50%, -50%)", fontSize: 9, fontWeight: 700, color: "#fff", pointerEvents: "none" }}>
+                          {m.applied}
+                        </div>
+                      )}
+                      {hoveredBar === m.key && contactedBarW > appliedBarW + 8 && (
+                        <div style={{ position: "absolute", top: "50%", left: `${appliedBarW + (contactedBarW - appliedBarW) / 2}%`, transform: "translate(-50%, -50%)", fontSize: 9, fontWeight: 700, color: "#fff", pointerEvents: "none" }}>
+                          {m.contacted}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, width: 120, flexShrink: 0 }}>
+                      <span style={{ fontSize: 10, color: C.grayMute, fontFamily: BODY, width: 32, textAlign: "center" }}>{m.sourced}</span>
+                      <span style={{ fontSize: 10, color: C.blue,     fontFamily: BODY, width: 32, textAlign: "center" }}>{m.contacted}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: C.navy, fontFamily: HEAD, width: 32, textAlign: "center" }}>{m.applied}</span>
+                    </div>
+                  </div>
+                );
+              })}
+              {stats.length === 0 && <div style={{ padding: 32, textAlign: "center", color: C.grayMute }}>No data yet.</div>}
+            </div>
+
+            {/* Reading guide */}
+            <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.line}`, fontSize: 10, fontFamily: BODY, color: C.grayMute, display: "flex", flexWrap: "wrap", gap: "4px 20px" }}>
+              <span><strong style={{ color: C.gray }}>Solid bar</strong> = Applied candidates</span>
+              <span><strong style={{ color: C.gray }}>Hatched bar</strong> = Contacted (includes applied)</span>
+              <span><strong style={{ color: C.gray }}>Faint bar</strong> = Total sourced pipeline</span>
+            </div>
+          </div>
+
+          {/* Stage Champions */}
+          <div>
+            <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 700, color: C.navy, fontFamily: HEAD }}>Stage Champions</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+              {([
+                {
+                  label: "Best Sourced → Contacted",
+                  tip: "Which school converts the highest % of sourced candidates to contacted?",
+                  champ: bestContact,
+                  stat: bestContact ? `${Math.round((bestContact.contacted / bestContact.sourced) * 100)}%` : "—",
+                },
+                {
+                  label: "Best Contacted → Applied",
+                  tip: "Which school converts the highest % of contacted candidates to applicants?",
+                  champ: bestApply,
+                  stat: bestApply ? `${Math.round((bestApply.applied / bestApply.contacted) * 100)}%` : "—",
+                },
+                {
+                  label: "Best Overall Yield",
+                  tip: "Yield = Applied ÷ Sourced. Which school has the highest end-to-end conversion?",
+                  champ: bestYield,
+                  stat: bestYield ? `${bestYield.yield}%` : "—",
+                },
+              ]).map(({ label, tip, champ, stat }) => (
+                <div key={label} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.line}`, padding: 16 }}>
+                  <Tooltip text={tip}>
+                    <p style={{ margin: "0 0 8px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, color: C.grayMute, fontFamily: BODY, textDecoration: "underline dotted" }}>
+                      {label} ⓘ
+                    </p>
+                  </Tooltip>
+                  {champ ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <SchoolBadge m={champ} size={24} />
+                      <div>
+                        <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.navy, fontFamily: HEAD }}>{champ.short}</p>
+                        <p style={{ margin: 0, fontSize: 11, fontFamily: BODY, color: champ.color }}>{stat} conversion</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, fontSize: 12, color: C.grayMute, fontFamily: BODY }}>No data</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -413,9 +530,8 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
         const iW = W - pad.l - pad.r;
         const iH = H - pad.t - pad.b;
         const maxSrc = Math.max(...stats.map((m) => m.sourced), 4);
-        const midX = maxSrc / 2;
         const toX = (v: number) => pad.l + (v / maxSrc) * iW;
-        const toY = (v: number) => pad.t + (1 - v / 100) * iH; // 0% at bottom, 100% at top
+        const toY = (v: number) => pad.t + (1 - v / 100) * iH;
         const hasData = stats.some((m) => m.sourced > 0);
         return (
           <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "20px 24px" }}>
@@ -427,36 +543,25 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
               <div style={{ padding: 48, textAlign: "center", color: C.grayMute }}>No pipeline data yet.</div>
             ) : (
               <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", maxHeight: 380 }}>
-                {/* Canvas */}
                 <rect x={pad.l} y={pad.t} width={iW} height={iH} fill={C.canvas} rx={6} />
-
-                {/* Quadrant fills */}
-                <rect x={toX(midX)} y={pad.t}          width={iW / 2} height={iH / 2} fill="#10b98108" />
-                <rect x={pad.l}     y={pad.t}          width={iW / 2} height={iH / 2} fill="#f59e0b08" />
-                <rect x={toX(midX)} y={pad.t + iH / 2} width={iW / 2} height={iH / 2} fill="#ef444408" />
-                <rect x={pad.l}     y={pad.t + iH / 2} width={iW / 2} height={iH / 2} fill="#ef444408" />
-
-                {/* Quadrant dividers */}
-                <line x1={toX(midX)} y1={pad.t} x2={toX(midX)} y2={pad.t + iH} stroke={C.line} strokeWidth={1.5} strokeDasharray="5,4" />
+                <rect x={toX(maxSrc / 2)} y={pad.t}          width={iW / 2} height={iH / 2} fill="#10b98108" />
+                <rect x={pad.l}           y={pad.t}          width={iW / 2} height={iH / 2} fill="#f59e0b08" />
+                <rect x={toX(maxSrc / 2)} y={pad.t + iH / 2} width={iW / 2} height={iH / 2} fill="#ef444408" />
+                <rect x={pad.l}           y={pad.t + iH / 2} width={iW / 2} height={iH / 2} fill="#ef444408" />
+                <line x1={toX(maxSrc / 2)} y1={pad.t} x2={toX(maxSrc / 2)} y2={pad.t + iH} stroke={C.line} strokeWidth={1.5} strokeDasharray="5,4" />
                 <line x1={pad.l} y1={toY(50)} x2={pad.l + iW} y2={toY(50)} stroke={C.line} strokeWidth={1.5} strokeDasharray="5,4" />
-
-                {/* Quadrant labels */}
                 <text x={pad.l + iW * 0.75} y={pad.t + 14} textAnchor="middle" style={{ fontSize: 9, fill: "#10b981", fontFamily: HEAD, fontWeight: 700 }}>High Volume · High Yield</text>
                 <text x={pad.l + iW * 0.25} y={pad.t + 14} textAnchor="middle" style={{ fontSize: 9, fill: "#f59e0b", fontFamily: HEAD, fontWeight: 700 }}>Low Volume · High Yield</text>
                 <text x={pad.l + iW * 0.75} y={pad.t + iH - 6} textAnchor="middle" style={{ fontSize: 9, fill: "#ef4444", fontFamily: HEAD, fontWeight: 700 }}>High Volume · Low Yield</text>
                 <text x={pad.l + iW * 0.25} y={pad.t + iH - 6} textAnchor="middle" style={{ fontSize: 9, fill: "#ef4444", fontFamily: HEAD, fontWeight: 700 }}>Low Volume · Low Yield</text>
-
-                {/* X axis */}
                 <line x1={pad.l} y1={pad.t + iH} x2={pad.l + iW} y2={pad.t + iH} stroke={C.line} strokeWidth={1} />
-                {[0, Math.round(midX), maxSrc].map((v, i) => (
+                {[0, Math.round(maxSrc / 2), maxSrc].map((v, i) => (
                   <g key={i}>
                     <line x1={toX(v)} y1={pad.t + iH} x2={toX(v)} y2={pad.t + iH + 5} stroke={C.grayMute} strokeWidth={1} />
                     <text x={toX(v)} y={pad.t + iH + 18} textAnchor="middle" style={{ fontSize: 10, fill: C.grayMute, fontFamily: HEAD }}>{v}</text>
                   </g>
                 ))}
                 <text x={pad.l + iW / 2} y={H - 4} textAnchor="middle" style={{ fontSize: 10, fill: C.grayMute, fontFamily: HEAD, fontWeight: 600 }}>Sourced Volume →</text>
-
-                {/* Y axis */}
                 <line x1={pad.l} y1={pad.t} x2={pad.l} y2={pad.t + iH} stroke={C.line} strokeWidth={1} />
                 {[0, 25, 50, 75, 100].map((v) => (
                   <g key={v}>
@@ -467,8 +572,6 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                 <text x={13} y={pad.t + iH / 2} textAnchor="middle" dominantBaseline="middle"
                   transform={`rotate(-90 13 ${pad.t + iH / 2})`}
                   style={{ fontSize: 10, fill: C.grayMute, fontFamily: HEAD, fontWeight: 600 }}>Yield % →</text>
-
-                {/* School dots */}
                 {stats.map((m) => {
                   const x = toX(m.sourced);
                   const y = toY(m.yield);
@@ -476,12 +579,9 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                   const r = isMe ? 9 : 7;
                   return (
                     <g key={m.key} style={{ cursor: "pointer" }} onClick={() => setDrillId(m.key)}>
-                      {/* larger invisible hit area */}
                       <circle cx={x} cy={y} r={r + 5} fill="transparent" />
                       <circle cx={x} cy={y} r={r} fill={m.color} opacity={0.9} stroke="#fff" strokeWidth={isMe ? 2.5 : 1.5} />
-                      <text x={x} y={y - r - 5} textAnchor="middle" style={{ fontSize: 9, fill: C.gray, fontWeight: 700, fontFamily: HEAD, pointerEvents: "none" }}>
-                        {m.short}
-                      </text>
+                      <text x={x} y={y - r - 5} textAnchor="middle" style={{ fontSize: 9, fill: C.gray, fontWeight: 700, fontFamily: HEAD, pointerEvents: "none" }}>{m.short}</text>
                     </g>
                   );
                 })}
@@ -520,7 +620,6 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                 {merged.schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
-
             {mA && mB && (
               <>
                 <div style={{ display: "flex", gap: 32, justifyContent: "center", marginBottom: 28, flexWrap: "wrap" }}>
@@ -534,7 +633,6 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                     </div>
                   ))}
                 </div>
-
                 <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", padding: "12px 20px", borderBottom: `1px solid ${C.line}`, background: "#FAFBFE", fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute }}>
                     <div style={{ color: colA }}>{mA.name}</div>

@@ -7,7 +7,7 @@ import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
   reassignPointPerson, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, bulkImportCandidates, deleteOutreach, deleteConnection,
-  deduplicateCandidates, inviteUser, seedPlaybook,
+  deduplicateCandidates, inviteUser, seedPlaybook, removeUser,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import { phaseOf, STAGE_CONFIG, routeToSchoolName } from "@/lib/stages";
@@ -558,11 +558,11 @@ export default function ConsoleClient({
               <button onClick={() => setInviteOpen(true)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, padding: "10px 18px", borderRadius: 10, cursor: "pointer" }}>+ Invite User</button>
             </div>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                <div>Name</div><div>Email</div><div>Role</div><div>School</div><div></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+                <div>Name</div><div>Email</div><div>Role</div><div>School</div><div></div><div></div>
               </div>
               {users.map((u) => (
-                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
+                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <input defaultValue={u.full_name}
                       onBlur={(e) => { const n = e.target.value.trim(); if (n && n !== u.full_name) startTransition(() => { updateUserName(u.id, n); }); }}
@@ -583,6 +583,13 @@ export default function ConsoleClient({
                     {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                   <div style={{ width: 10, height: 10, borderRadius: 99, background: u.is_active ? C.good : C.line, margin: "0 auto" }} title={u.is_active ? "Active" : "Inactive"} />
+                  <button
+                    disabled={u.id === profile.id}
+                    onClick={() => { if (confirm(`Remove ${u.full_name}? This cannot be undone.`)) startTransition(() => { removeUser(u.id); }); }}
+                    title={u.id === profile.id ? "Cannot remove yourself" : "Remove user"}
+                    style={{ border: "none", background: "transparent", color: u.id === profile.id ? C.line : "#ef4444", fontSize: 16, cursor: u.id === profile.id ? "default" : "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    ×
+                  </button>
                 </div>
               ))}
               {users.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No users found.</div>}

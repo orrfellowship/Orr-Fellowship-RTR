@@ -162,6 +162,17 @@ export async function updateUserName(user_id: string, full_name: string) {
   return { ok: true };
 }
 
+export async function removeUser(userId: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  if (userId === profile.id) return { error: "Cannot remove yourself" };
+  const db = createServiceClient();
+  await db.from("profiles").delete().eq("id", userId);
+  try { await db.auth.admin.deleteUser(userId); } catch {}
+  revalidatePath("/console");
+  return { ok: true };
+}
+
 export async function addConnection(candidateId: string, relationship: string) {
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
