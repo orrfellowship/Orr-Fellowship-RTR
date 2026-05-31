@@ -10,7 +10,7 @@ import {
   deduplicateCandidates, inviteUser, seedPlaybook,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
-import { phaseOf, STAGE_CONFIG } from "@/lib/stages";
+import { phaseOf, STAGE_CONFIG, routeToSchoolName } from "@/lib/stages";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -1002,6 +1002,12 @@ function BulkImportModal({ schools, existingEmails, onClose, startTransition }: 
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const schoolByName = new Map(schools.map((s) => [s.name.toLowerCase(), s.id]));
+  const resolveSchoolId = (raw: string): string | null => {
+    const exact = schoolByName.get(raw.toLowerCase());
+    if (exact) return exact;
+    const routed = routeToSchoolName(raw);
+    return routed ? (schoolByName.get(routed.toLowerCase()) ?? null) : null;
+  };
 
   const parsed = (() => {
     if (!text.trim()) return null;
@@ -1018,7 +1024,7 @@ function BulkImportModal({ schools, existingEmails, onClose, startTransition }: 
     const items = dataRows.map((r) => ({
       name: r[iName] ?? "",
       email: r[iEmail] || null,
-      school_id: schoolByName.get((r[iSchool] ?? "").toLowerCase()) ?? null,
+      school_id: resolveSchoolId(r[iSchool] ?? ""),
       stage: r[iStage] || null,
       gpa: r[iGpa] || null,
       area_of_study: r[iMajor] || null,

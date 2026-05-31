@@ -92,8 +92,8 @@ export async function addCandidate(data: {
 }) {
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
-  const supabase = createServerSupabase();
-  const { error } = await supabase.from("candidates").insert({ ...data, source: "user_created", not_interested: false });
+  const db = createServiceClient();
+  const { error } = await db.from("candidates").insert({ ...data, source: "user_created", not_interested: false });
   if (error) return { error: error.message };
   revalidatePath("/console");
   return { ok: true };
@@ -104,8 +104,8 @@ export async function bulkImportCandidates(
 ) {
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
-  const supabase = createServerSupabase();
-  const { error } = await supabase.from("candidates").insert(
+  const db = createServiceClient();
+  const { error } = await db.from("candidates").insert(
     rows.map((r) => ({ ...r, source: "user_created", not_interested: false }))
   );
   if (error) return { error: error.message };
