@@ -12,7 +12,7 @@ export default function ForgotPasswordPage() {
   async function submit() {
     setError(null);
     setLoading(true);
-    const redirectTo = `${window.location.origin}/auth/callback?type=recovery`;
+    const redirectTo = `${window.location.origin}/auth/reset-callback`;
     const result = await sendPasswordReset(email.trim(), redirectTo);
     setLoading(false);
     if (result.error) {

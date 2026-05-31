@@ -276,8 +276,11 @@ export async function inviteUser(email: string, full_name: string, role: string,
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const serviceDb = createServiceClient();
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
+    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
   const { data, error } = await serviceDb.auth.admin.inviteUserByEmail(email, {
     data: { full_name, role, school_id },
+    redirectTo: `${siteUrl}/auth/invite-callback`,
   });
   if (error) return { error: error.message };
   if (data?.user) {
