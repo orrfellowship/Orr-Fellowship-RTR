@@ -186,7 +186,7 @@ export default function ConsoleClient({
             </div>
             {TABS.map(([k, l]) => (
               <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${C.orange}` : "3px solid transparent" }}>
-                {k === "standings" ? <>Sc<em style={{ color: C.orange, fontStyle: "italic" }}>orr</em> B<em style={{ color: C.orange, fontStyle: "italic" }}>orr</em>d</> : l}
+                {l}
               </button>
             ))}
           </div>
