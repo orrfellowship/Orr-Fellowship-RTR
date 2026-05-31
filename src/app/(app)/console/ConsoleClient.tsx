@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useMemo, useTransition, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/lib/types";
 import { isSuper, isAdminPlus } from "@/lib/types";
 import {
@@ -71,8 +73,14 @@ export default function ConsoleClient({
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
   const [deduping, setDeduping] = useState(false);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
   const superUser = isSuper(profile.role);
   const adminPlus = isAdminPlus(profile.role);
+
+  async function signOut() {
+    await createClient().auth.signOut();
+    router.push("/login");
+  }
   const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a as AI])), [ai]);
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
 
@@ -190,7 +198,10 @@ export default function ConsoleClient({
               </button>
             ))}
           </div>
-          <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
+            <button onClick={signOut} style={{ border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "rgba(255,255,255,.75)", fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 8, cursor: "pointer" }}>Sign out</button>
+          </div>
         </div>
       </div>
 

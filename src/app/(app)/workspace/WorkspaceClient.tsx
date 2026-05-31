@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useMemo, useTransition, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/lib/types";
 import { canReassign, canEditPlaybook } from "@/lib/types";
 import {
@@ -57,8 +59,14 @@ export default function WorkspaceClient({
   const [allFilter, setAllFilter] = useState<string>("All schools");
   const [openId, setOpenId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
   const canEdit = canEditPlaybook(profile.role);
   const canAssign = canReassign(profile.role);
+
+  async function signOut() {
+    await createClient().auth.signOut();
+    router.push("/login");
+  }
   const accent = school?.color_primary ?? C.orange;
 
   const nameOf = (id: string | null, label?: string | null): string => {
@@ -154,7 +162,10 @@ export default function WorkspaceClient({
               <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent" }}>{l}</button>
             ))}
           </div>
-          <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
+            <button onClick={signOut} style={{ border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "rgba(255,255,255,.75)", fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 8, cursor: "pointer" }}>Sign out</button>
+          </div>
         </div>
       </div>
 
