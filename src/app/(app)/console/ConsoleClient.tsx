@@ -7,7 +7,7 @@ import type { Profile } from "@/lib/types";
 import { isSuper, isAdminPlus } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
-  reassignPointPerson, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
+  reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, bulkImportCandidates, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, seedPlaybook, removeUser,
 } from "./actions";
@@ -316,10 +316,20 @@ export default function ConsoleClient({
                         <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div>
                         <div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div>
                       </div>
-                      <div style={{ fontSize: 13.5 }}>
-                        {schoolName
-                          ? <span style={{ color: C.navy2, fontWeight: 600 }}>{schoolName}</span>
-                          : <span style={{ color: C.orange, fontStyle: "italic", fontSize: 12 }}>{c.university_raw ?? "Unrouted"}</span>}
+                      <div style={{ fontSize: 13.5 }} onClick={(e) => e.stopPropagation()}>
+                        {adminPlus ? (
+                          <select
+                            value={c.school_id ?? ""}
+                            onChange={(e) => startTransition(() => { reassignSchool(c.id, e.target.value || null); })}
+                            style={{ fontSize: 12, fontWeight: 600, color: c.school_id ? C.navy2 : C.orange, border: `1px solid ${c.school_id ? C.line : C.orange}`, borderRadius: 7, padding: "4px 6px", background: "#fff", maxWidth: "100%", cursor: "pointer" }}>
+                            <option value="">— Unrouted —</option>
+                            {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                        ) : (
+                          schoolName
+                            ? <span style={{ color: C.navy2, fontWeight: 600 }}>{schoolName}</span>
+                            : <span style={{ color: C.orange, fontStyle: "italic", fontSize: 12 }}>{c.university_raw ?? "Unrouted"}</span>
+                        )}
                       </div>
                       <div style={{ fontSize: 13.5 }}>{c.area_of_study}</div>
                       <div style={{ fontSize: 13.5, fontWeight: 600 }}>{c.gpa}</div>

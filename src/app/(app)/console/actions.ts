@@ -27,6 +27,16 @@ export async function setNotInterested(candidateId: string, value: boolean) {
   return { ok: true };
 }
 
+export async function reassignSchool(candidateId: string, schoolId: string | null) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { error } = await db.from("candidates").update({ school_id: schoolId }).eq("id", candidateId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
 export async function reassignPointPerson(candidateId: string, ownerId: string | null) {
   const supabase = createServerSupabase();
   const { error } = await supabase.from("candidates").update({ point_person_id: ownerId }).eq("id", candidateId);
