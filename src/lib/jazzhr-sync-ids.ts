@@ -28,7 +28,10 @@ export async function syncProspectMap(
     );
     if (res.status === 401 || res.status === 403)
       throw new JazzAuthExpiredError("sandcastle_ticket rejected — refresh it.");
-    if (!res.ok) throw new Error(`/prospect page ${page}: ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`/prospect page ${page}: ${res.status} ${body.slice(0, 300)}`);
+    }
 
     const batch = (await res.json()) as RawProspect[];
     if (!Array.isArray(batch) || batch.length === 0) break;
