@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition } from "react";
 import { C, HEAD } from "./constants";
 import StagePill from "./StagePill";
-import type { Cand } from "./types";
+import type { Cand, TeamMember } from "./types";
 import {
   toggleFavorite, setNotInterested, logOutreach,
   getOutreach, addConnection, getConnections,
@@ -11,15 +11,24 @@ import {
 } from "./actions";
 
 type Connection = { id: string; fellow_id: string; name: string; relationship: string };
+type LogEntry = { id: string; body: string; created_at: string; author_id: string | null };
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
-export default function CandidateDrawer({ c, onClose }: {
+const fmtDate = (d: string | null) => {
+  if (!d) return "";
+  const dt = new Date(d + "T12:00:00");
+  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+};
+
+export default function CandidateDrawer({ c, team, profileId, onClose }: {
   c: Cand;
+  team: TeamMember[];
+  profileId: string;
   onClose: () => void;
 }) {
   const [, startTransition] = useTransition();
   const [draft, setDraft] = useState("");
-  const [log, setLog] = useState<{ id: string; body: string; created_at: string }[] | null>(null);
+  const [log, setLog] = useState<LogEntry[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
   const [relDraft, setRelDraft] = useState("");
   const QUICK = ["Called — left voicemail", "Emailed", "Met in person", "Scheduled follow-up"];
@@ -52,7 +61,7 @@ export default function CandidateDrawer({ c, onClose }: {
 
   const doLog = (body: string) => startTransition(() => {
     logOutreach(c.id, body);
-    setLog((prev) => [{ id: Math.random().toString(), body, created_at: new Date().toISOString() }, ...(prev ?? [])]);
+    setLog((prev) => [{ id: Math.random().toString(), body, created_at: new Date().toISOString(), author_id: profileId }, ...(prev ?? [])]);
   });
 
   const doDelLog = (id: string) => {
@@ -139,12 +148,20 @@ export default function CandidateDrawer({ c, onClose }: {
             <button onClick={() => { if (draft.trim()) { doLog(draft.trim()); setDraft(""); } }} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 16px", borderRadius: 9, cursor: "pointer" }}>Log</button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(log ?? []).map((n) => (
-              <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray, display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <span style={{ flex: 1 }}>{n.body}</span>
-                <button onClick={() => doDelLog(n.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
-              </div>
-            ))}
+            {(log ?? []).map((n) => {
+              const authorName = n.author_id ? (team.find((t) => t.id === n.author_id)?.full_name ?? "Team member") : "—";
+              return (
+                <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div>{n.body}</div>
+                    <div style={{ fontSize: 11, color: C.grayMute, marginTop: 4 }}>
+                      {fmtDate(n.created_at.split("T")[0])} · {authorName}
+                    </div>
+                  </div>
+                  <button onClick={() => doDelLog(n.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
+                </div>
+              );
+            })}
             {(log ?? []).length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No outreach logged yet.</div>}
           </div>
         </div>

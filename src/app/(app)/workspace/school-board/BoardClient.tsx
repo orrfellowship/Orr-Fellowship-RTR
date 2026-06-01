@@ -9,10 +9,13 @@ import CandidateDrawer from "../CandidateDrawer";
 import { toggleFavorite, reassignPointPerson } from "../actions";
 import type { Cand, TeamMember } from "../types";
 
-export default function BoardClient({ profile, candidates, team, accent }: {
+type SchoolMini = { id: string; name: string; color_primary: string | null };
+
+export default function BoardClient({ profile, candidates, team, schools, accent }: {
   profile: Profile;
   candidates: Cand[];
   team: TeamMember[];
+  schools: SchoolMini[];
   accent: string;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
@@ -38,21 +41,25 @@ export default function BoardClient({ profile, candidates, team, accent }: {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 240px", gap: 18, marginTop: 16, alignItems: "start" }}>
         {/* Candidate table */}
         <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-            <div>Candidate</div><div>Major</div><div>GPA</div><div>Stage</div><div>Owner</div><div></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+            <div>Candidate</div><div style={{ paddingLeft: 10 }}>Major</div><div>GPA</div><div>School</div><div>Stage</div><div>Owner</div><div></div>
           </div>
-          {candidates.map((c) => (
+          {candidates.map((c) => {
+            const sc = schools.find((s) => s.id === c.school_id);
+            return (
             <div key={c.id}
               onClick={() => setOpenId(c.id)}
               onMouseEnter={() => setHoveredId(c.id)}
               onMouseLeave={() => setHoveredId(null)}
-              style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: c.not_interested ? 0.5 : 1, cursor: "pointer", background: hoveredId === c.id ? C.canvas : "#fff", transition: "background 0.1s" }}>
+              style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: c.not_interested ? 0.5 : 1, cursor: "pointer", background: hoveredId === c.id ? C.canvas : "#ececec", transition: "background 0.1s" }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div>
                 <div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div>
               </div>
-              <div style={{ fontSize: 13.5 }}>{c.area_of_study}</div>
+              <div style={{ fontSize: 13.5, paddingLeft: 10 }}>{c.area_of_study}</div>
               <div style={{ fontSize: 13.5, fontWeight: 600 }}>{c.gpa}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: sc?.color_primary ?? C.navy2, paddingLeft: 2 }}>{sc?.name ?? <span style={{ color: C.grayMute, fontStyle: "italic" }}>—</span>}</div>
+
               <div><StagePill stage={c.stage} /></div>
               <div onClick={(e) => e.stopPropagation()}>
                 {canAssign ? (
@@ -67,12 +74,13 @@ export default function BoardClient({ profile, candidates, team, accent }: {
               </div>
               <div onClick={(e) => { e.stopPropagation(); onFav(c); }} style={{ cursor: "pointer", fontSize: 18, color: c.is_favorite ? C.gold : "#D8DCE5", textAlign: "center" }}>{c.is_favorite ? "★" : "☆"}</div>
             </div>
-          ))}
+            );
+          })}
           {candidates.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No candidates yet — run a sync or add one.</div>}
         </div>
 
         {/* Team panel */}
-        <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ background: "#ececec", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
           <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.line}`, background: "#FAFBFE" }}>
             <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Team · {team.length}</div>
           </div>
@@ -100,7 +108,7 @@ export default function BoardClient({ profile, candidates, team, accent }: {
         </div>
       </div>
 
-      {open && <CandidateDrawer c={open} onClose={() => setOpenId(null)} />}
+      {open && <CandidateDrawer c={open} team={team} profileId={profile.id} onClose={() => setOpenId(null)} />}
     </>
   );
 }

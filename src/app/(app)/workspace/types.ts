@@ -1,7 +1,7 @@
 export type Cand = {
   id: string; jazz_id: string | null; name: string; email: string | null; stage: string | null;
   gpa: string | null; area_of_study: string | null; linkedin: string | null;
-  resume_link: string | null; point_person_id: string | null;
+  resume_link: string | null; point_person_id: string | null; school_id: string | null;
   not_interested: boolean; is_favorite: boolean;
 };
 export type School     = { id: string; name: string; color_primary: string | null; logo_url: string | null };

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditPlaybook } from "@/lib/types";
 
@@ -151,7 +151,10 @@ export async function deleteTask(taskId: string) {
 
 export async function deleteOutreach(logId: string) {
   const supabase = createServerSupabase();
-  const { error } = await supabase.from("outreach_log").delete().eq("id", logId);
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+  const serviceDb = createServiceClient();
+  const { error } = await serviceDb.from("outreach_log").delete().eq("id", logId);
   if (error) return { error: error.message };
   revalidatePath("/workspace");
   return { ok: true };
@@ -159,7 +162,10 @@ export async function deleteOutreach(logId: string) {
 
 export async function deleteConnection(connectionId: string) {
   const supabase = createServerSupabase();
-  const { error } = await supabase.from("connections").delete().eq("id", connectionId);
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+  const serviceDb = createServiceClient();
+  const { error } = await serviceDb.from("connections").delete().eq("id", connectionId);
   if (error) return { error: error.message };
   revalidatePath("/workspace");
   return { ok: true };

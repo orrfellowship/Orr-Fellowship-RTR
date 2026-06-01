@@ -177,7 +177,7 @@ export default function PlanClient({ profile, candidates, team, phases, schoolGo
         {plan.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>All clear — nothing needs you right now.</div>}
       </div>
 
-      {open && <CandidateDrawer c={open} onClose={() => setOpenId(null)} />}
+      {open && <CandidateDrawer c={open} team={team} profileId={profile.id} onClose={() => setOpenId(null)} />}
     </>
   );
 }
