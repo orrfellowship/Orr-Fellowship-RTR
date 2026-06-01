@@ -2,23 +2,22 @@ import { type NextRequest, NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getResumeDocument } from "@/lib/jazzhr-documents";
-import { fetchJazzResume, JazzAuthExpiredError } from "@/lib/jazzhr-resume";
+import { fetchJazzResume } from "@/lib/jazzhr-resume";
+import { JazzAuthExpiredError } from "@/lib/jazzhr-client";
 
 const JAZZ_BASE = "https://api.resumatorapi.com/v1";
 const BUCKET = "resumes";
 const SIGNED_URL_TTL = 60 * 10; // 10 minutes
 
-// Resume fetch for a JazzHR applicant.
+// Resume fetch for a JazzHR applicant (by string prospect id = candidates.jazz_id).
 //
-// Preferred path (when JAZZHR_SANDCASTLE_TICKET is set): look up the candidate's
-// resume documentId via the authenticated documentList endpoint, download the
-// PDF, cache it in the private Supabase `resumes` bucket, and return a short-
-// lived signed URL as JSON { url, filename }. Caching means the ticket is only
-// exercised on the FIRST view of each candidate.
+// Preferred path (JAZZHR_SANDCASTLE_TICKET set): bridge the string jazz_id to the
+// numeric prospect id via jazz_prospect_map, look up the resume documentId, cache
+// the PDF in the private Supabase `resumes` bucket, and return a short-lived signed
+// URL as JSON { url, filename }. The ticket is only exercised on the first view.
 //
-// Fallback path (no ticket, ticket expired, or no document found): stream the
-// legacy resumator resume_link, which still works for pre-signed links. This
-// keeps the feature degraded-but-working until the ticket flow is configured.
+// Fallback path (no ticket, or an unexpected error): stream the legacy resumator
+// resume_link so the button still does something before the ticket flow is live.
 export async function GET(request: NextRequest) {
   const profile = await getCurrentProfile();
   if (!profile) {
@@ -29,42 +28,55 @@ export async function GET(request: NextRequest) {
   if (!jazzId) {
     return NextResponse.json({ error: "jazzId param required" }, { status: 400 });
   }
-  const jobId = request.nextUrl.searchParams.get("jobId") ?? "";
 
-  // --- Preferred path: authenticated download + Supabase cache + signed URL ---
+  // --- Preferred path: map → documentList → download → cache → signed URL ---
   const ticket = process.env.JAZZHR_SANDCASTLE_TICKET;
   if (ticket) {
     try {
-      const doc = await getResumeDocument(jazzId, jobId, ticket);
-      if (doc) {
-        const db = createServiceClient();
-        const path = `${jazzId}/${doc.documentId}.pdf`;
+      const db = createServiceClient();
 
-        const { data: existing } = await db.storage
-          .from(BUCKET)
-          .list(jazzId, { search: `${doc.documentId}.pdf` });
+      const { data: map } = await db
+        .from("jazz_prospect_map")
+        .select("prospect_numeric_id")
+        .eq("jazz_id", jazzId)
+        .single();
 
-        if (!existing?.length) {
-          const { buffer, contentType } = await fetchJazzResume(doc.documentId, ticket);
-          const { error } = await db.storage
-            .from(BUCKET)
-            .upload(path, buffer, { contentType, upsert: true });
-          if (error) throw error;
-        }
-
-        const { data: signed, error: signErr } = await db.storage
-          .from(BUCKET)
-          .createSignedUrl(path, SIGNED_URL_TTL);
-        if (signErr) throw signErr;
-
-        return NextResponse.json({ url: signed.signedUrl, filename: doc.name });
+      if (!map?.prospect_numeric_id) {
+        return NextResponse.json(
+          { error: "Not mapped yet — run the résumé ID sync.", needsSync: true },
+          { status: 409 }
+        );
       }
-      // No resume document found via the ticket path → fall through to legacy.
+
+      const doc = await getResumeDocument(map.prospect_numeric_id, ticket);
+      if (!doc) {
+        return NextResponse.json({ error: "No resume on file for this applicant." }, { status: 404 });
+      }
+
+      const path = `${jazzId}/${doc.documentId}.pdf`;
+      const { data: existing } = await db.storage
+        .from(BUCKET)
+        .list(jazzId, { search: `${doc.documentId}.pdf` });
+
+      if (!existing?.length) {
+        const { buffer, contentType } = await fetchJazzResume(doc.documentId, ticket);
+        const { error } = await db.storage
+          .from(BUCKET)
+          .upload(path, buffer, { contentType, upsert: true });
+        if (error) throw error;
+      }
+
+      const { data: signed, error: signErr } = await db.storage
+        .from(BUCKET)
+        .createSignedUrl(path, SIGNED_URL_TTL);
+      if (signErr) throw signErr;
+
+      return NextResponse.json({ url: signed.signedUrl, filename: doc.name });
     } catch (e: any) {
       if (e instanceof JazzAuthExpiredError) {
         return NextResponse.json({ error: e.message, needsRefresh: true }, { status: 401 });
       }
-      // Any other error (bad URL template, bucket missing, etc.) → try legacy.
+      // Unexpected error (bucket missing, etc.) → try the legacy fallback.
     }
   }
 
