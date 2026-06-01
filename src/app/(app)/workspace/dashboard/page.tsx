@@ -6,7 +6,7 @@ export default async function PlanPage() {
   const { profile, school, tierSchoolIds, playbookSchoolId, serviceDb } = await getWorkspaceContext();
 
   const [{ data: candidates }, { data: favs }, { data: team }, { data: phases }, { data: allGoals }] = await Promise.all([
-    serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested").in("school_id", tierSchoolIds).order("name"),
+    serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, school_id").in("school_id", tierSchoolIds).order("name"),
     serviceDb.from("favorites").select("candidate_id").eq("user_id", profile.id),
     serviceDb.from("profiles").select("id, full_name, role").in("school_id", tierSchoolIds),
     serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").eq("school_id", playbookSchoolId).order("sort_order"),
