@@ -9,9 +9,10 @@ import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, bulkImportCandidates, deleteOutreach, deleteConnection,
-  deduplicateCandidates, inviteUser, seedPlaybook, removeUser,
+  deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
+import ResumeModal from "@/components/ResumeModal";
 import { phaseOf, STAGE_CONFIG, routeToSchoolName } from "@/lib/stages";
 
 const C = {
@@ -70,6 +71,7 @@ export default function ConsoleClient({
   const [addOpen, setAddOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
   const [deduping, setDeduping] = useState(false);
   const [syncingIds, setSyncingIds] = useState(false);
@@ -589,7 +591,10 @@ export default function ConsoleClient({
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Users</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{users.length} user{users.length !== 1 ? "s" : ""} · Role and school changes take effect immediately.</p>
               </div>
-              <button onClick={() => setInviteOpen(true)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, padding: "10px 18px", borderRadius: 10, cursor: "pointer" }}>+ Invite User</button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setBulkInviteOpen(true)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, padding: "10px 18px", borderRadius: 10, cursor: "pointer" }}>Bulk invite</button>
+                <button onClick={() => setInviteOpen(true)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, padding: "10px 18px", borderRadius: 10, cursor: "pointer" }}>+ Invite User</button>
+              </div>
             </div>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
@@ -740,6 +745,9 @@ export default function ConsoleClient({
       )}
       {inviteOpen && (
         <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />
+      )}
+      {bulkInviteOpen && (
+        <BulkInviteModal schools={schools} onClose={() => setBulkInviteOpen(false)} />
       )}
     </div>
   );
@@ -956,85 +964,6 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
       {resumeOpen && c.jazz_id && (
         <ResumeModal jazzId={c.jazz_id} name={c.name} onClose={() => setResumeOpen(false)} />
       )}
-    </div>
-  );
-}
-
-// ---- Resume Modal ----
-function ResumeModal({ jazzId, name, onClose }: { jazzId: string; name: string; onClose: () => void }) {
-  const [state, setState] = useState<
-    | { kind: "loading" }
-    | { kind: "ready"; url: string; filename: string }
-    | { kind: "expired" }
-    | { kind: "needsSync" }
-    | { kind: "error"; message: string }
-  >({ kind: "loading" });
-
-  useEffect(() => {
-    let active = true;
-    let objectUrl: string | null = null;
-    (async () => {
-      try {
-        const res = await fetch(`/api/resume?jazzId=${encodeURIComponent(jazzId)}`);
-        const ct = res.headers.get("content-type") ?? "";
-        if (ct.includes("application/json")) {
-          const data = await res.json();
-          if (!active) return;
-          if (data.needsRefresh) setState({ kind: "expired" });
-          else if (data.needsSync) setState({ kind: "needsSync" });
-          else if (data.url) setState({ kind: "ready", url: data.url, filename: data.filename ?? "resume.pdf" });
-          else setState({ kind: "error", message: data.error ?? "Resume unavailable." });
-        } else if (res.ok) {
-          // Legacy fallback streams the PDF bytes directly.
-          const blob = await res.blob();
-          if (!active) return;
-          objectUrl = URL.createObjectURL(blob);
-          setState({ kind: "ready", url: objectUrl, filename: "resume.pdf" });
-        } else {
-          setState({ kind: "error", message: "Resume unavailable for this candidate." });
-        }
-      } catch {
-        if (active) setState({ kind: "error", message: "Could not load resume." });
-      }
-    })();
-    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [jazzId]);
-
-  return (
-    <div onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(11,12,42,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ background: "#fff", borderRadius: 16, width: 900, maxWidth: "95vw", height: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 70px rgba(0,0,0,.4)" }}>
-        <div style={{ background: C.navy, color: "#fff", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16 }}>{name} — Résumé</div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            {state.kind === "ready" && (
-              <a href={state.url} target="_blank" rel="noopener noreferrer"
-                style={{ color: "#fff", fontSize: 13, fontWeight: 600, textDecoration: "none", border: "1px solid rgba(255,255,255,.3)", padding: "5px 12px", borderRadius: 8 }}>Open ↗</a>
-            )}
-            <button onClick={onClose} style={{ background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
-          </div>
-        </div>
-        <div style={{ flex: 1, background: "#525659", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          {state.kind === "loading" && <div style={{ color: "#fff", fontSize: 14 }}>Loading résumé…</div>}
-          {state.kind === "ready" && (
-            <iframe src={state.url} title={state.filename} style={{ width: "100%", height: "100%", border: "none" }} />
-          )}
-          {state.kind === "expired" && (
-            <div style={{ color: "#fff", fontSize: 14, textAlign: "center", padding: 30, maxWidth: 420, lineHeight: 1.6 }}>
-              JazzHR session expired. An admin needs to refresh the <code style={{ background: "rgba(255,255,255,.15)", padding: "1px 6px", borderRadius: 4 }}>JAZZHR_SANDCASTLE_TICKET</code>, then reopen this résumé.
-            </div>
-          )}
-          {state.kind === "needsSync" && (
-            <div style={{ color: "#fff", fontSize: 14, textAlign: "center", padding: 30, maxWidth: 420, lineHeight: 1.6 }}>
-              This candidate isn't mapped yet. Go to the <b>Sync</b> tab and run <b>Step 5 — Sync résumé IDs</b>, then reopen this résumé.
-            </div>
-          )}
-          {state.kind === "error" && (
-            <div style={{ color: "#fff", fontSize: 14, textAlign: "center", padding: 30, maxWidth: 420, lineHeight: 1.6 }}>{state.message}</div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -1265,6 +1194,104 @@ function InviteUserModal({ schools, onClose, startTransition }: {
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>Cancel</button>
           <button onClick={submit} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: "pointer" }}>Send invite</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Bulk Invite Modal ----
+function BulkInviteModal({ schools, onClose }: { schools: School[]; onClose: () => void }) {
+  const [text, setText] = useState("");
+  const [defaultRole, setDefaultRole] = useState<string>("fellow");
+  const [defaultSchool, setDefaultSchool] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ invited: number; failures: { email: string; error: string }[] } | null>(null);
+
+  const schoolByName = new Map(schools.map((s) => [s.name.toLowerCase(), s.id]));
+  const validRoles = new Set(ALL_ROLES as readonly string[]);
+
+  const parsed = (() => {
+    if (!text.trim()) return [];
+    const rows = parseCSVRows(text);
+    const header = rows[0]?.map((h) => h.toLowerCase()) ?? [];
+    const hasHeader = header.includes("email") || header.includes("name");
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    const iEmail = hasHeader ? header.indexOf("email") : 0;
+    const iName = hasHeader ? header.indexOf("name") : 1;
+    const iRole = hasHeader ? header.indexOf("role") : 2;
+    const iSchool = hasHeader ? header.indexOf("school") : 3;
+    return dataRows.map((r) => {
+      const email = (r[iEmail] ?? "").trim();
+      const full_name = (iName >= 0 ? r[iName] ?? "" : "").trim() || email.split("@")[0];
+      const roleRaw = (iRole >= 0 ? r[iRole] ?? "" : "").trim().toLowerCase();
+      const role = validRoles.has(roleRaw) ? roleRaw : defaultRole;
+      const schoolRaw = (iSchool >= 0 ? r[iSchool] ?? "" : "").trim();
+      const school_id = schoolRaw ? (schoolByName.get(schoolRaw.toLowerCase()) ?? null) : (defaultSchool || null);
+      return { email, full_name, role, school_id };
+    }).filter((r) => r.email.includes("@"));
+  })();
+
+  const submit = async () => {
+    if (parsed.length === 0) { setError("No valid rows — each needs at least an email."); return; }
+    setError(null); setBusy(true);
+    const r = await bulkInviteUsers(parsed);
+    setBusy(false);
+    if ("error" in r && r.error) setError(r.error);
+    else if ("invited" in r) setResult({ invited: r.invited ?? 0, failures: r.failures ?? [] });
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.45)" }} />
+      <div style={{ position: "relative", background: "#fff", borderRadius: 16, padding: 28, width: 560, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto" }}>
+        <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 8px" }}>Bulk Invite Users</h2>
+        <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 16px" }}>
+          Paste one per line as <code style={{ background: C.canvas, padding: "1px 5px", borderRadius: 4 }}>Email, Name, Role, School</code>. Header row is auto-detected. Role and School are optional — missing values use the defaults below. Each person gets an invite email and sets their own password.
+        </p>
+        <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Default role</label>
+            <select value={defaultRole} onChange={(e) => setDefaultRole(e.target.value)}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
+              {ALL_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Default school</label>
+            <select value={defaultSchool} onChange={(e) => setDefaultSchool(e.target.value)}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
+              <option value="">— No school —</option>
+              {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+        </div>
+        <textarea value={text} onChange={(e) => { setText(e.target.value); setResult(null); setError(null); }}
+          placeholder={"Email,Name,Role,School\njane@example.com,Jane Smith,fellow,Purdue\njohn@example.com,John Doe"}
+          rows={8} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 13, fontFamily: "monospace", resize: "vertical", boxSizing: "border-box" }} />
+        {text.trim() && (
+          <div style={{ margin: "12px 0", padding: "10px 14px", background: C.canvas, borderRadius: 9, fontSize: 13 }}>
+            <b style={{ color: C.navy }}>{parsed.length}</b> valid row{parsed.length !== 1 ? "s" : ""} ready to invite
+          </div>
+        )}
+        {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E", marginBottom: 14 }}>{error}</div>}
+        {result && (
+          <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>
+            ✓ Invited {result.invited} user{result.invited !== 1 ? "s" : ""}.
+            {result.failures.length > 0 && (
+              <div style={{ marginTop: 8, color: "#8A3A1E" }}>
+                {result.failures.length} failed:
+                {result.failures.map((f) => <div key={f.email} style={{ fontSize: 12 }}>· {f.email}: {f.error}</div>)}
+              </div>
+            )}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>{result ? "Done" : "Cancel"}</button>
+          <button onClick={submit} disabled={busy || parsed.length === 0} style={{ border: "none", background: busy || parsed.length === 0 ? C.navy3 : C.navy, color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: busy || parsed.length === 0 ? "default" : "pointer" }}>
+            {busy ? "Inviting…" : `Invite ${parsed.length || ""}`}
+          </button>
         </div>
       </div>
     </div>

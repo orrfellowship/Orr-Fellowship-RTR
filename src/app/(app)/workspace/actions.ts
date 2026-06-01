@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { getCurrentProfile } from "@/lib/auth";
+import { canEditPlaybook } from "@/lib/types";
 
 // Toggle a favorite for the current user (favorites table is per-user via RLS).
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
@@ -115,6 +117,23 @@ export async function upsertTask(t: {
   due_date: string | null; done: boolean;
 }) {
   const supabase = createServerSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const profile = await getCurrentProfile();
+  const elevated = profile ? canEditPlaybook(profile.role) : false; // team_lead / admin+
+
+  // Fellows may only touch a task that is assigned specifically to them.
+  // Team-assigned or unassigned tasks (and new-task creation) require team_lead+.
+  if (!elevated) {
+    if (!t.id) return { error: "Only team leads or admins can add tasks." };
+    const { data: existing } = await supabase
+      .from("playbook_tasks").select("assignee_id").eq("id", t.id).single();
+    if (!existing || existing.assignee_id !== user.id) {
+      return { error: "You can only update tasks assigned to you." };
+    }
+  }
+
   const payload = t.id ? t : { ...t, id: undefined };
   const { error } = await supabase.from("playbook_tasks").upsert(payload);
   if (error) return { error: error.message };

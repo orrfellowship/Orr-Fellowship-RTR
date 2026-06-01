@@ -12,6 +12,7 @@ import {
 } from "./actions";
 import { phaseOf } from "@/lib/stages";
 import StandingsClient from "@/components/StandingsClient";
+import ResumeModal from "@/components/ResumeModal";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -58,6 +59,7 @@ export default function WorkspaceClient({
   const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all">("plan");
   const [allFilter, setAllFilter] = useState<string>("All schools");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
   const canEdit = canEditPlaybook(profile.role);
@@ -123,18 +125,26 @@ export default function WorkspaceClient({
 
   const onFav = (c: Cand) => startTransition(() => { toggleFavorite(c.id, !c.is_favorite); });
 
-  // My tasks for weekly snapshot
+  // Tasks shown in the weekly snapshot. Everyone sees their own + team tasks;
+  // team leads / admins also see unassigned tasks so they can mark them done.
   const myTasks = useMemo(() => {
     const results: { task: Task; roleTitle: string }[] = [];
     for (const p of phases) {
       for (const t of p.playbook_tasks) {
-        if (t.assignee_id === profile.id || t.assignee_label === "team") {
+        const mine = t.assignee_id === profile.id;
+        const team = t.assignee_label === "team";
+        const unassigned = !t.assignee_id && !t.assignee_label;
+        if (mine || team || (unassigned && canEdit)) {
           results.push({ task: t, roleTitle: p.title });
         }
       }
     }
     return results;
-  }, [phases, profile.id]);
+  }, [phases, profile.id, canEdit]);
+
+  // Who may toggle a task's completion: your own anytime; team / unassigned
+  // tasks only by team leads and admins.
+  const canToggleTask = (t: Task) => t.assignee_id === profile.id || canEdit;
 
   const MONTHS = ["July", "August", "September", "Oct/Nov"];
 
@@ -248,12 +258,14 @@ export default function WorkspaceClient({
                       <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
                         {monthTasks.map(({ task: t, roleTitle }) => (
                           <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${C.line}`, opacity: t.done ? 0.55 : 1 }}>
-                            <input type="checkbox" checked={t.done}
+                            <input type="checkbox" checked={t.done} disabled={!canToggleTask(t)}
+                              title={canToggleTask(t) ? undefined : "Only team leads or admins can update this task"}
                               onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: "", text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label, month_label: t.month_label, notes: t.notes, due_date: t.due_date, done: e.target.checked }); })}
-                              style={{ accentColor: accent, flexShrink: 0 }} />
+                              style={{ accentColor: accent, flexShrink: 0, cursor: canToggleTask(t) ? "pointer" : "not-allowed" }} />
                             <span style={{ flex: 1, fontSize: 13.5, color: C.gray, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
                             <span style={{ fontSize: 11, color: C.grayMute, flexShrink: 0 }}>{roleTitle}</span>
                             {t.assignee_label === "team" && <span style={{ fontSize: 10, fontWeight: 700, color: C.navy2, background: `${C.navy2}18`, padding: "2px 7px", borderRadius: 99, flexShrink: 0 }}>Team</span>}
+                            {!t.assignee_id && !t.assignee_label && <span style={{ fontSize: 10, fontWeight: 700, color: C.grayMute, background: `${C.grayMute}18`, padding: "2px 7px", borderRadius: 99, flexShrink: 0 }}>Unassigned</span>}
                           </div>
                         ))}
                       </div>
@@ -359,11 +371,8 @@ export default function WorkspaceClient({
                       <div><StagePill stage={c.stage} /></div>
                       <div style={{ display: "flex", gap: 6 }}>
                         {c.linkedin && <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: C.navy2, textDecoration: "none", border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px" }}>in</a>}
-                        {c.jazz_id && <button onClick={async () => {
-                          const res = await fetch(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id!)}`);
-                          if (res.ok) { const url = URL.createObjectURL(await res.blob()); window.open(url, "_blank"); }
-                          else { alert("Resume unavailable (private file) — view this candidate directly in JazzHR."); }
-                        }} style={{ fontSize: 11, fontWeight: 700, color: C.navy2, border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px", background: "#fff", cursor: "pointer" }}>CV</button>}
+                        {c.jazz_id && <button onClick={() => setResumeFor({ jazzId: c.jazz_id!, name: c.name })}
+                          style={{ fontSize: 11, fontWeight: 700, color: C.navy2, border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px", background: "#fff", cursor: "pointer" }}>CV</button>}
                       </div>
                     </div>
                   );
@@ -377,6 +386,9 @@ export default function WorkspaceClient({
 
       {open && (
         <CandidateDrawer c={open} canEdit={true} onClose={() => setOpenId(null)} startTransition={startTransition} />
+      )}
+      {resumeFor && (
+        <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
       )}
     </div>
   );

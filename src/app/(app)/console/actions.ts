@@ -282,15 +282,18 @@ export async function deduplicateCandidates() {
   return { ok: true, removed: toDelete.length };
 }
 
+function siteUrlForInvite() {
+  return process.env.NEXT_PUBLIC_SITE_URL
+    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+}
+
 export async function inviteUser(email: string, full_name: string, role: string, school_id: string | null) {
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const serviceDb = createServiceClient();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
-    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
   const { data, error } = await serviceDb.auth.admin.inviteUserByEmail(email, {
     data: { full_name, role, school_id },
-    redirectTo: `${siteUrl}/auth/invite-callback`,
+    redirectTo: `${siteUrlForInvite()}/auth/invite-callback`,
   });
   if (error) return { error: error.message };
   if (data?.user) {
@@ -301,6 +304,35 @@ export async function inviteUser(email: string, full_name: string, role: string,
   }
   revalidatePath("/console");
   return { ok: true };
+}
+
+export async function bulkInviteUsers(
+  rows: { email: string; full_name: string; role: string; school_id: string | null }[]
+) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const serviceDb = createServiceClient();
+
+  let invited = 0;
+  const failures: { email: string; error: string }[] = [];
+  for (const r of rows) {
+    const email = r.email.trim();
+    if (!email) continue;
+    const { data, error } = await serviceDb.auth.admin.inviteUserByEmail(email, {
+      data: { full_name: r.full_name, role: r.role, school_id: r.school_id },
+      redirectTo: `${siteUrlForInvite()}/auth/invite-callback`,
+    });
+    if (error) { failures.push({ email, error: error.message }); continue; }
+    if (data?.user) {
+      await serviceDb.from("profiles").upsert(
+        { id: data.user.id, full_name: r.full_name, role: r.role, school_id: r.school_id, email: (data.user.email as string) ?? email },
+        { onConflict: "id" }
+      );
+    }
+    invited++;
+  }
+  revalidatePath("/console");
+  return { ok: true, invited, failures };
 }
 
 export async function seedPlaybook(schoolId: string, force = false) {
