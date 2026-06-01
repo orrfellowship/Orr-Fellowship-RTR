@@ -39,6 +39,32 @@ type UserProfile = { id: string; full_name: string; email: string; role: string;
 
 const ALL_ROLES = ["super_admin", "admin", "team_lead", "fellow"] as const;
 
+// School pickers collapse satellite/bonus tiers into a single grouped option each
+// (core schools stay individual). The grouped option's value is a representative
+// school_id — the first school of that tier by name — so it maps to a real row.
+function schoolSelectOptions(schools: School[]): { value: string; label: string }[] {
+  const byTier = (t: string) => schools.filter((s) => s.tier === t).sort((a, b) => a.name.localeCompare(b.name));
+  const opts = byTier("core").map((s) => ({ value: s.id, label: s.name }));
+  const sat = byTier("satellite");
+  const bon = byTier("bonus");
+  if (sat.length) opts.push({ value: sat[0].id, label: "Satellite" });
+  if (bon.length) opts.push({ value: bon[0].id, label: "Bonus" });
+  return opts;
+}
+
+// Normalize a stored school_id to its picker value: any satellite/bonus school
+// resolves to that tier's representative id so the grouped option shows selected.
+function schoolOptionValue(schools: School[], schoolId: string | null): string {
+  if (!schoolId) return "";
+  const s = schools.find((x) => x.id === schoolId);
+  if (!s) return "";
+  if (s.tier === "satellite" || s.tier === "bonus") {
+    const rep = schools.filter((x) => x.tier === s.tier).sort((a, b) => a.name.localeCompare(b.name))[0];
+    return rep?.id ?? schoolId;
+  }
+  return schoolId;
+}
+
 const PHASE_OF: Record<string, string> = { new: "Sourced", contacted: "Contacted", applied: "Applied", bmi: "Advanced", finalist: "Finalist", fellow: "Fellow" };
 const phaseTone: Record<string, string> = { Sourced: C.navy3, Contacted: C.blue, Applied: C.navy2, Advanced: C.orange, Finalist: C.gold, Fellow: C.good };
 function StagePill({ stage }: { stage: string | null }) {
@@ -334,11 +360,11 @@ export default function ConsoleClient({
                       <div style={{ fontSize: 13.5 }} onClick={(e) => e.stopPropagation()}>
                         {adminPlus ? (
                           <select
-                            value={c.school_id ?? ""}
+                            value={schoolOptionValue(schools, c.school_id)}
                             onChange={(e) => startTransition(() => { reassignSchool(c.id, e.target.value || null); })}
                             style={{ fontSize: 12, fontWeight: 600, color: c.school_id ? C.navy2 : C.orange, border: `1px solid ${c.school_id ? C.line : C.orange}`, borderRadius: 7, padding: "4px 6px", background: "#fff", maxWidth: "100%", cursor: "pointer" }}>
                             <option value="">— Unrouted —</option>
-                            {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
                         ) : (
                           schoolName
@@ -615,11 +641,11 @@ export default function ConsoleClient({
                     style={{ fontSize: 12.5, fontWeight: 600, color: C.navy, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff" }}>
                     {ALL_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
-                  <select defaultValue={u.school_id ?? ""}
+                  <select value={schoolOptionValue(schools, u.school_id)}
                     onChange={(e) => startTransition(() => { updateUser(u.id, u.role, e.target.value || null); })}
                     style={{ fontSize: 12.5, fontWeight: 600, color: u.school_id ? C.navy : C.grayMute, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff" }}>
                     <option value="">— No school —</option>
-                    {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                   <div style={{ width: 10, height: 10, borderRadius: 99, background: u.is_active ? C.good : C.line, margin: "0 auto" }} title={u.is_active ? "Active" : "Inactive"} />
                   <button
@@ -1186,7 +1212,7 @@ function InviteUserModal({ schools, onClose, startTransition }: {
           <select value={form.school_id} onChange={(e) => set("school_id", e.target.value)}
             style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
             <option value="">— No school —</option>
-            {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
         {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E", marginBottom: 14 }}>{error}</div>}
@@ -1263,7 +1289,7 @@ function BulkInviteModal({ schools, onClose }: { schools: School[]; onClose: () 
             <select value={defaultSchool} onChange={(e) => setDefaultSchool(e.target.value)}
               style={{ width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
               <option value="">— No school —</option>
-              {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
         </div>
