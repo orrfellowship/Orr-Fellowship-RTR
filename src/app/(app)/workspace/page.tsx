@@ -25,13 +25,18 @@ export default async function WorkspacePage() {
   const isTierGroup = tier === "satellite" || tier === "bonus";
   let tierSchoolIds: string[] = [schoolId];
   let groupName: string | null = null;
+  // The group shares ONE playbook, held by the representative school (first by
+  // name in the tier). Individual schools in the group don't get their own.
+  let playbookSchoolId = schoolId;
 
   if (isTierGroup) {
     const { data: tierSchools } = await serviceDb
       .from("schools")
-      .select("id")
-      .eq("tier", tier);
+      .select("id, name")
+      .eq("tier", tier)
+      .order("name");
     tierSchoolIds = (tierSchools ?? []).map((s: any) => s.id);
+    playbookSchoolId = (tierSchools ?? [])[0]?.id ?? schoolId;
     groupName = tier === "satellite" ? "Satellite Group" : "Bonus Group";
   }
 
@@ -58,7 +63,7 @@ export default async function WorkspacePage() {
     serviceDb
       .from("playbook_phases")
       .select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)")
-      .in("school_id", tierSchoolIds)
+      .eq("school_id", playbookSchoolId)
       .order("sort_order"),
   ]);
 

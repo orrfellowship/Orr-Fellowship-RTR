@@ -91,11 +91,18 @@ export default function ConsoleClient({
 }) {
   const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "users" | "sync">("overview");
   const [scope, setScope] = useState<string>("Org-wide");
-  const [playbookSchool, setPlaybookSchool] = useState<string>(schools[0]?.id ?? "");
+  const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
   const [openId, setOpenId] = useState<string | null>(null);
   const [showUnrouted, setShowUnrouted] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  // Applicants filters + sort
+  const [appSearch, setAppSearch] = useState("");
+  const [appMajor, setAppMajor] = useState("All majors");
+  const [appStage, setAppStage] = useState("All stages");
+  const [appMinGpa, setAppMinGpa] = useState("");
+  const [appFavOnly, setAppFavOnly] = useState(false);
+  const [appSort, setAppSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage" | "ai"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [inviteOpen, setInviteOpen] = useState(false);
   const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
@@ -197,6 +204,8 @@ export default function ConsoleClient({
   const open = candidates.find((c) => c.id === openId) ?? null;
   const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
+  const playbookGrouped = playbookSchoolObj?.tier === "satellite" || playbookSchoolObj?.tier === "bonus";
+  const playbookLabel = schoolSelectOptions(schools).find((o) => o.value === playbookSchool)?.label ?? playbookSchoolObj?.name ?? "School";
 
   // goal draft state: school_id → {sourced, contacted, applied}
   const [goalDrafts, setGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
@@ -313,9 +322,50 @@ export default function ConsoleClient({
 
         {/* ---- APPLICANTS ---- */}
         {tab === "applicants" && (() => {
-          const scopeFiltered = candidates.filter((c) => scope === "Org-wide" || schools.find((s) => s.id === c.school_id)?.name === scope);
+          const schoolNameOf = (c: Cand) => schools.find((s) => s.id === c.school_id)?.name ?? "";
+          const stageRank: Record<string, number> = { Sourced: 0, Contacted: 1, Applied: 2, Advanced: 3, Finalist: 4, Fellow: 5 };
+          const distinctMajors = Array.from(new Set(candidates.map((c) => c.area_of_study).filter((m): m is string => !!m))).sort((a, b) => a.localeCompare(b));
+          const distinctStages = Array.from(new Set(candidates.map((c) => c.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
+
+          const scopeFiltered = candidates.filter((c) => scope === "Org-wide" || schoolNameOf(c) === scope);
           const unroutedCount = scopeFiltered.filter((c) => !c.school_id).length;
-          const visible = showUnrouted ? scopeFiltered.filter((c) => !c.school_id) : scopeFiltered;
+
+          const q = appSearch.trim().toLowerCase();
+          const minGpa = parseFloat(appMinGpa);
+          let visible = scopeFiltered.filter((c) => {
+            if (showUnrouted && c.school_id) return false;
+            if (q && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(q))) return false;
+            if (appMajor !== "All majors" && c.area_of_study !== appMajor) return false;
+            if (appStage !== "All stages" && c.stage !== appStage) return false;
+            if (appFavOnly && !c.is_favorite) return false;
+            if (!isNaN(minGpa)) { const g = parseFloat(c.gpa ?? ""); if (isNaN(g) || g < minGpa) return false; }
+            return true;
+          });
+
+          const dir = appSort.dir === "asc" ? 1 : -1;
+          visible = [...visible].sort((a, b) => {
+            let av: number | string, bv: number | string;
+            switch (appSort.key) {
+              case "school": av = schoolNameOf(a) || "~"; bv = schoolNameOf(b) || "~"; break;
+              case "major":  av = a.area_of_study ?? "~"; bv = b.area_of_study ?? "~"; break;
+              case "gpa":    av = parseFloat(a.gpa ?? "") || -1; bv = parseFloat(b.gpa ?? "") || -1; break;
+              case "stage":  av = stageRank[PHASE_OF[a.stage ?? ""] ?? ""] ?? -1; bv = stageRank[PHASE_OF[b.stage ?? ""] ?? ""] ?? -1; break;
+              case "ai":     av = aiMap.get(a.id)?.resume_score ?? -1; bv = aiMap.get(b.id)?.resume_score ?? -1; break;
+              default:       av = a.name.toLowerCase(); bv = b.name.toLowerCase();
+            }
+            if (av < bv) return -1 * dir;
+            if (av > bv) return 1 * dir;
+            return 0;
+          });
+
+          const toggleSort = (key: typeof appSort.key) =>
+            setAppSort((p) => p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
+          const arrow = (key: typeof appSort.key) => appSort.key === key ? (appSort.dir === "asc" ? " ▲" : " ▼") : "";
+          const SortHead = ({ k, label }: { k: typeof appSort.key; label: string }) => (
+            <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: appSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
+          );
+          const filtersActive = q || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "";
+
           return (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
@@ -327,21 +377,48 @@ export default function ConsoleClient({
                 </p>
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <button onClick={() => setShowUnrouted((v) => !v)}
-                  style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${showUnrouted ? C.orange : C.line}`, fontSize: 13.5, background: showUnrouted ? "#FBE7DF" : "#fff", color: showUnrouted ? C.orange : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-                  {showUnrouted ? "✕ Unrouted only" : `Unrouted (${unroutedCount})`}
-                </button>
-                <select value={scope} onChange={(e) => { setScope(e.target.value); setShowUnrouted(false); }} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                  <option>Org-wide</option>
-                  {schools.map((s) => <option key={s.id}>{s.name}</option>)}
-                </select>
                 <button onClick={() => setAddOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add</button>
                 <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
               </div>
             </div>
+
+            {/* Filter bar */}
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px" }}>
+              <input value={appSearch} onChange={(e) => setAppSearch(e.target.value)} placeholder="Search name, email, major…"
+                style={{ flex: "1 1 200px", minWidth: 160, padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
+              <select value={scope} onChange={(e) => { setScope(e.target.value); setShowUnrouted(false); }} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                <option>Org-wide</option>
+                {schools.map((s) => <option key={s.id}>{s.name}</option>)}
+              </select>
+              <select value={appMajor} onChange={(e) => setAppMajor(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600, maxWidth: 200 }}>
+                <option>All majors</option>
+                {distinctMajors.map((m) => <option key={m}>{m}</option>)}
+              </select>
+              <select value={appStage} onChange={(e) => setAppStage(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                <option>All stages</option>
+                {distinctStages.map((s) => <option key={s}>{s}</option>)}
+              </select>
+              <input value={appMinGpa} onChange={(e) => setAppMinGpa(e.target.value)} type="number" step="0.1" min="0" max="4" placeholder="Min GPA"
+                style={{ width: 96, padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
+              <button onClick={() => setAppFavOnly((v) => !v)}
+                style={{ padding: "9px 14px", borderRadius: 9, border: `1px solid ${appFavOnly ? C.gold : C.line}`, fontSize: 13.5, background: appFavOnly ? "#FBF3D6" : "#fff", color: appFavOnly ? "#8A6D0E" : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                {appFavOnly ? "★ Favorites" : "☆ Favorites"}
+              </button>
+              <button onClick={() => setShowUnrouted((v) => !v)}
+                style={{ padding: "9px 14px", borderRadius: 9, border: `1px solid ${showUnrouted ? C.orange : C.line}`, fontSize: 13.5, background: showUnrouted ? "#FBE7DF" : "#fff", color: showUnrouted ? C.orange : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                {showUnrouted ? "✕ Unrouted only" : `Unrouted (${unroutedCount})`}
+              </button>
+              {(filtersActive || showUnrouted) && (
+                <button onClick={() => { setAppSearch(""); setAppMajor("All majors"); setAppStage("All stages"); setAppMinGpa(""); setAppFavOnly(false); setShowUnrouted(false); }}
+                  style={{ padding: "9px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
+                  Clear
+                </button>
+              )}
+            </div>
+
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
               <div style={{ display: "grid", gridTemplateColumns: `1.7fr 1fr 1fr 0.6fr 1fr${superUser ? " 0.8fr" : ""} 40px`, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                <div>Applicant</div><div>School</div><div>Major</div><div>GPA</div><div>Stage</div>{superUser && <div>AI</div>}<div></div>
+                <SortHead k="name" label="Applicant" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" />{superUser && <SortHead k="ai" label="AI" />}<div></div>
               </div>
               {visible.map((c) => {
                   const aiRec = aiMap.get(c.id);
@@ -381,7 +458,7 @@ export default function ConsoleClient({
                   );
                 })}
               {visible.length === 0 && (
-                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{showUnrouted ? "No unrouted candidates — routing is complete!" : "No applicants yet — run a sync."}</div>
+                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{filtersActive ? "No applicants match these filters." : showUnrouted ? "No unrouted candidates — routing is complete!" : "No applicants yet — run a sync."}</div>
               )}
             </div>
           </>
@@ -403,14 +480,18 @@ export default function ConsoleClient({
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>
-                  {playbookSchoolObj?.logo_url && <img src={playbookSchoolObj.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 5, marginRight: 10, verticalAlign: "middle" }} />}
-                  {playbookSchoolObj?.name ?? "School"} Playbook
+                  {!playbookGrouped && playbookSchoolObj?.logo_url && <img src={playbookSchoolObj.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 5, marginRight: 10, verticalAlign: "middle" }} />}
+                  {playbookLabel} Playbook
                 </h1>
-                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>Edit phase names, tasks, assignees, and due dates inline. Changes save on blur.</p>
+                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
+                  {playbookGrouped
+                    ? "One shared playbook for all schools in this group. Changes save on blur."
+                    : "Edit phase names, tasks, assignees, and due dates inline. Changes save on blur."}
+                </p>
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                 <select value={playbookSchool} onChange={(e) => setPlaybookSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                  {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
                 <button onClick={async () => {
                   const res = await seedPlaybook(playbookSchool);
