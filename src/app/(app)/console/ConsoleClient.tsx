@@ -72,6 +72,8 @@ export default function ConsoleClient({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
   const [deduping, setDeduping] = useState(false);
+  const [syncingIds, setSyncingIds] = useState(false);
+  const [syncIdsMsg, setSyncIdsMsg] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
   const superUser = isSuper(profile.role);
@@ -139,6 +141,17 @@ export default function ConsoleClient({
       else setSyncResult(`${data.partial ? "Partial (re-run to continue)" : "Complete"} · written ${data.written} · routed ${data.routed} · unrouted ${data.unrouted}${data.failed ? ` · failed ${data.failed}` : ""}${data.remaining ? ` · ${data.remaining} remaining` : ""}`);
     } catch (e: any) { setSyncError(e?.message ?? "Request failed"); }
     finally { setSyncing(false); }
+  }
+
+  async function syncResumeIds() {
+    setSyncingIds(true); setSyncIdsMsg(null);
+    try {
+      const res = await fetch("/api/sync-jazz-ids", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) setSyncIdsMsg(`Error: ${typeof data.error === "string" ? data.error : JSON.stringify(data)}`);
+      else setSyncIdsMsg(`Mapped ${data.synced} prospect${data.synced !== 1 ? "s" : ""} across ${data.pages} page${data.pages !== 1 ? "s" : ""}.`);
+    } catch (e: any) { setSyncIdsMsg(`Error: ${e?.message ?? "Request failed"}`); }
+    finally { setSyncingIds(false); }
   }
 
   // scoreboard totals
@@ -688,6 +701,19 @@ export default function ConsoleClient({
               {dedupMsg && <div style={{ marginTop: 14, background: dedupMsg.startsWith("Error") ? "#FBE7DF" : "#E8F5EE", border: `1px solid ${dedupMsg.startsWith("Error") ? C.orange : C.good}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: dedupMsg.startsWith("Error") ? "#8A3A1E" : "#1B5E3F" }}>{dedupMsg}</div>}
             </div>
 
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
+              <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 4px", color: C.navy }}>Step 5 — Sync résumé IDs</h3>
+              <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 12px", lineHeight: 1.5 }}>
+                Builds the JazzHR prospect ID bridge so résumés can be fetched and shown inline. Run once after setup,
+                then re-run after a big candidate sync to pick up new applicants. Requires the JazzHR session ticket env var.
+              </p>
+              <button onClick={syncResumeIds} disabled={syncingIds}
+                style={{ border: `1px solid ${C.navy}`, background: syncingIds ? C.canvas : "#fff", color: C.navy, fontWeight: 700, padding: "11px 18px", borderRadius: 10, cursor: syncingIds ? "default" : "pointer", fontSize: 14 }}>
+                {syncingIds ? "Mapping prospects…" : "Sync résumé IDs"}
+              </button>
+              {syncIdsMsg && <div style={{ marginTop: 14, background: syncIdsMsg.startsWith("Error") ? "#FBE7DF" : "#E8F5EE", border: `1px solid ${syncIdsMsg.startsWith("Error") ? C.orange : C.good}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: syncIdsMsg.startsWith("Error") ? "#8A3A1E" : "#1B5E3F", wordBreak: "break-word" }}>{syncIdsMsg}</div>}
+            </div>
+
             <div style={{ background: "#fff", border: `1px solid ${C.orange}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
               <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 4px", color: C.orange }}>Danger zone — clear all candidates</h3>
               <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 12px", lineHeight: 1.5 }}>Deletes every candidate and their notes, favorites, and AI rows. Schools, users, playbook, and goals are kept. Type <b style={{ color: C.gray }}>{CONFIRM}</b> to confirm.</p>
@@ -940,6 +966,7 @@ function ResumeModal({ jazzId, name, onClose }: { jazzId: string; name: string; 
     | { kind: "loading" }
     | { kind: "ready"; url: string; filename: string }
     | { kind: "expired" }
+    | { kind: "needsSync" }
     | { kind: "error"; message: string }
   >({ kind: "loading" });
 
@@ -954,6 +981,7 @@ function ResumeModal({ jazzId, name, onClose }: { jazzId: string; name: string; 
           const data = await res.json();
           if (!active) return;
           if (data.needsRefresh) setState({ kind: "expired" });
+          else if (data.needsSync) setState({ kind: "needsSync" });
           else if (data.url) setState({ kind: "ready", url: data.url, filename: data.filename ?? "resume.pdf" });
           else setState({ kind: "error", message: data.error ?? "Resume unavailable." });
         } else if (res.ok) {
@@ -995,6 +1023,11 @@ function ResumeModal({ jazzId, name, onClose }: { jazzId: string; name: string; 
           {state.kind === "expired" && (
             <div style={{ color: "#fff", fontSize: 14, textAlign: "center", padding: 30, maxWidth: 420, lineHeight: 1.6 }}>
               JazzHR session expired. An admin needs to refresh the <code style={{ background: "rgba(255,255,255,.15)", padding: "1px 6px", borderRadius: 4 }}>JAZZHR_SANDCASTLE_TICKET</code>, then reopen this résumé.
+            </div>
+          )}
+          {state.kind === "needsSync" && (
+            <div style={{ color: "#fff", fontSize: 14, textAlign: "center", padding: 30, maxWidth: 420, lineHeight: 1.6 }}>
+              This candidate isn't mapped yet. Go to the <b>Sync</b> tab and run <b>Step 5 — Sync résumé IDs</b>, then reopen this résumé.
             </div>
           )}
           {state.kind === "error" && (
