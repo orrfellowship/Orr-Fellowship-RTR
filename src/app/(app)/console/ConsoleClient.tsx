@@ -8,12 +8,13 @@ import { isSuper, isAdminPlus } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
-  upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, bulkImportCandidates, deleteOutreach, deleteConnection,
+  upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import ResumeModal from "@/components/ResumeModal";
-import { phaseOf, STAGE_CONFIG, routeToSchoolName } from "@/lib/stages";
+import BulkImportModal from "@/components/BulkImportModal";
+import { phaseOf, STAGE_CONFIG } from "@/lib/stages";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -247,6 +248,7 @@ export default function ConsoleClient({
                 {l}
               </button>
             ))}
+            <a href="/how-to" style={{ padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: 600, color: "rgba(255,255,255,.55)", textDecoration: "none" }}>How-To</a>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
@@ -848,7 +850,7 @@ export default function ConsoleClient({
         <AddCandidateModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} onClose={() => setAddOpen(false)} startTransition={startTransition} />
       )}
       {bulkOpen && (
-        <BulkImportModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} startTransition={startTransition} />
+        <BulkImportModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} />
       )}
       {inviteOpen && (
         <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />
@@ -1162,86 +1164,6 @@ function parseCSVRows(text: string): string[][] {
   );
 }
 
-function BulkImportModal({ schools, existingEmails, onClose, startTransition }: {
-  schools: School[]; existingEmails: Set<string>;
-  onClose: () => void; startTransition: (cb: () => void) => void;
-}) {
-  const [text, setText] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
-  const schoolByName = new Map(schools.map((s) => [s.name.toLowerCase(), s.id]));
-  const resolveSchoolId = (raw: string): string | null => {
-    const exact = schoolByName.get(raw.toLowerCase());
-    if (exact) return exact;
-    const routed = routeToSchoolName(raw);
-    return routed ? (schoolByName.get(routed.toLowerCase()) ?? null) : null;
-  };
-
-  const parsed = (() => {
-    if (!text.trim()) return null;
-    const rows = parseCSVRows(text);
-    const header = rows[0]?.map((h) => h.toLowerCase()) ?? [];
-    const hasHeader = header.includes("name") || header.includes("email");
-    const dataRows = hasHeader ? rows.slice(1) : rows;
-    const iName = hasHeader ? header.indexOf("name") : 0;
-    const iEmail = hasHeader ? header.indexOf("email") : 1;
-    const iSchool = hasHeader ? header.indexOf("school") : 2;
-    const iStage = hasHeader ? header.indexOf("stage") : 3;
-    const iGpa = hasHeader ? header.indexOf("gpa") : 4;
-    const iMajor = hasHeader ? Math.max(header.indexOf("major"), header.indexOf("area_of_study")) : 5;
-    const items = dataRows.map((r) => ({
-      name: r[iName] ?? "",
-      email: r[iEmail] || null,
-      school_id: resolveSchoolId(r[iSchool] ?? ""),
-      stage: r[iStage] || null,
-      gpa: r[iGpa] || null,
-      area_of_study: r[iMajor] || null,
-    })).filter((r) => r.name);
-    const dupes = items.filter((r) => r.email && existingEmails.has((r.email ?? "").toLowerCase()));
-    return { items, dupes };
-  })();
-
-  const doImport = () => {
-    if (!parsed || parsed.items.length === 0) { setError("No valid rows to import."); return; }
-    setError(null);
-    startTransition(() => {
-      bulkImportCandidates(parsed.items).then((r) => {
-        if ("error" in r && r.error) setError(r.error);
-        else setResult(`✓ Imported ${"count" in r ? r.count : parsed.items.length} candidate${parsed.items.length !== 1 ? "s" : ""}. Page will refresh.`);
-      });
-    });
-  };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.45)" }} />
-      <div style={{ position: "relative", background: "#fff", borderRadius: 16, padding: 28, width: 560, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto" }}>
-        <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 8px" }}>Bulk Import</h2>
-        <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 16px" }}>
-          Paste CSV with columns: <code style={{ background: C.canvas, padding: "1px 5px", borderRadius: 4 }}>Name, Email, School, Stage, GPA, Major</code>. Header row is auto-detected.
-        </p>
-        <textarea value={text} onChange={(e) => { setText(e.target.value); setResult(null); setError(null); }}
-          placeholder={"Name,Email,School,Stage,GPA,Major\nJane Doe,jane@example.com,Purdue,new,3.7,Computer Science"}
-          rows={8} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 13, fontFamily: "monospace", resize: "vertical", boxSizing: "border-box" }} />
-        {parsed && (
-          <div style={{ margin: "12px 0", padding: "10px 14px", background: C.canvas, borderRadius: 9, fontSize: 13 }}>
-            <b style={{ color: C.navy }}>{parsed.items.length}</b> row{parsed.items.length !== 1 ? "s" : ""} parsed
-            {parsed.dupes.length > 0 && <span style={{ color: C.orange, marginLeft: 10 }}>⚠ {parsed.dupes.length} may be duplicate{parsed.dupes.length !== 1 ? "s" : ""} (email match)</span>}
-          </div>
-        )}
-        {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E", marginBottom: 14 }}>{error}</div>}
-        {result && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>{result}</div>}
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-          <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>Cancel</button>
-          <button onClick={doImport} disabled={!parsed || parsed.items.length === 0}
-            style={{ border: "none", background: parsed && parsed.items.length > 0 ? C.navy : C.navy3, color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: parsed && parsed.items.length > 0 ? "pointer" : "not-allowed" }}>
-            Import {parsed ? parsed.items.length : 0} rows
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ---- Invite User Modal ----
 const INVITE_EMPTY = { email: "", full_name: "", role: "fellow", school_id: "" };

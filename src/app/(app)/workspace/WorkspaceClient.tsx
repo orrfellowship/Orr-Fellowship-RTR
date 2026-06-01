@@ -13,6 +13,7 @@ import {
 import { phaseOf } from "@/lib/stages";
 import StandingsClient from "@/components/StandingsClient";
 import ResumeModal from "@/components/ResumeModal";
+import BulkImportModal from "@/components/BulkImportModal";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -61,6 +62,7 @@ export default function WorkspaceClient({
   const [openId, setOpenId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
   const canEdit = canEditPlaybook(profile.role);
@@ -126,26 +128,17 @@ export default function WorkspaceClient({
 
   const onFav = (c: Cand) => startTransition(() => { toggleFavorite(c.id, !c.is_favorite); });
 
-  // Tasks shown in the weekly snapshot. Everyone sees their own + team tasks;
-  // team leads / admins also see unassigned tasks so they can mark them done.
+  // Weekly snapshot shows ONLY tasks assigned to this specific person. Team
+  // leads manage the full set (team / unassigned tasks) in the Playbook tab.
   const myTasks = useMemo(() => {
     const results: { task: Task; roleTitle: string }[] = [];
     for (const p of phases) {
       for (const t of p.playbook_tasks) {
-        const mine = t.assignee_id === profile.id;
-        const team = t.assignee_label === "team";
-        const unassigned = !t.assignee_id && !t.assignee_label;
-        if (mine || team || (unassigned && canEdit)) {
-          results.push({ task: t, roleTitle: p.title });
-        }
+        if (t.assignee_id === profile.id) results.push({ task: t, roleTitle: p.title });
       }
     }
     return results;
-  }, [phases, profile.id, canEdit]);
-
-  // Who may toggle a task's completion: your own anytime; team / unassigned
-  // tasks only by team leads and admins.
-  const canToggleTask = (t: Task) => t.assignee_id === profile.id || canEdit;
+  }, [phases, profile.id]);
 
   const MONTHS = ["July", "August", "September", "Oct/Nov"];
 
@@ -172,6 +165,7 @@ export default function WorkspaceClient({
             ] as const).map(([k, l]) => (
               <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent" }}>{l}</button>
             ))}
+            <a href="/how-to" style={{ padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: 600, color: "rgba(255,255,255,.55)", textDecoration: "none" }}>How-To</a>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
@@ -259,14 +253,11 @@ export default function WorkspaceClient({
                       <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
                         {monthTasks.map(({ task: t, roleTitle }) => (
                           <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${C.line}`, opacity: t.done ? 0.55 : 1 }}>
-                            <input type="checkbox" checked={t.done} disabled={!canToggleTask(t)}
-                              title={canToggleTask(t) ? undefined : "Only team leads or admins can update this task"}
+                            <input type="checkbox" checked={t.done}
                               onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: "", text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label, month_label: t.month_label, notes: t.notes, due_date: t.due_date, done: e.target.checked }); })}
-                              style={{ accentColor: accent, flexShrink: 0, cursor: canToggleTask(t) ? "pointer" : "not-allowed" }} />
+                              style={{ accentColor: accent, flexShrink: 0, cursor: "pointer" }} />
                             <span style={{ flex: 1, fontSize: 13.5, color: C.gray, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
                             <span style={{ fontSize: 11, color: C.grayMute, flexShrink: 0 }}>{roleTitle}</span>
-                            {t.assignee_label === "team" && <span style={{ fontSize: 10, fontWeight: 700, color: C.navy2, background: `${C.navy2}18`, padding: "2px 7px", borderRadius: 99, flexShrink: 0 }}>Team</span>}
-                            {!t.assignee_id && !t.assignee_label && <span style={{ fontSize: 10, fontWeight: 700, color: C.grayMute, background: `${C.grayMute}18`, padding: "2px 7px", borderRadius: 99, flexShrink: 0 }}>Unassigned</span>}
                           </div>
                         ))}
                       </div>
@@ -376,13 +367,16 @@ export default function WorkspaceClient({
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
                 <div>
                   <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Applicants</h1>
-                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates · Read-only</p>
+                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates</p>
                 </div>
-                <select value={allFilter} onChange={(e) => setAllFilter(e.target.value)}
-                  style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                  <option>All schools</option>
-                  {allSchools.map((s) => <option key={s.id}>{s.name}</option>)}
-                </select>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <select value={allFilter} onChange={(e) => setAllFilter(e.target.value)}
+                    style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                    <option>All schools</option>
+                    {allSchools.map((s) => <option key={s.id}>{s.name}</option>)}
+                  </select>
+                  <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                </div>
               </div>
               <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
@@ -421,6 +415,13 @@ export default function WorkspaceClient({
       )}
       {resumeFor && (
         <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
+      )}
+      {bulkOpen && (
+        <BulkImportModal
+          schools={allSchools}
+          existingEmails={new Set(allCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
+          onClose={() => setBulkOpen(false)}
+        />
       )}
     </div>
   );
@@ -625,7 +626,7 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
           </select>
         ) : (
           <span style={{ fontSize: 12, color: t.assignee_label === "team" ? C.navy2 : (t.assignee_id ? C.navy2 : C.orange), fontWeight: 600, flexShrink: 0 }}>
-            {nameOf(t.assignee_id, t.assignee_label)}
+            {t.assignee_label === "team" ? "Whole team" : t.assignee_id ? (team.find((m) => m.id === t.assignee_id)?.full_name ?? "—") : "Unassigned"}
           </span>
         )}
 

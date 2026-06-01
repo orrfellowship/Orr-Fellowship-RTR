@@ -101,11 +101,12 @@ export async function addCandidate(data: {
   stage: string | null; gpa: string | null; area_of_study: string | null;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!profile) return { error: "Not authenticated" }; // any signed-in user may add
   const db = createServiceClient();
   const { error } = await db.from("candidates").insert({ ...data, source: "user_created", not_interested: false });
   if (error) return { error: error.message };
   revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true };
 }
 
@@ -113,13 +114,14 @@ export async function bulkImportCandidates(
   rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null }[]
 ) {
   const profile = await getCurrentProfile();
-  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!profile) return { error: "Not authenticated" }; // any signed-in user may import
   const db = createServiceClient();
   const { error } = await db.from("candidates").insert(
     rows.map((r) => ({ ...r, source: "user_created", not_interested: false }))
   );
   if (error) return { error: error.message };
   revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true, count: rows.length };
 }
 
