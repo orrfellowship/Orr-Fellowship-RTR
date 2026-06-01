@@ -58,7 +58,7 @@ export default async function WorkspacePage() {
       .eq("user_id", profile.id),
     serviceDb
       .from("profiles")
-      .select("id, full_name")
+      .select("id, full_name, role")
       .in("school_id", tierSchoolIds),
     serviceDb
       .from("playbook_phases")
