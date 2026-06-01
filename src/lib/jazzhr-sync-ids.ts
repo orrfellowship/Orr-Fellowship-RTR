@@ -17,7 +17,7 @@ interface RawProspect {
 export async function syncProspectMap(
   ticket: string,
   supabase: SupabaseClient,
-  { perPage = 200, maxPages = 500 }: { perPage?: number; maxPages?: number } = {},
+  { perPage = 100, maxPages = 500 }: { perPage?: number; maxPages?: number } = {}, // JazzHR caps per_page at 100
 ): Promise<{ synced: number; pages: number }> {
   let synced = 0;
   let page = 1;
