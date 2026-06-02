@@ -70,12 +70,13 @@ export default async function WorkspacePage() {
   // Cross-school data for Standings — serviceDb bypasses RLS so fellows/leads can see org-wide pipeline
   const [{ data: allSchools }, { data: allCandidates }, { data: allGoals }] = await Promise.all([
     serviceDb.from("schools").select("id, name, tier, color_primary, logo_url").order("name"),
-    serviceDb.from("candidates").select("id, name, email, school_id, stage, gpa, area_of_study, jazz_id, linkedin").order("name"),
+    serviceDb.from("candidates").select("id, name, email, school_id, stage, gpa, area_of_study, jazz_id, linkedin, point_person_id, not_interested, resume_link").order("name"),
     serviceDb.from("school_goals").select("school_id, goal_sourced, goal_contacted, goal_applied"),
   ]);
 
   const favSet = new Set((favs ?? []).map((f) => f.candidate_id));
   const enriched = (candidates ?? []).map((c) => ({ ...c, is_favorite: favSet.has(c.id) }));
+  const allEnriched = (allCandidates ?? []).map((c) => ({ ...c, is_favorite: favSet.has(c.id) }));
 
   return (
     <WorkspaceClient
@@ -85,7 +86,7 @@ export default async function WorkspacePage() {
       team={team ?? []}
       phases={phases ?? []}
       allSchools={allSchools ?? []}
-      allCandidates={allCandidates ?? []}
+      allCandidates={allEnriched}
       allGoals={allGoals ?? []}
       groupName={groupName}
     />

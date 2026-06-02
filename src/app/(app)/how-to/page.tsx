@@ -96,6 +96,19 @@ Jane Doe,jane@example.com,Purdue,new,3.7,Computer Science`}
           <p style={{ marginBottom: 0 }}>The header row is auto-detected and schools are matched by name. Possible duplicates (same email) are flagged before you import.</p>
         </Section>
 
+        <Section title="Working a candidate — outreach, warm intros & résumé">
+          <p style={{ marginTop: 0 }}>Click any candidate on the Applicants page to open their detail panel:</p>
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            <Step><b>Outreach log</b> — record every touchpoint (calls, emails, meetings, follow-ups). Use the quick buttons or write your own note so the whole team can see the history.</Step>
+            <Step><b>Warm intros</b> — log who on the team has a connection to this candidate and how they know them, so the best person can make the ask.</Step>
+            <Step><b>Résumé</b> — opens the candidate's résumé inline. The first view fetches it; after that it loads instantly.</Step>
+            <Step>You can view outreach and warm intros for <b>any</b> candidate, but you can only add to the ones <b>assigned to you</b> (where you're the point person).</Step>
+          </ul>
+          <p style={{ marginBottom: 0, marginTop: 12, padding: "10px 14px", background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9 }}>
+            <b>Résumé not loading?</b> If you see a "session expired," "not mapped," or any other résumé error, contact <b>Mark Stolte</b> (markstolte02@gmail.com) — it usually means the JazzHR connection needs a refresh on the admin side.
+          </p>
+        </Section>
+
         <Section title="Playbook & weekly tasks">
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             <Step>The <b>Playbook</b> is your team's recruitment plan, organized by role and month.</Step>

@@ -30,7 +30,7 @@ type Cand = {
 };
 type School      = { id: string; name: string; color_primary: string | null; logo_url: string | null };
 type AllSchool   = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
-type AllCand     = { id: string; name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; jazz_id: string | null; linkedin: string | null };
+type AllCand     = { id: string; name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; jazz_id: string | null; linkedin: string | null; point_person_id: string | null; not_interested: boolean; resume_link: string | null; is_favorite: boolean };
 type AllGoal     = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 type TeamMember  = { id: string; full_name: string; role?: string | null };
 type Task        = {
@@ -59,6 +59,13 @@ export default function WorkspaceClient({
 }) {
   const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all">("plan");
   const [allFilter, setAllFilter] = useState<string>("All schools");
+  const [allSearch, setAllSearch] = useState("");
+  const [allMajor, setAllMajor] = useState("All majors");
+  const [allStage, setAllStage] = useState("All stages");
+  const [allMinGpa, setAllMinGpa] = useState("");
+  const [allFavOnly, setAllFavOnly] = useState(false);
+  const [allMineOnly, setAllMineOnly] = useState(false);
+  const [allSort, setAllSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [openId, setOpenId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
@@ -80,7 +87,12 @@ export default function WorkspaceClient({
     if (id === profile.id) return "You";
     return team.find((t) => t.id === id)?.full_name ?? "—";
   };
-  const open = candidates.find((c) => c.id === openId) ?? null;
+  // The drawer can open a candidate from the user's school (always editable) or
+  // from the org-wide Applicants tab (editable only if assigned to this user).
+  const openFromSchool = candidates.find((c) => c.id === openId) ?? null;
+  const openFromAll = allCandidates.find((c) => c.id === openId) ?? null;
+  const open: Cand | null = openFromSchool ?? (openFromAll as Cand | null);
+  const openCanEdit = openFromSchool ? true : (openFromAll ? openFromAll.point_person_id === profile.id : false);
 
   const PHASE_ORDER_PIPELINE = ["sourced", "contacted", "applied"] as const;
   const PHASE_LABEL: Record<string, string> = { sourced: "Sourced", contacted: "Contacted", applied: "Applied" };
@@ -359,43 +371,116 @@ export default function WorkspaceClient({
 
         {/* ---- APPLICANTS ---- */}
         {tab === "all" && (() => {
-          const visible = allFilter === "All schools"
-            ? allCandidates
-            : allCandidates.filter((c) => allSchools.find((s) => s.id === c.school_id)?.name === allFilter);
+          const schoolNameOf = (c: AllCand) => allSchools.find((s) => s.id === c.school_id)?.name ?? "";
+          const stageRank: Record<string, number> = { Sourced: 0, Contacted: 1, Applied: 2, Advanced: 3, Finalist: 4, Fellow: 5 };
+          const distinctMajors = Array.from(new Set(allCandidates.map((c) => c.area_of_study).filter((m): m is string => !!m))).sort((a, b) => a.localeCompare(b));
+          const distinctStages = Array.from(new Set(allCandidates.map((c) => c.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
+
+          const q = allSearch.trim().toLowerCase();
+          const minGpa = parseFloat(allMinGpa);
+          let visible = allCandidates.filter((c) => {
+            if (allFilter !== "All schools" && schoolNameOf(c) !== allFilter) return false;
+            if (q && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(q))) return false;
+            if (allMajor !== "All majors" && c.area_of_study !== allMajor) return false;
+            if (allStage !== "All stages" && c.stage !== allStage) return false;
+            if (allFavOnly && !c.is_favorite) return false;
+            if (allMineOnly && c.point_person_id !== profile.id) return false;
+            if (!isNaN(minGpa)) { const g = parseFloat(c.gpa ?? ""); if (isNaN(g) || g < minGpa) return false; }
+            return true;
+          });
+
+          const dir = allSort.dir === "asc" ? 1 : -1;
+          visible = [...visible].sort((a, b) => {
+            let av: number | string, bv: number | string;
+            switch (allSort.key) {
+              case "school": av = schoolNameOf(a) || "~"; bv = schoolNameOf(b) || "~"; break;
+              case "major":  av = a.area_of_study ?? "~"; bv = b.area_of_study ?? "~"; break;
+              case "gpa":    av = parseFloat(a.gpa ?? "") || -1; bv = parseFloat(b.gpa ?? "") || -1; break;
+              case "stage":  av = stageRank[PHASE_OF[a.stage ?? ""] ?? ""] ?? -1; bv = stageRank[PHASE_OF[b.stage ?? ""] ?? ""] ?? -1; break;
+              default:       av = a.name.toLowerCase(); bv = b.name.toLowerCase();
+            }
+            if (av < bv) return -1 * dir;
+            if (av > bv) return 1 * dir;
+            return 0;
+          });
+
+          const toggleSort = (key: typeof allSort.key) =>
+            setAllSort((p) => p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
+          const arrow = (key: typeof allSort.key) => allSort.key === key ? (allSort.dir === "asc" ? " ▲" : " ▼") : "";
+          const SortHead = ({ k, label }: { k: typeof allSort.key; label: string }) => (
+            <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: allSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
+          );
+          const filtersActive = q || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMineOnly || allMinGpa.trim() !== "";
+
           return (
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
                 <div>
                   <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Applicants</h1>
-                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates</p>
+                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates · click a row to view details</p>
                 </div>
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <select value={allFilter} onChange={(e) => setAllFilter(e.target.value)}
-                    style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                    <option>All schools</option>
-                    {allSchools.map((s) => <option key={s.id}>{s.name}</option>)}
-                  </select>
-                  <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
-                </div>
+                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
               </div>
+
+              {/* Filter bar */}
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px" }}>
+                <input value={allSearch} onChange={(e) => setAllSearch(e.target.value)} placeholder="Search name, email, major…"
+                  style={{ flex: "1 1 200px", minWidth: 160, padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
+                <select value={allFilter} onChange={(e) => setAllFilter(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                  <option>All schools</option>
+                  {allSchools.map((s) => <option key={s.id}>{s.name}</option>)}
+                </select>
+                <select value={allMajor} onChange={(e) => setAllMajor(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600, maxWidth: 200 }}>
+                  <option>All majors</option>
+                  {distinctMajors.map((m) => <option key={m}>{m}</option>)}
+                </select>
+                <select value={allStage} onChange={(e) => setAllStage(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                  <option>All stages</option>
+                  {distinctStages.map((s) => <option key={s}>{s}</option>)}
+                </select>
+                <input value={allMinGpa} onChange={(e) => setAllMinGpa(e.target.value)} type="number" step="0.1" min="0" max="4" placeholder="Min GPA"
+                  style={{ width: 96, padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
+                <button onClick={() => setAllFavOnly((v) => !v)}
+                  style={{ padding: "9px 14px", borderRadius: 9, border: `1px solid ${allFavOnly ? C.gold : C.line}`, fontSize: 13.5, background: allFavOnly ? "#FBF3D6" : "#fff", color: allFavOnly ? "#8A6D0E" : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  {allFavOnly ? "★ Favorites" : "☆ Favorites"}
+                </button>
+                <button onClick={() => setAllMineOnly((v) => !v)}
+                  style={{ padding: "9px 14px", borderRadius: 9, border: `1px solid ${allMineOnly ? accent : C.line}`, fontSize: 13.5, background: allMineOnly ? `${accent}18` : "#fff", color: allMineOnly ? accent : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  Assigned to me
+                </button>
+                {filtersActive && (
+                  <button onClick={() => { setAllSearch(""); setAllMajor("All majors"); setAllStage("All stages"); setAllMinGpa(""); setAllFavOnly(false); setAllMineOnly(false); }}
+                    style={{ padding: "9px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
+                    Clear
+                  </button>
+                )}
+              </div>
+
               <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                  <div>Candidate</div><div>School</div><div>Major</div><div>GPA</div><div>Stage</div><div></div>
+                  <SortHead k="name" label="Candidate" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" /><div></div>
                 </div>
                 {visible.map((c) => {
                   const sc = allSchools.find((s) => s.id === c.school_id);
                   const schoolAccent = sc?.color_primary ?? C.navy2;
+                  const mine = c.point_person_id === profile.id;
                   return (
-                    <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center" }}>
+                    <div key={c.id} onClick={() => setOpenId(c.id)}
+                      style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", opacity: c.not_interested ? 0.5 : 1 }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#F0F4FA")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>
+                          {c.is_favorite && <span style={{ color: C.gold, marginRight: 5 }}>★</span>}{c.name}
+                          {mine && <span style={{ fontSize: 10, fontWeight: 700, color: accent, background: `${accent}18`, padding: "1px 6px", borderRadius: 99, marginLeft: 6 }}>Mine</span>}
+                        </div>
                         <div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div>
                       </div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: schoolAccent }}>{sc?.name ?? <span style={{ color: C.grayMute, fontStyle: "italic" }}>Unrouted</span>}</div>
                       <div style={{ fontSize: 13 }}>{c.area_of_study ?? "—"}</div>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>{c.gpa ?? "—"}</div>
                       <div><StagePill stage={c.stage} /></div>
-                      <div style={{ display: "flex", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
                         {c.linkedin && <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: C.navy2, textDecoration: "none", border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px" }}>in</a>}
                         {c.jazz_id && <button onClick={() => setResumeFor({ jazzId: c.jazz_id!, name: c.name })}
                           style={{ fontSize: 11, fontWeight: 700, color: C.navy2, border: `1px solid ${C.line}`, borderRadius: 6, padding: "4px 8px", background: "#fff", cursor: "pointer" }}>CV</button>}
@@ -403,7 +488,7 @@ export default function WorkspaceClient({
                     </div>
                   );
                 })}
-                {visible.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No candidates yet.</div>}
+                {visible.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{filtersActive ? "No candidates match these filters." : "No candidates yet."}</div>}
               </div>
             </>
           );
@@ -411,7 +496,7 @@ export default function WorkspaceClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} canEdit={true} onClose={() => setOpenId(null)} startTransition={startTransition} />
+        <CandidateDrawer c={open} canEdit={openCanEdit} onClose={() => setOpenId(null)} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
       )}
       {resumeFor && (
         <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
@@ -656,9 +741,10 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
 type Connection = { id: string; fellow_id: string; name: string; relationship: string };
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
-function CandidateDrawer({ c, onClose, startTransition }: {
+function CandidateDrawer({ c, canEdit, onClose, startTransition, onResume }: {
   c: Cand; canEdit: boolean;
   onClose: () => void; startTransition: (cb: () => void) => void;
+  onResume: (jazzId: string, name: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [log, setLog] = useState<{ id: string; body: string; created_at: string }[] | null>(null);
@@ -715,10 +801,17 @@ function CandidateDrawer({ c, onClose, startTransition }: {
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>
         </div>
         <div style={{ padding: 24 }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-            <button onClick={() => startTransition(() => { toggleFavorite(c.id, !c.is_favorite); })} style={{ flex: 1, border: `1px solid ${c.is_favorite ? C.gold : C.line}`, background: c.is_favorite ? "#FBF3D6" : "#fff", color: c.is_favorite ? "#8A6D0E" : C.gray, fontWeight: 700, padding: 10, borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{c.is_favorite ? "★ Favorited" : "☆ Favorite"}</button>
-            <button onClick={() => startTransition(() => { setNotInterested(c.id, !c.not_interested); })} style={{ flex: 1, border: `1px solid ${C.line}`, background: c.not_interested ? "#EFEFF2" : "#fff", color: C.gray, fontWeight: 700, padding: 10, borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{c.not_interested ? "Unflag" : "Flag not interested"}</button>
-          </div>
+          {!canEdit && (
+            <div style={{ background: "#EEF1F7", borderRadius: 9, padding: "8px 12px", marginBottom: 14, fontSize: 12.5, color: C.grayMute }}>
+              View only — you can log outreach and warm intros for candidates assigned to you.
+            </div>
+          )}
+          {canEdit && (
+            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+              <button onClick={() => startTransition(() => { toggleFavorite(c.id, !c.is_favorite); })} style={{ flex: 1, border: `1px solid ${c.is_favorite ? C.gold : C.line}`, background: c.is_favorite ? "#FBF3D6" : "#fff", color: c.is_favorite ? "#8A6D0E" : C.gray, fontWeight: 700, padding: 10, borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{c.is_favorite ? "★ Favorited" : "☆ Favorite"}</button>
+              <button onClick={() => startTransition(() => { setNotInterested(c.id, !c.not_interested); })} style={{ flex: 1, border: `1px solid ${C.line}`, background: c.not_interested ? "#EFEFF2" : "#fff", color: C.gray, fontWeight: 700, padding: 10, borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{c.not_interested ? "Unflag" : "Flag not interested"}</button>
+            </div>
+          )}
 
           {[["Email", c.email], ["GPA", c.gpa]].map(([k, v]) => (
             <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
@@ -729,14 +822,9 @@ function CandidateDrawer({ c, onClose, startTransition }: {
             <a href={c.linkedin ?? "#"} target="_blank" rel="noopener noreferrer"
               style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>LinkedIn ↗</a>
             <button
-              onClick={async () => {
-                if (!c.jazz_id) return;
-                const res = await fetch(`/api/resume?jazzId=${encodeURIComponent(c.jazz_id)}`);
-                if (res.ok) { const url = URL.createObjectURL(await res.blob()); window.open(url, "_blank"); }
-                else { alert("Resume unavailable (private file) — view this candidate directly in JazzHR."); }
-              }}
+              onClick={() => { if (c.jazz_id) onResume(c.jazz_id, c.name); }}
               disabled={!c.jazz_id}
-              style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>Résumé ↗</button>
+              style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>Résumé</button>
           </div>
 
           {/* warm-intro finder */}
@@ -750,38 +838,46 @@ function CandidateDrawer({ c, onClose, startTransition }: {
                   <div key={cn.id} style={{ fontSize: 13, color: C.gray, display: "flex", gap: 6, alignItems: "center" }}>
                     <span style={{ fontSize: 16 }}>●</span>
                     <span style={{ flex: 1 }}><b>{cn.name}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span></span>
-                    <button onClick={() => doDelConn(cn.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px" }}>×</button>
+                    {canEdit && <button onClick={() => doDelConn(cn.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px" }}>×</button>}
                   </div>
                 ))}
               </div>
             ) : (
               <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic", marginBottom: 10 }}>No connections logged yet.</div>
             )}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
-              {REL_QUICK.map((r) => (
-                <button key={r} onClick={() => doAddConn(r)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 11.5, padding: "4px 10px", borderRadius: 999, cursor: "pointer" }}>+ {r}</button>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 7 }}>
-              <input value={relDraft} onChange={(e) => setRelDraft(e.target.value)} placeholder="Custom relationship…"
-                style={{ flex: 1, padding: "8px 11px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 13 }} />
-              <button onClick={() => doAddConn(relDraft)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 13px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>Add</button>
-            </div>
+            {canEdit && (
+              <>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+                  {REL_QUICK.map((r) => (
+                    <button key={r} onClick={() => doAddConn(r)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 11.5, padding: "4px 10px", borderRadius: 999, cursor: "pointer" }}>+ {r}</button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 7 }}>
+                  <input value={relDraft} onChange={(e) => setRelDraft(e.target.value)} placeholder="Custom relationship…"
+                    style={{ flex: 1, padding: "8px 11px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 13 }} />
+                  <button onClick={() => doAddConn(relDraft)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 13px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>Add</button>
+                </div>
+              </>
+            )}
           </div>
 
           <div style={{ fontFamily: HEAD, fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 10 }}>Outreach log</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-            {QUICK.map((q) => <button key={q} onClick={() => doLog(q)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 12, padding: "6px 11px", borderRadius: 999, cursor: "pointer" }}>+ {q}</button>)}
-          </div>
-          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Write a note…" style={{ flex: 1, padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
-            <button onClick={() => { if (draft.trim()) { doLog(draft.trim()); setDraft(""); } }} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 16px", borderRadius: 9, cursor: "pointer" }}>Log</button>
-          </div>
+          {canEdit && (
+            <>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                {QUICK.map((q) => <button key={q} onClick={() => doLog(q)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 12, padding: "6px 11px", borderRadius: 999, cursor: "pointer" }}>+ {q}</button>)}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Write a note…" style={{ flex: 1, padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
+                <button onClick={() => { if (draft.trim()) { doLog(draft.trim()); setDraft(""); } }} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 16px", borderRadius: 9, cursor: "pointer" }}>Log</button>
+              </div>
+            </>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {(log ?? []).map((n) => (
               <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray, display: "flex", alignItems: "flex-start", gap: 8 }}>
                 <span style={{ flex: 1 }}>{n.body}</span>
-                <button onClick={() => doDelLog(n.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>
+                {canEdit && <button onClick={() => doDelLog(n.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>}
               </div>
             ))}
             {(log ?? []).length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No outreach logged yet.</div>}
