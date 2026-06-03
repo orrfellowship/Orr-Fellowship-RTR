@@ -71,6 +71,24 @@ function mapDetail(d: any) {
   };
 }
 
+// ---- matching helpers (link JazzHR applicants to existing candidates) -------
+const normEmail = (e?: string | null) => (e ?? "").trim().toLowerCase();
+const normPhone = (p?: string | null) => { const d = (p ?? "").replace(/\D/g, ""); return d.length >= 10 ? d.slice(-10) : ""; };
+const normName  = (n?: string | null) => (n ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+// Factual fields JazzHR owns (overwrites on link/refresh). Excludes `source`
+// and all opinionated/local data (owner, notes, favorites, outreach, AI).
+function factualFromMapped(m: ReturnType<typeof mapDetail>, school_id: string | null) {
+  const f: Record<string, any> = {
+    jazz_id: m.jazz_id, name: m.name, email: m.email, phone: m.phone,
+    apply_date: m.apply_date, linkedin: m.linkedin, resume_link: m.resume_link,
+    stage: m.stage, job_title: m.job_title, university_raw: m.university_raw,
+    gpa: m.gpa, grad_date: m.grad_date, area_of_study: m.area_of_study,
+  };
+  if (school_id) f.school_id = school_id; // only set when JazzHR routes confidently
+  return f;
+}
+
 // ---- POST: scoped, checkpointed sync ---------------------------------------
 // body: { mode: "full" | "refresh", batch?: number }
 //  Processes applicants for TARGET_JOB. Fetches detail 3-at-a-time, writes each
@@ -108,59 +126,105 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: e.message }, { status: 502 });
   }
 
-  // 2. checkpoint: skip applicants already synced when in "refresh"; in "full"
-  //    we still upsert everyone (cheap, and refreshes stages).
-  let toProcess = stubs;
-  if (mode === "refresh") {
-    const { data: existing } = await db.from("candidates").select("jazz_id");
-    const have = new Set((existing ?? []).map((c) => c.jazz_id));
-    toProcess = stubs.filter((s) => !have.has(s.id));
-  }
+  // 2. Build an in-memory matching index of existing candidates so each JazzHR
+  //    applicant can be LINKED to a manually-entered/imported record instead of
+  //    creating a duplicate. JazzHR is the source of truth for factual fields;
+  //    local data (owner, notes, favorites, outreach, connections) is preserved.
+  const { data: allCands } = await db.from("candidates").select("id, jazz_id, email, phone, name, school_id");
+  const { data: schoolsData } = await db.from("schools").select("id, name");
+  const schoolNameById = new Map((schoolsData ?? []).map((s: any) => [s.id, s.name as string]));
+  const schoolIdByName = new Map((schoolsData ?? []).map((s: any) => [s.name as string, s.id as string]));
+  const { data: reviewRows } = await db.from("jazz_match_review").select("jazz_applicant_id").eq("status", "pending");
+  const reviewExisting = new Set((reviewRows ?? []).map((r: any) => String(r.jazz_applicant_id)));
 
-  // 3. fetch detail 3-at-a-time, map + route, write each batch immediately
-  let written = 0, routed = 0, unrouted = 0, failed = 0;
+  const linkedByJazz = new Map<string, string>(); // jazz_id -> candidate id
+  type U = { id: string; email: string; phone: string; nameN: string; schoolName: string };
+  const unlinked: U[] = [];
+  for (const c of allCands ?? []) {
+    if (c.jazz_id) { linkedByJazz.set(String(c.jazz_id), c.id); continue; }
+    unlinked.push({
+      id: c.id, email: normEmail(c.email), phone: normPhone(c.phone), nameN: normName(c.name),
+      schoolName: c.school_id ? (schoolNameById.get(c.school_id) ?? "") : "",
+    });
+  }
+  const consume = (id: string) => { const i = unlinked.findIndex((u) => u.id === id); if (i >= 0) unlinked.splice(i, 1); };
+
+  // 3. checkpoint: in "refresh", skip applicants already linked (just new ones).
+  let toProcess = stubs;
+  if (mode === "refresh") toProcess = stubs.filter((s) => !linkedByJazz.has(String(s.id)));
+
+  // 4. fetch detail 3-at-a-time, match → link / refresh / queue / import.
+  let linked = 0, refreshed = 0, imported = 0, queued = 0, failed = 0;
   const CONC = 3;
-  // soft time budget so we return before the function is killed; re-trigger continues
   const startedAt = Date.now();
   const TIME_BUDGET_MS = 50_000;
+
+  const finish = (partial: boolean, remaining: number) =>
+    NextResponse.json({ ok: true, mode, partial, linked, refreshed, imported, queued, failed, ...(partial ? { remaining } : {}) });
 
   for (let i = 0; i < toProcess.length; i += CONC) {
     if (Date.now() - startedAt > TIME_BUDGET_MS) {
       await db.from("sync_meta").upsert(
-        { id: 1, last_sync: new Date().toISOString(), total_cached: written, last_status: `${mode} partial — re-run to continue` },
+        { id: 1, last_sync: new Date().toISOString(), total_cached: linked + imported + refreshed, last_status: `${mode} partial — re-run to continue` },
         { onConflict: "id" }
       );
-      return NextResponse.json({ ok: true, mode, partial: true, written, routed, unrouted, failed, remaining: toProcess.length - i });
+      return finish(true, toProcess.length - i);
     }
     const slice = toProcess.slice(i, i + CONC);
-    const details = await Promise.all(
-      slice.map((s) => jazzGet(`/applicants/${s.id}`, apiKey).catch(() => null))
-    );
-    const rows = [] as any[];
+    const details = await Promise.all(slice.map((s) => jazzGet(`/applicants/${s.id}`, apiKey).catch(() => null)));
     for (const d of details) {
       if (!d) { failed++; continue; }
-      const row = mapDetail(d);
-      const schoolName = routeToSchoolName(row.university_raw);
-      let school_id: string | null = null;
-      if (schoolName) {
-        const { data: sch } = await db.from("schools").select("id").eq("name", schoolName).maybeSingle();
-        school_id = sch?.id ?? null;
+      const m = mapDetail(d);
+      const jid = String(m.jazz_id);
+      const routedSchool = routeToSchoolName(m.university_raw);
+      const routedSchoolId = routedSchool ? (schoolIdByName.get(routedSchool) ?? null) : null;
+      const factual = factualFromMapped(m, routedSchoolId);
+
+      // a) already linked → refresh factual fields + stage
+      const linkedId = linkedByJazz.get(jid);
+      if (linkedId) {
+        await db.from("candidates").update(factual).eq("id", linkedId);
+        refreshed++;
+        continue;
       }
-      if (school_id) routed++; else unrouted++;
-      rows.push({ ...row, school_id });
-    }
-    if (rows.length) {
-      const { error } = await db.from("candidates").upsert(rows, { onConflict: "jazz_id" });
-      if (error) return NextResponse.json({ error: error.message, writtenSoFar: written }, { status: 500 });
-      written += rows.length;
+
+      // b) confident match → link to the existing record
+      const em = normEmail(m.email), ph = normPhone(m.phone), nm = normName(m.name);
+      let match = em ? unlinked.find((u) => u.email && u.email === em) : undefined;
+      if (!match && ph) match = unlinked.find((u) => u.phone && u.phone === ph);
+      if (!match && nm && routedSchool) match = unlinked.find((u) => u.nameN === nm && u.schoolName === routedSchool);
+      if (match) {
+        await db.from("candidates").update(factual).eq("id", match.id);
+        linkedByJazz.set(jid, match.id);
+        consume(match.id);
+        linked++;
+        continue;
+      }
+
+      // c) name-only match → hold for Super-Admin review (don't auto-link/import)
+      if (nm) {
+        const weak = unlinked.find((u) => u.nameN === nm);
+        if (weak) {
+          if (!reviewExisting.has(jid)) {
+            await db.from("jazz_match_review").insert({ jazz_applicant_id: jid, jazz_snapshot: m, candidate_id: weak.id, reason: "name_only" });
+            reviewExisting.add(jid);
+            queued++;
+          }
+          continue;
+        }
+      }
+
+      // d) no match anywhere → import as net-new
+      const { data: ins } = await db.from("candidates").insert({ ...m, school_id: routedSchoolId, not_interested: false }).select("id").single();
+      if (ins) { linkedByJazz.set(jid, ins.id); imported++; }
     }
   }
 
   await db.from("sync_meta").upsert(
-    { id: 1, last_sync: new Date().toISOString(), total_cached: written, last_status: `${mode} complete` },
+    { id: 1, last_sync: new Date().toISOString(), total_cached: linked + imported + refreshed, last_status: `${mode} complete` },
     { onConflict: "id" }
   );
-  return NextResponse.json({ ok: true, mode, partial: false, written, routed, unrouted, failed });
+  return finish(false, 0);
 }
 
 // ---- PUT: re-route unrouted candidates using the current routing table -------

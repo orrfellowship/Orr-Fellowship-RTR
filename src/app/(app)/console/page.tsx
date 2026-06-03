@@ -42,13 +42,16 @@ export default async function ConsolePage() {
 
   let ai: { candidate_id: string; resume_score: number | null; summary: string | null; flags: any; analyzed_at: string | null }[] = [];
   let users: { id: string; full_name: string; email: string; role: string; school_id: string | null; is_active: boolean }[] = [];
+  let reviews: { id: string; jazz_snapshot: any; candidate_id: string | null; reason: string | null }[] = [];
   if (isSuper(profile.role)) {
-    const [{ data: aiData }, { data: usersData }] = await Promise.all([
+    const [{ data: aiData }, { data: usersData }, { data: reviewData }] = await Promise.all([
       supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at"),
       supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name"),
+      supabase.from("jazz_match_review").select("id, jazz_snapshot, candidate_id, reason").eq("status", "pending").order("created_at", { ascending: false }),
     ]);
     ai = aiData ?? [];
     users = usersData ?? [];
+    reviews = reviewData ?? [];
   }
 
   const favSet = new Set((favs ?? []).map((f) => f.candidate_id));
@@ -64,6 +67,7 @@ export default async function ConsolePage() {
       ai={ai}
       phases={phases ?? []}
       users={users}
+      reviews={reviews}
     />
   );
 }
