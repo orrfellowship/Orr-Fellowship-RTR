@@ -9,6 +9,7 @@ import {
   toggleFavorite, setNotInterested, logOutreach, reassignPointPerson,
   getOutreach, addConnection, getConnections, upsertTask, deleteTask, addPhase,
   deleteOutreach, deleteConnection, updatePhase, deletePhase,
+  requestTaskComplete, confirmTaskComplete,
 } from "./actions";
 import { phaseOf } from "@/lib/stages";
 import StandingsClient from "@/components/StandingsClient";
@@ -36,6 +37,7 @@ type TeamMember  = { id: string; full_name: string; role?: string | null };
 type Task        = {
   id: string; text: string; assignee_id: string | null; assignee_label: string | null;
   month_label: string | null; notes: string | null; due_date: string | null; done: boolean;
+  pending_review?: boolean;
 };
 type Phase       = { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] };
 
@@ -52,12 +54,14 @@ const CONTACTD = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
 const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
-  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName,
+  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand,
 }: {
   profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
+  lastContactByCand: Record<string, string>;
 }) {
   const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all">("plan");
+  const [breakdownScope, setBreakdownScope] = useState<"team" | "org">("team");
   const [allFilter, setAllFilter] = useState<string>("All schools");
   const [allSearch, setAllSearch] = useState("");
   const [allMajor, setAllMajor] = useState("All majors");
@@ -127,16 +131,58 @@ export default function WorkspaceClient({
     ];
   }, [candidates, schoolGoal]);
 
+  // Org-wide breakdown (toggle on the Weekly Snapshot).
+  const orgPipelineBoard = useMemo(() => {
+    const sourced   = allCandidates.filter((c) => c.stage && SOURCED.has(c.stage)).length;
+    const contacted = allCandidates.filter((c) => c.stage && CONTACTD.has(c.stage)).length;
+    const applied   = allCandidates.filter((c) => c.stage && APPLIED.has(c.stage)).length;
+    const sum = (k: "goal_sourced" | "goal_contacted" | "goal_applied") => allGoals.reduce((s, g) => s + (g[k] ?? 0), 0);
+    return [
+      { label: "Sourced",   actual: sourced,   goal: sum("goal_sourced") },
+      { label: "Contacted", actual: contacted, goal: sum("goal_contacted") },
+      { label: "Applied",   actual: applied,   goal: sum("goal_applied") },
+    ];
+  }, [allCandidates, allGoals]);
+
+  const activeBoard = breakdownScope === "team" ? pipelineBoard : orgPipelineBoard;
+
+  // Action queue — next moves on candidates you own (or unclaimed ones to grab).
   const plan = useMemo(() => {
-    const out: { id: string; type: string; cand: Cand; why: string }[] = [];
-    candidates.forEach((c) => {
-      if (c.not_interested) return;
-      if (c.stage === "contacted") out.push({ id: `n${c.id}`, type: "Follow up", cand: c, why: "Keep this one warm" });
-      if (c.stage === "new" && !c.point_person_id) out.push({ id: `u${c.id}`, type: "Claim", cand: c, why: "New & unclaimed" });
-      if (c.stage === "finalist") out.push({ id: `f${c.id}`, type: "Finalist prep", cand: c, why: "Confirm logistics" });
-    });
+    const out: { id: string; type: string; cand: Cand; why: string; rank: number }[] = [];
+    const now = Date.now();
+    const DAY = 86400000;
+    for (const c of candidates) {
+      if (c.not_interested) continue;
+      const mine = c.point_person_id === profile.id;
+      const ph = phaseOf(c.stage);
+      if (ph === "rejected" || ph === "moved") continue;
+      const last = lastContactByCand[c.id];
+      const days = last ? Math.floor((now - new Date(last).getTime()) / DAY) : Infinity;
+
+      if (ph === "applied" && mine) {
+        out.push({ id: `a${c.id}`, type: "Applied", cand: c, why: "They applied — anything needed from you?", rank: 0 });
+      } else if (ph === "finalist" && mine) {
+        out.push({ id: `f${c.id}`, type: "Finalist prep", cand: c, why: "Confirm logistics", rank: 1 });
+      } else if (ph === "sourced" && !c.point_person_id) {
+        out.push({ id: `u${c.id}`, type: "Claim", cand: c, why: "New & unclaimed", rank: 4 });
+      } else if (mine && (ph === "sourced" || ph === "contacted")) {
+        if (!last) out.push({ id: `x${c.id}`, type: "Next step", cand: c, why: "You claimed them — log your first outreach", rank: 3 });
+        else if (days >= 10) out.push({ id: `t${c.id}`, type: "Follow up", cand: c, why: `No contact in ${days} days`, rank: 2 });
+        else if (days >= 3) out.push({ id: `r${c.id}`, type: "Rapport", cand: c, why: "Warm now — quick intro message?", rank: 3 });
+      }
+    }
+    return out.sort((a, b) => a.rank - b.rank);
+  }, [candidates, lastContactByCand, profile.id]);
+
+  // Team-lead review: tasks fellows marked done, awaiting confirmation.
+  const pendingReviewTasks = useMemo(() => {
+    if (!canEdit) return [] as { task: Task; roleTitle: string }[];
+    const out: { task: Task; roleTitle: string }[] = [];
+    for (const p of phases) for (const t of p.playbook_tasks) {
+      if (t.pending_review && !t.done) out.push({ task: t, roleTitle: p.title });
+    }
     return out;
-  }, [candidates]);
+  }, [phases, canEdit]);
 
   const onFav = (c: Cand) => startTransition(() => { toggleFavorite(c.id, !c.is_favorite); });
 
@@ -194,27 +240,37 @@ export default function WorkspaceClient({
             <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Weekly Snapshot</h1>
             <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{plan.length} move{plan.length !== 1 ? "s" : ""} queued · {totalActive} active candidates</p>
 
-            {/* Pipeline overview cards */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginTop: 18 }}>
-              {pipelineBoard.map((b) => {
+            {/* Pipeline breakdown — toggle between your team and the whole org */}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+              <div style={{ display: "inline-flex", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: 3, gap: 3 }}>
+                {(["team", "org"] as const).map((s) => (
+                  <button key={s} onClick={() => setBreakdownScope(s)}
+                    style={{ border: "none", borderRadius: 7, padding: "6px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: breakdownScope === s ? C.navy : "transparent", color: breakdownScope === s ? "#fff" : C.grayMute }}>
+                    {s === "team" ? (groupName ?? school?.name ?? "My team") : "Org-wide"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginTop: 8 }}>
+              {activeBoard.map((b) => {
                 const hasGoal = b.goal > 0;
                 const pct = hasGoal ? (b.actual / b.goal) * 100 : 0;
                 const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
                 return (
                   <div key={b.label} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
-                    <div style={{ background: C.navy, color: "#fff", padding: "14px 18px", textAlign: "center" }}>
+                    <div style={{ background: C.navy, color: "#fff", padding: "12px 18px", textAlign: "center" }}>
                       <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", opacity: 0.8 }}>{b.label}</div>
-                      <div style={{ fontFamily: HEAD, fontSize: 36, fontWeight: 700, marginTop: 2, lineHeight: 1 }}>{b.actual}</div>
+                      <div style={{ fontFamily: HEAD, fontSize: 32, fontWeight: 700, marginTop: 2, lineHeight: 1 }}>{b.actual}</div>
                     </div>
                     {hasGoal ? (
-                      <div style={{ padding: "10px 18px", textAlign: "center", background: `${tone}14` }}>
+                      <div style={{ padding: "8px 18px", textAlign: "center", background: `${tone}14` }}>
                         <div style={{ fontSize: 11, color: C.grayMute, fontWeight: 600 }}>Goal {b.goal} · {Math.round(pct)}%</div>
-                        <div style={{ marginTop: 6, height: 5, borderRadius: 99, background: C.line, overflow: "hidden" }}>
+                        <div style={{ marginTop: 5, height: 5, borderRadius: 99, background: C.line, overflow: "hidden" }}>
                           <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: tone, borderRadius: 99 }} />
                         </div>
                       </div>
                     ) : (
-                      <div style={{ padding: "10px 18px", textAlign: "center" }}>
+                      <div style={{ padding: "8px 18px", textAlign: "center" }}>
                         <div style={{ fontSize: 11, color: C.grayMute }}>No goal set</div>
                       </div>
                     )}
@@ -223,73 +279,86 @@ export default function WorkspaceClient({
               })}
             </div>
 
-            {/* Stage breakdown bar */}
-            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 20px", marginTop: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 12 }}>Pipeline Breakdown</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {PHASE_ORDER_PIPELINE.map((ph) => {
-                  const n = phaseCounts[ph] ?? 0;
-                  const tone = PHASE_TONE[ph];
-                  return (
-                    <div key={ph} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 68, padding: "10px 14px", borderRadius: 10, background: `${tone}14`, border: `1px solid ${tone}44` }}>
-                      <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, color: tone, lineHeight: 1 }}>{n}</span>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: tone, textTransform: "uppercase", letterSpacing: 0.5 }}>{PHASE_LABEL[ph]}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              {totalActive > 0 && (
-                <div style={{ marginTop: 14, height: 8, borderRadius: 99, background: C.line, overflow: "hidden", display: "flex", gap: 1 }}>
-                  {PHASE_ORDER_PIPELINE.map((ph) => {
-                    const n = phaseCounts[ph] ?? 0;
-                    if (!n) return null;
-                    return <div key={ph} style={{ flex: n, background: PHASE_TONE[ph], borderRadius: 99 }} />;
-                  })}
-                </div>
-              )}
-            </div>
+            {/* Action Queue + My Tasks, side by side */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginTop: 26, alignItems: "start" }}>
 
-            {/* My tasks snapshot */}
-            {myTasks.length > 0 && (
-              <div style={{ marginTop: 22 }}>
-                <h2 style={{ fontSize: 18, color: C.navy, margin: "0 0 10px", fontFamily: HEAD }}>
+              {/* Action Queue */}
+              <div>
+                <h2 style={{ fontSize: 20, color: C.navy, margin: "0 0 12px", fontFamily: HEAD }}>Action Queue</h2>
+
+                {/* Team-lead review of completed tasks */}
+                {pendingReviewTasks.length > 0 && (
+                  <div style={{ background: "#fff", border: `1px solid ${C.gold}`, borderRadius: 12, padding: "14px 16px", marginBottom: 14 }}>
+                    <div style={{ fontFamily: HEAD, fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#8A6D0E", marginBottom: 10 }}>Review completed work · {pendingReviewTasks.length}</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {pendingReviewTasks.map(({ task: t, roleTitle }) => (
+                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.line}` }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13.5, color: C.gray, fontWeight: 600 }}>{t.text}</div>
+                            <div style={{ fontSize: 11, color: C.grayMute }}>{team.find((m) => m.id === t.assignee_id)?.full_name ?? "Someone"} · {roleTitle}</div>
+                          </div>
+                          <button onClick={() => startTransition(() => { confirmTaskComplete(t.id, true); })}
+                            style={{ border: "none", background: C.good, color: "#fff", fontWeight: 700, fontSize: 12, padding: "6px 11px", borderRadius: 7, cursor: "pointer", flexShrink: 0 }}>Confirm</button>
+                          <button onClick={() => startTransition(() => { requestTaskComplete(t.id, false); })}
+                            title="Send back to the fellow" style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.grayMute, fontWeight: 700, fontSize: 12, padding: "6px 9px", borderRadius: 7, cursor: "pointer", flexShrink: 0 }}>↩</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+                  {plan.map((a) => (
+                    <div key={a.id} onClick={() => setOpenId(a.cand.id)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 12, padding: "15px 18px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }}>
+                      <span style={{ width: 92, fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: accent, flexShrink: 0 }}>{a.type}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, color: C.gray }}>{a.cand.name}</div><div style={{ fontSize: 13, color: C.grayMute }}>{a.why}</div></div>
+                      <StagePill stage={a.cand.stage} />
+                    </div>
+                  ))}
+                  {plan.length === 0 && pendingReviewTasks.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12 }}>All clear — nothing needs you right now.</div>}
+                </div>
+              </div>
+
+              {/* My Tasks */}
+              <div>
+                <h2 style={{ fontSize: 20, color: C.navy, margin: "0 0 12px", fontFamily: HEAD }}>
                   My Tasks
-                  <span style={{ marginLeft: 10, fontSize: 13, fontWeight: 600, color: C.grayMute }}>{myTasks.filter((m) => m.task.done).length}/{myTasks.length} complete</span>
+                  <span style={{ marginLeft: 10, fontSize: 13, fontWeight: 600, color: C.grayMute }}>{myTasks.filter((m) => m.task.done).length}/{myTasks.length} done</span>
                 </h2>
-                {MONTHS.map((month) => {
+                {myTasks.length === 0 ? (
+                  <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12 }}>No tasks assigned to you.</div>
+                ) : MONTHS.map((month) => {
                   const monthTasks = myTasks.filter((m) => m.task.month_label === month);
                   if (!monthTasks.length) return null;
                   return (
                     <div key={month} style={{ marginBottom: 16 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 8 }}>{month}</div>
                       <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
-                        {monthTasks.map(({ task: t, roleTitle }) => (
-                          <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${C.line}`, opacity: t.done ? 0.55 : 1 }}>
-                            <input type="checkbox" checked={t.done}
-                              onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: "", text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label, month_label: t.month_label, notes: t.notes, due_date: t.due_date, done: e.target.checked }); })}
-                              style={{ accentColor: accent, flexShrink: 0, cursor: "pointer" }} />
-                            <span style={{ flex: 1, fontSize: 13.5, color: C.gray, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
-                            <span style={{ fontSize: 11, color: C.grayMute, flexShrink: 0 }}>{roleTitle}</span>
-                          </div>
-                        ))}
+                        {monthTasks.map(({ task: t, roleTitle }) => {
+                          const pending = !!t.pending_review && !t.done;
+                          const checked = t.done || pending;
+                          const onToggle = (val: boolean) => startTransition(() => {
+                            if (canEdit) confirmTaskComplete(t.id, val);   // leads confirm directly
+                            else requestTaskComplete(t.id, val);            // fellows send for review
+                          });
+                          return (
+                            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${C.line}`, opacity: t.done ? 0.55 : 1 }}>
+                              <input type="checkbox" checked={checked} disabled={!canEdit && t.done}
+                                onChange={(e) => onToggle(e.target.checked)}
+                                style={{ accentColor: pending ? C.gold : accent, flexShrink: 0, cursor: !canEdit && t.done ? "default" : "pointer" }} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <span style={{ fontSize: 13.5, color: C.gray, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
+                                {pending && <div style={{ fontSize: 11, color: "#8A6D0E", fontWeight: 600 }}>Completed · sent to team lead for review</div>}
+                              </div>
+                              <span style={{ fontSize: 11, color: C.grayMute, flexShrink: 0 }}>{roleTitle}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   );
                 })}
               </div>
-            )}
-
-            {/* Action queue */}
-            <h2 style={{ fontSize: 18, color: C.navy, margin: "24px 0 10px", fontFamily: HEAD }}>Action Queue</h2>
-            <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-              {plan.map((a) => (
-                <div key={a.id} onClick={() => setOpenId(a.cand.id)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 12, padding: "15px 18px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }}>
-                  <span style={{ width: 96, fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: accent }}>{a.type}</span>
-                  <div style={{ flex: 1 }}><div style={{ fontWeight: 700, color: C.gray }}>{a.cand.name}</div><div style={{ fontSize: 13, color: C.grayMute }}>{a.why} · {a.cand.area_of_study}</div></div>
-                  <StagePill stage={a.cand.stage} />
-                </div>
-              ))}
-              {plan.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>All clear — nothing needs you right now.</div>}
             </div>
           </>
         )}

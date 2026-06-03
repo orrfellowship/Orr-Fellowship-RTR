@@ -177,7 +177,7 @@ export default function ConsoleClient({
       const res = await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
       const data = await res.json();
       if (!res.ok) setSyncError(typeof data.error === "string" ? data.error : JSON.stringify(data));
-      else setSyncResult(`${data.partial ? "Partial (re-run to continue)" : "Complete"} · written ${data.written} · routed ${data.routed} · unrouted ${data.unrouted}${data.failed ? ` · failed ${data.failed}` : ""}${data.remaining ? ` · ${data.remaining} remaining` : ""}`);
+      else setSyncResult(`${data.partial ? "Partial (re-run to continue)" : "Complete"} · linked ${data.linked ?? 0} · refreshed ${data.refreshed ?? 0} · imported ${data.imported ?? 0} · review queue ${data.queued ?? 0}${data.failed ? ` · failed ${data.failed}` : ""}${data.remaining ? ` · ${data.remaining} remaining` : ""}`);
     } catch (e: any) { setSyncError(e?.message ?? "Request failed"); }
     finally { setSyncing(false); }
   }

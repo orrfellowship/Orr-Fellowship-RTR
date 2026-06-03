@@ -67,6 +67,32 @@ export default async function WorkspacePage() {
       .order("sort_order"),
   ]);
 
+  // pending_review is fetched separately so a missing column (pre-migration)
+  // degrades gracefully instead of breaking the whole phases query.
+  const phasesWithReview = (phases ?? []) as any[];
+  const allTaskIds = phasesWithReview.flatMap((p) => (p.playbook_tasks ?? []).map((t: any) => t.id));
+  if (allTaskIds.length) {
+    const { data: prRows } = await serviceDb.from("playbook_tasks").select("id, pending_review").in("id", allTaskIds);
+    if (prRows) {
+      const pr = new Map(prRows.map((r: any) => [r.id, r.pending_review]));
+      for (const p of phasesWithReview) for (const t of (p.playbook_tasks ?? [])) t.pending_review = pr.get(t.id) ?? false;
+    }
+  }
+
+  // Last outreach timestamp per candidate (drives the Action Queue follow-up nudges).
+  const candidateIds = (candidates ?? []).map((c) => c.id);
+  const lastContactByCand: Record<string, string> = {};
+  if (candidateIds.length) {
+    const { data: logs } = await serviceDb
+      .from("outreach_log")
+      .select("candidate_id, created_at")
+      .in("candidate_id", candidateIds);
+    for (const l of logs ?? []) {
+      const prev = lastContactByCand[(l as any).candidate_id];
+      if (!prev || (l as any).created_at > prev) lastContactByCand[(l as any).candidate_id] = (l as any).created_at;
+    }
+  }
+
   // Cross-school data for Standings — serviceDb bypasses RLS so fellows/leads can see org-wide pipeline
   const [{ data: allSchools }, { data: allCandidates }, { data: allGoals }] = await Promise.all([
     serviceDb.from("schools").select("id, name, tier, color_primary, logo_url").order("name"),
@@ -84,11 +110,12 @@ export default async function WorkspacePage() {
       school={school ? { id: school.id, name: school.name, color_primary: (school as any).color_primary, logo_url: (school as any).logo_url } : null}
       candidates={enriched}
       team={team ?? []}
-      phases={phases ?? []}
+      phases={phasesWithReview}
       allSchools={allSchools ?? []}
       allCandidates={allEnriched}
       allGoals={allGoals ?? []}
       groupName={groupName}
+      lastContactByCand={lastContactByCand}
     />
   );
 }
