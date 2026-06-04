@@ -69,6 +69,10 @@ export default function WorkspaceClient({
   const [allMinGpa, setAllMinGpa] = useState("");
   const [allFavOnly, setAllFavOnly] = useState(false);
   const [allMineOnly, setAllMineOnly] = useState(false);
+  const [boardSearch, setBoardSearch] = useState("");
+  const [boardStage, setBoardStage] = useState("All stages");
+  const [boardFavOnly, setBoardFavOnly] = useState(false);
+  const [boardOwner, setBoardOwner] = useState("");
   const [allSort, setAllSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [openId, setOpenId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -364,17 +368,57 @@ export default function WorkspaceClient({
         )}
 
         {/* ---- MY SCHOOL BOARD ---- */}
-        {tab === "board" && (
+        {tab === "board" && (() => {
+          const boardQ = boardSearch.trim().toLowerCase();
+          const boardDistinctStages = Array.from(new Set(candidates.map((c) => c.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
+          const boardVisible = candidates.filter((c) => {
+            if (boardQ && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(boardQ))) return false;
+            if (boardStage !== "All stages" && c.stage !== boardStage) return false;
+            if (boardFavOnly && !c.is_favorite) return false;
+            if (boardOwner && c.point_person_id !== (boardOwner === "__me__" ? profile.id : boardOwner)) return false;
+            return true;
+          });
+          const boardFiltersActive = boardQ || boardStage !== "All stages" || boardFavOnly || boardOwner;
+          return (
           <>
-            <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>My School Board</h1>
-            <p style={{ color: C.grayMute }}>{candidates.length} candidates.</p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
+              <div>
+                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>My School Board</h1>
+                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardVisible.length}{boardFiltersActive ? ` of ${candidates.length}` : ""} candidate{candidates.length !== 1 ? "s" : ""}.</p>
+              </div>
+            </div>
+
+            {/* Search bar */}
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 14, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px" }}>
+              <input value={boardSearch} onChange={(e) => setBoardSearch(e.target.value)} placeholder="Search name, email, major…"
+                style={{ flex: "1 1 200px", minWidth: 160, padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
+              <select value={boardStage} onChange={(e) => setBoardStage(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                <option>All stages</option>
+                {boardDistinctStages.map((s) => <option key={s}>{s}</option>)}
+              </select>
+              <select value={boardOwner} onChange={(e) => setBoardOwner(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${boardOwner ? accent : C.line}`, fontSize: 13.5, background: boardOwner ? `${accent}10` : "#fff", color: boardOwner ? accent : C.gray, fontWeight: 600 }}>
+                <option value="">All owners</option>
+                <option value="__me__">Mine</option>
+                {team.filter((t) => t.id !== profile.id).map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+              </select>
+              <button onClick={() => setBoardFavOnly((v) => !v)}
+                style={{ padding: "9px 14px", borderRadius: 9, border: `1px solid ${boardFavOnly ? C.gold : C.line}`, fontSize: 13.5, background: boardFavOnly ? "#FBF3D6" : "#fff", color: boardFavOnly ? "#8A6D0E" : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                {boardFavOnly ? "★ Favorites" : "☆ Favorites"}
+              </button>
+              <button onClick={() => { setBoardSearch(""); setBoardStage("All stages"); setBoardFavOnly(false); setBoardOwner(""); }}
+                disabled={!boardFiltersActive}
+                style={{ padding: "9px 12px", borderRadius: 9, border: "none", background: "transparent", color: boardFiltersActive ? C.navy2 : C.grayMute, fontSize: 13, fontWeight: 700, cursor: boardFiltersActive ? "pointer" : "default", textDecoration: boardFiltersActive ? "underline" : "none", opacity: boardFiltersActive ? 1 : 0.45 }}>
+                Clear
+              </button>
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr 240px", gap: 18, marginTop: 16, alignItems: "start" }}>
               {/* Candidate table */}
               <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#ececec" }}>
                   <div>Candidate</div><div>Major</div><div>GPA</div><div>Stage</div><div>Owner</div><div></div>
                 </div>
-                {candidates.map((c) => (
+                {boardVisible.map((c) => (
                   <div key={c.id} onClick={() => setOpenId(c.id)} onMouseEnter={() => setHoveredId(c.id)} onMouseLeave={() => setHoveredId(null)} style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: c.not_interested ? 0.5 : 1, cursor: "pointer", background: hoveredId === c.id ? C.canvas : "#ececec", transition: "background 0.1s" }}>
                     <div><div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div><div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div></div>
                     <div style={{ fontSize: 13.5 }}>{c.area_of_study}</div>
@@ -394,7 +438,7 @@ export default function WorkspaceClient({
                     <div onClick={(e) => { e.stopPropagation(); onFav(c); }} style={{ cursor: "pointer", fontSize: 18, color: c.is_favorite ? C.gold : "#D8DCE5", textAlign: "center" }}>{c.is_favorite ? "★" : "☆"}</div>
                   </div>
                 ))}
-                {candidates.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No candidates yet — run a sync or add one.</div>}
+                {boardVisible.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{boardFiltersActive ? "No candidates match your search." : "No candidates yet — run a sync or add one."}</div>}
               </div>
 
               {/* Team panel */}
@@ -426,7 +470,8 @@ export default function WorkspaceClient({
               </div>
             </div>
           </>
-        )}
+          );
+        })()}
 
         {/* ---- PLAYBOOK ---- */}
         {tab === "playbook" && (
@@ -565,7 +610,7 @@ export default function WorkspaceClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} canEdit={openCanEdit} onClose={() => setOpenId(null)} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
+        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} onClose={() => setOpenId(null)} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
       )}
       {resumeFor && (
         <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
@@ -810,13 +855,13 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
 type Connection = { id: string; fellow_id: string; name: string; relationship: string };
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
-function CandidateDrawer({ c, canEdit, onClose, startTransition, onResume }: {
-  c: Cand; canEdit: boolean;
+function CandidateDrawer({ c, canEdit, profile, team, onClose, startTransition, onResume }: {
+  c: Cand; canEdit: boolean; profile: Profile; team: TeamMember[];
   onClose: () => void; startTransition: (cb: () => void) => void;
   onResume: (jazzId: string, name: string) => void;
 }) {
   const [draft, setDraft] = useState("");
-  const [log, setLog] = useState<{ id: string; body: string; created_at: string }[] | null>(null);
+  const [log, setLog] = useState<{ id: string; body: string; created_at: string; author_id: string | null }[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
   const [relDraft, setRelDraft] = useState("");
   const QUICK = ["Called — left voicemail", "Emailed", "Met in person", "Scheduled follow-up"];
@@ -849,7 +894,7 @@ function CandidateDrawer({ c, canEdit, onClose, startTransition, onResume }: {
 
   const doLog = (body: string) => startTransition(() => {
     logOutreach(c.id, body);
-    setLog((prev) => [{ id: Math.random().toString(), body, created_at: new Date().toISOString() }, ...(prev ?? [])]);
+    setLog((prev) => [{ id: Math.random().toString(), body, created_at: new Date().toISOString(), author_id: profile.id }, ...(prev ?? [])]);
   });
 
   const doDelLog = (id: string) => {
@@ -943,12 +988,19 @@ function CandidateDrawer({ c, canEdit, onClose, startTransition, onResume }: {
             </>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(log ?? []).map((n) => (
+            {(log ?? []).map((n) => {
+              const authorName = n.author_id === profile.id ? "You" : (team.find((t) => t.id === n.author_id)?.full_name ?? "Someone");
+              const dateStr = new Date(n.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+              return (
               <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray, display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <span style={{ flex: 1 }}>{n.body}</span>
+                <div style={{ flex: 1 }}>
+                  <div>{n.body}</div>
+                  <div style={{ fontSize: 11, color: C.grayMute, marginTop: 4 }}>{authorName} · {dateStr}</div>
+                </div>
                 {canEdit && <button onClick={() => doDelLog(n.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>}
               </div>
-            ))}
+              );
+            })}
             {(log ?? []).length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No outreach logged yet.</div>}
           </div>
         </div>
