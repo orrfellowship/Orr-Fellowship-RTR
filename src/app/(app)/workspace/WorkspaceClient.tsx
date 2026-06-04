@@ -610,7 +610,7 @@ export default function WorkspaceClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} canEdit={openCanEdit} onClose={() => setOpenId(null)} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
+        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} onClose={() => setOpenId(null)} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
       )}
       {resumeFor && (
         <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
@@ -855,13 +855,13 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
 type Connection = { id: string; fellow_id: string; name: string; relationship: string };
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
-function CandidateDrawer({ c, canEdit, onClose, startTransition, onResume }: {
-  c: Cand; canEdit: boolean;
+function CandidateDrawer({ c, canEdit, profile, team, onClose, startTransition, onResume }: {
+  c: Cand; canEdit: boolean; profile: Profile; team: TeamMember[];
   onClose: () => void; startTransition: (cb: () => void) => void;
   onResume: (jazzId: string, name: string) => void;
 }) {
   const [draft, setDraft] = useState("");
-  const [log, setLog] = useState<{ id: string; body: string; created_at: string }[] | null>(null);
+  const [log, setLog] = useState<{ id: string; body: string; created_at: string; author_id: string | null }[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
   const [relDraft, setRelDraft] = useState("");
   const QUICK = ["Called — left voicemail", "Emailed", "Met in person", "Scheduled follow-up"];
@@ -894,7 +894,7 @@ function CandidateDrawer({ c, canEdit, onClose, startTransition, onResume }: {
 
   const doLog = (body: string) => startTransition(() => {
     logOutreach(c.id, body);
-    setLog((prev) => [{ id: Math.random().toString(), body, created_at: new Date().toISOString() }, ...(prev ?? [])]);
+    setLog((prev) => [{ id: Math.random().toString(), body, created_at: new Date().toISOString(), author_id: profile.id }, ...(prev ?? [])]);
   });
 
   const doDelLog = (id: string) => {
@@ -988,12 +988,19 @@ function CandidateDrawer({ c, canEdit, onClose, startTransition, onResume }: {
             </>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(log ?? []).map((n) => (
+            {(log ?? []).map((n) => {
+              const authorName = n.author_id === profile.id ? "You" : (team.find((t) => t.id === n.author_id)?.full_name ?? "Someone");
+              const dateStr = new Date(n.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+              return (
               <div key={n.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "11px 13px", fontSize: 13, color: C.gray, display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <span style={{ flex: 1 }}>{n.body}</span>
+                <div style={{ flex: 1 }}>
+                  <div>{n.body}</div>
+                  <div style={{ fontSize: 11, color: C.grayMute, marginTop: 4 }}>{authorName} · {dateStr}</div>
+                </div>
                 {canEdit && <button onClick={() => doDelLog(n.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0, padding: "0 2px" }}>×</button>}
               </div>
-            ))}
+              );
+            })}
             {(log ?? []).length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No outreach logged yet.</div>}
           </div>
         </div>
