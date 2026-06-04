@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -7,11 +8,11 @@ import { C, HEAD } from "./constants";
 import type { School } from "./types";
 
 const TABS = [
-  ["/workspace/dashboard",    "Weekly Snapshot"],
+  ["/workspace/dashboard", "Weekly Snapshot"],
   ["/workspace/school-board", "My School"],
-  ["/workspace/playbook",     "Playbook"],
-  ["/workspace/standings",    "Standings"],
-  ["/workspace/applicants",   "Applicants"],
+  ["/workspace/playbook", "Playbook"],
+  ["/workspace/standings", "Standings"],
+  ["/workspace/applicants", "Applicants"],
 ] as const;
 
 export default function WorkspaceNav({
@@ -25,6 +26,11 @@ export default function WorkspaceNav({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const [pendingTab, setPendingTab] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingTab(null);
+  }, [pathname]);
 
   async function signOut() {
     await createClient().auth.signOut();
@@ -48,8 +54,30 @@ export default function WorkspaceNav({
           </div>
           {TABS.map(([href, label]) => {
             const active = pathname === href || pathname.startsWith(href + "/");
+            const pending = pendingTab === href && !active;
             return (
-              <Link key={href} href={href} style={{ textDecoration: "none", border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: active ? 700 : 600, color: active ? "#fff" : "rgba(255,255,255,.55)", borderBottom: active ? `3px solid ${accent}` : "3px solid transparent", display: "inline-block" }}>
+              <Link
+                key={href}
+                href={href}
+                onClick={() => {
+                  if (!active) setPendingTab(href);
+                }}
+                style={{
+                  textDecoration: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "15px 0",
+                  fontFamily: HEAD,
+                  fontSize: 14.5,
+                  fontWeight: active ? 700 : 600,
+                  color: active || pending ? "#fff" : "rgba(255,255,255,.55)",
+                  borderBottom: active ? `3px solid ${accent}` : "3px solid transparent",
+                  display: "inline-block",
+                  opacity: active ? 1 : pending ? 0.85 : 0.8,
+                  background: pending ? "rgba(255,255,255,.08)" : "transparent",
+                  transition: "color 0.15s ease, opacity 0.15s ease, background 0.15s ease",
+                }}
+              >
                 {label}
               </Link>
             );

@@ -141,6 +141,37 @@ export async function upsertTask(t: {
   return { ok: true };
 }
 
+// Fellow marks their own task complete → pending_review (awaits team-lead confirm).
+// value=false retracts (also used by a lead to "send back" a submission).
+export async function requestTaskComplete(taskId: string, value: boolean) {
+  const supabase = createServerSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+  const profile = await getCurrentProfile();
+  const elevated = profile ? canEditPlaybook(profile.role) : false;
+  if (!elevated) {
+    const { data: existing } = await supabase.from("playbook_tasks").select("assignee_id").eq("id", taskId).single();
+    if (!existing || existing.assignee_id !== user.id) return { error: "You can only update tasks assigned to you." };
+  }
+  const { error } = await supabase.from("playbook_tasks").update({ pending_review: value, done: false }).eq("id", taskId);
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// Team lead / admin confirms (or un-confirms) a task as officially done.
+export async function confirmTaskComplete(taskId: string, value: boolean) {
+  const profile = await getCurrentProfile();
+  if (!profile || !canEditPlaybook(profile.role)) return { error: "Only team leads or admins can confirm tasks." };
+  const supabase = createServerSupabase();
+  let { error } = await supabase.from("playbook_tasks").update({ done: value, pending_review: false }).eq("id", taskId);
+  // Fallback if the pending_review column isn't present yet (pre-migration).
+  if (error) ({ error } = await supabase.from("playbook_tasks").update({ done: value }).eq("id", taskId));
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
 export async function deleteTask(taskId: string) {
   const supabase = createServerSupabase();
   const { error } = await supabase.from("playbook_tasks").delete().eq("id", taskId);

@@ -5,6 +5,7 @@ import { createServerSupabase, createServiceClient } from "@/lib/supabase/server
 import { getCurrentProfile } from "@/lib/auth";
 import { isSuper, isAdminPlus } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
+import { routeToSchoolName } from "@/lib/stages";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -101,11 +102,12 @@ export async function addCandidate(data: {
   stage: string | null; gpa: string | null; area_of_study: string | null;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!profile) return { error: "Not authenticated" }; // any signed-in user may add
   const db = createServiceClient();
   const { error } = await db.from("candidates").insert({ ...data, source: "user_created", not_interested: false });
   if (error) return { error: error.message };
   revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true };
 }
 
@@ -113,13 +115,14 @@ export async function bulkImportCandidates(
   rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null }[]
 ) {
   const profile = await getCurrentProfile();
-  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!profile) return { error: "Not authenticated" }; // any signed-in user may import
   const db = createServiceClient();
   const { error } = await db.from("candidates").insert(
     rows.map((r) => ({ ...r, source: "user_created", not_interested: false }))
   );
   if (error) return { error: error.message };
   revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true, count: rows.length };
 }
 
@@ -333,6 +336,69 @@ export async function bulkInviteUsers(
   }
   revalidatePath("/console");
   return { ok: true, invited, failures };
+}
+
+// ---- JazzHR match review (Super-Admin) -------------------------------------
+// Factual fields JazzHR owns; local data (owner/notes/favorites/outreach) is left alone.
+function factualFromSnapshot(m: any, school_id: string | null) {
+  const f: Record<string, any> = {
+    jazz_id: m.jazz_id, name: m.name, email: m.email, phone: m.phone,
+    apply_date: m.apply_date, linkedin: m.linkedin, resume_link: m.resume_link,
+    stage: m.stage, job_title: m.job_title, university_raw: m.university_raw,
+    gpa: m.gpa, grad_date: m.grad_date, area_of_study: m.area_of_study,
+  };
+  if (school_id) f.school_id = school_id;
+  return f;
+}
+
+async function routeSchoolId(db: ReturnType<typeof createServiceClient>, universityRaw: string | null) {
+  const name = routeToSchoolName(universityRaw);
+  if (!name) return null;
+  const { data } = await db.from("schools").select("id").eq("name", name).maybeSingle();
+  return data?.id ?? null;
+}
+
+// Approve a name-only match: link the JazzHR applicant to the suspected candidate.
+export async function approveJazzMatch(reviewId: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { data: rev } = await db.from("jazz_match_review").select("jazz_snapshot, candidate_id").eq("id", reviewId).single();
+  if (!rev || !rev.candidate_id) return { error: "Review not found" };
+  const m = rev.jazz_snapshot as any;
+  const school_id = await routeSchoolId(db, m.university_raw);
+  const { error } = await db.from("candidates").update(factualFromSnapshot(m, school_id)).eq("id", rev.candidate_id);
+  if (error) return { error: error.message };
+  await db.from("jazz_match_review").update({ status: "approved" }).eq("id", reviewId);
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+// Reject a name-only match: import the JazzHR applicant as a separate candidate.
+export async function rejectJazzMatch(reviewId: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { data: rev } = await db.from("jazz_match_review").select("jazz_snapshot").eq("id", reviewId).single();
+  if (!rev) return { error: "Review not found" };
+  const m = rev.jazz_snapshot as any;
+  const school_id = await routeSchoolId(db, m.university_raw);
+  const { error } = await db.from("candidates").insert({ ...m, school_id, not_interested: false });
+  if (error) return { error: error.message };
+  await db.from("jazz_match_review").update({ status: "rejected" }).eq("id", reviewId);
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+// Unlink a candidate from JazzHR (clears jazz_id so it's no longer auto-refreshed).
+export async function unlinkJazzCandidate(candidateId: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { error } = await db.from("candidates").update({ jazz_id: null }).eq("id", candidateId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
 }
 
 export async function seedPlaybook(schoolId: string, force = false) {
