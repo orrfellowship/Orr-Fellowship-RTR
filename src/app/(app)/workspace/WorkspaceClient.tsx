@@ -456,22 +456,29 @@ export default function WorkspaceClient({
                 {boardVisible.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{boardFiltersActive ? "No candidates match your search." : "No candidates yet — run a sync or add one."}</div>}
               </div>
 
-              {/* Team panel */}
+              {/* Team panel — click a member to see only their applicants */}
               <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
-                <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.line}`, background: "#FAFBFE" }}>
+                <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.line}`, background: "#FAFBFE", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                   <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Team · {team.length}</div>
+                  {boardOwner && <button onClick={() => setBoardOwner("")} style={{ border: "none", background: "none", color: C.navy2, fontSize: 11, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}>Show all</button>}
                 </div>
                 {team.map((t) => {
                   const owned = candidates.filter((c) => c.point_person_id === t.id && !c.not_interested).length;
                   const isMe = t.id === profile.id;
+                  const ownerVal = isMe ? "__me__" : t.id;
+                  const selected = boardOwner === ownerVal;
                   return (
-                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: `1px solid ${C.line}` }}>
+                    <div key={t.id} onClick={() => setBoardOwner(selected ? "" : ownerVal)} title={`Show ${isMe ? "your" : `${t.full_name}'s`} applicants`}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: `1px solid ${C.line}`, cursor: "pointer",
+                        background: selected ? `${accent}14` : "#fff", borderLeft: `3px solid ${selected ? accent : "transparent"}` }}
+                      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = C.canvas; }}
+                      onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "#fff"; }}>
                       <div style={{ width: 30, height: 30, borderRadius: "50%", background: isMe ? accent : C.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: HEAD, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
                         {t.full_name.charAt(0).toUpperCase()}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <div style={{ fontWeight: 700, fontSize: 13, color: C.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: selected ? accent : C.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                             {t.full_name}{isMe ? " (you)" : ""}
                           </div>
                           {t.role === "team_lead" && <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: accent, background: `${accent}18`, padding: "1px 5px", borderRadius: 4, flexShrink: 0 }}>Lead</span>}
@@ -653,25 +660,32 @@ function CompletionBubble({ state, accent, disabled, onToggle, size = 19 }: {
   state: "confirmed" | "pending_review" | undefined; accent: string;
   disabled?: boolean; onToggle: () => void; size?: number;
 }) {
-  const [hover, setHover] = useState(false);
+  const [tip, setTip] = useState<{ top: number; left: number } | null>(null);
   const confirmed = state === "confirmed";
   const pending = state === "pending_review";
   const bg = confirmed ? C.good : pending ? `linear-gradient(90deg, ${C.gold} 0 50%, #fff 50% 100%)` : "#fff";
   const border = confirmed ? C.good : pending ? C.gold : C.navy3;
+  // Fixed-position tooltip anchored to the bubble's rect so it can't be clipped
+  // by an ancestor card's overflow:hidden (which was cutting it off before).
+  const showTip = (e: { currentTarget: HTMLButtonElement }) => {
+    if (!pending) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    setTip({ top: r.top - 8, left: r.left + r.width / 2 });
+  };
   return (
-    <div style={{ position: "relative", flexShrink: 0, display: "flex" }}
-      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+    <div style={{ flexShrink: 0, display: "flex" }}>
       <button type="button" onClick={onToggle} disabled={disabled}
+        onMouseEnter={showTip} onMouseLeave={() => setTip(null)}
         aria-label={confirmed ? "Confirmed" : pending ? "Submitted — awaiting review" : "Mark complete"}
         style={{ width: size, height: size, borderRadius: "50%", border: `2px solid ${border}`, background: bg,
           cursor: disabled ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center",
           color: "#fff", fontSize: 11, fontWeight: 800, padding: 0, lineHeight: 1 }}>
         {confirmed ? "✓" : ""}
       </button>
-      {pending && hover && (
-        <div style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, zIndex: 90, width: 220,
-          background: C.navy, color: "#fff", fontSize: 11.5, lineHeight: 1.4, fontWeight: 500, padding: "8px 10px",
-          borderRadius: 8, boxShadow: "0 6px 18px rgba(11,12,42,.25)" }}>
+      {pending && tip && (
+        <div style={{ position: "fixed", top: tip.top, left: tip.left, transform: "translate(-50%, -100%)", zIndex: 1000,
+          width: 220, pointerEvents: "none", background: C.navy, color: "#fff", fontSize: 11.5, lineHeight: 1.4, fontWeight: 500,
+          padding: "8px 10px", borderRadius: 8, boxShadow: "0 6px 18px rgba(11,12,42,.3)" }}>
           Submitted — your team lead reviews this before it counts as fully complete.
         </div>
       )}
