@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
-import { canEditPlaybook } from "@/lib/types";
+import { canEditPlaybook, canEditEvents } from "@/lib/types";
+import { queueNotification, supersedePending } from "@/lib/notify";
+
+const CLAIM_DELAY_MS = 30 * 60 * 1000;
 
 // Toggle a favorite for the current user (favorites table is per-user via RLS).
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
@@ -53,8 +56,28 @@ export async function reassignPointPerson(candidateId: string, ownerId: string |
     .update({ point_person_id: ownerId })
     .eq("id", candidateId);
   if (error) return { error: error.message };
+  await queueClaimNudge(candidateId, ownerId);
   revalidatePath("/workspace");
   return { ok: true };
+}
+
+// Cancel any pending claim nudge for this candidate; if it's now owned by someone,
+// queue a fresh 30-minute "start outreach" nudge to the new point person.
+export async function queueClaimNudge(candidateId: string, ownerId: string | null) {
+  await supersedePending({ candidateId, type: "claim_followup" });
+  if (!ownerId) return;
+  const { data: cand } = await createServiceClient().from("candidates").select("name").eq("id", candidateId).maybeSingle();
+  const name = cand?.name ?? "a candidate";
+  await queueNotification({
+    recipientId: ownerId,
+    type: "claim_followup",
+    title: `You're the point person for ${name}`,
+    body: `You were assigned ${name}. Reach out and log your first outreach.`,
+    link: "/workspace",
+    candidateId,
+    sendAfter: new Date(Date.now() + CLAIM_DELAY_MS),
+    dedupeKey: `claim:${candidateId}:${ownerId}`,
+  });
 }
 
 // ---- DRAWER: fetch a candidate's outreach log (school-scoped via RLS) ----
@@ -279,6 +302,80 @@ export async function deletePhase(phaseId: string) {
   const supabase = createServerSupabase();
   const { error } = await supabase.from("playbook_phases").delete().eq("id", phaseId);
   if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// ---- NOTIFICATIONS (in-app bell) ------------------------------------------
+export async function markNotificationsRead(ids: string[]) {
+  const supabase = createServerSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+  const db = createServiceClient();
+  let q = db.from("notifications").update({ read: true }).eq("recipient_id", user.id).eq("read", false);
+  if (ids.length) q = q.in("id", ids);
+  await q;
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// ---- RECRUITING CALENDAR EVENTS (team_lead+ create/edit; everyone RSVPs) ----
+export async function addEvent(e: {
+  title: string; description: string | null; event_date: string;
+  event_type: "attend" | "info"; school_id: string | null;
+}) {
+  const profile = await getCurrentProfile();
+  if (!profile || !canEditEvents(profile.role)) return { error: "Only team leads or admins can add events." };
+  if (!e.title.trim() || !e.event_date) return { error: "Title and date are required." };
+  const db = createServiceClient();
+  const { error } = await db.from("events").insert({
+    title: e.title.trim(), description: e.description?.trim() || null,
+    event_date: e.event_date, event_type: e.event_type,
+    school_id: e.school_id, created_by: profile.id,
+  });
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function updateEvent(id: string, patch: {
+  title?: string; description?: string | null; event_date?: string; event_type?: "attend" | "info";
+}) {
+  const profile = await getCurrentProfile();
+  if (!profile || !canEditEvents(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const clean: Record<string, any> = {};
+  if (patch.title !== undefined) clean.title = patch.title.trim();
+  if (patch.description !== undefined) clean.description = patch.description?.trim() || null;
+  if (patch.event_date !== undefined) clean.event_date = patch.event_date;
+  if (patch.event_type !== undefined) clean.event_type = patch.event_type;
+  const { error } = await db.from("events").update(clean).eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function deleteEvent(id: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !canEditEvents(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { error } = await db.from("events").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// RSVP to an event. status null clears it.
+export async function setRsvp(eventId: string, status: "going" | "not_going" | null) {
+  const supabase = createServerSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+  const db = createServiceClient();
+  if (status === null) {
+    await db.from("event_rsvps").delete().eq("event_id", eventId).eq("profile_id", user.id);
+  } else {
+    await db.from("event_rsvps").upsert({ event_id: eventId, profile_id: user.id, status });
+  }
   revalidatePath("/workspace");
   return { ok: true };
 }

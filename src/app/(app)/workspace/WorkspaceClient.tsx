@@ -4,7 +4,7 @@ import { useState, useMemo, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Resource } from "@/lib/types";
-import { canReassign, canEditPlaybook, canManageResources } from "@/lib/types";
+import { canReassign, canEditPlaybook, canManageResources, canEditEvents } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, reassignPointPerson,
   getOutreach, addConnection, getConnections, upsertTask, deleteTask, addPhase,
@@ -12,11 +12,14 @@ import {
   requestTaskComplete, confirmTaskComplete, setTaskAssignees,
 } from "./actions";
 import { phaseOf } from "@/lib/stages";
+import { evaluateCandidate } from "@/lib/triggers";
 import StandingsClient from "@/components/StandingsClient";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
+import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
+import NotificationBell, { type AppNotification } from "@/components/NotificationBell";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -62,11 +65,11 @@ const CONTACTD = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
 const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
-  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources,
+  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, notifications,
 }: {
   profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
-  lastContactByCand: Record<string, string>; resources: Resource[];
+  lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[]; notifications: AppNotification[];
 }) {
   const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources">("plan");
   const [breakdownScope, setBreakdownScope] = useState<"team" | "org">("team");
@@ -161,28 +164,11 @@ export default function WorkspaceClient({
 
   // Action queue — next moves on candidates you own (or unclaimed ones to grab).
   const plan = useMemo(() => {
-    const out: { id: string; type: string; cand: Cand; why: string; rank: number }[] = [];
     const now = Date.now();
-    const DAY = 86400000;
+    const out: { id: string; type: string; cand: Cand; why: string; rank: number }[] = [];
     for (const c of candidates) {
-      if (c.not_interested) continue;
-      const mine = c.point_person_id === profile.id;
-      const ph = phaseOf(c.stage);
-      if (ph === "rejected" || ph === "moved") continue;
-      const last = lastContactByCand[c.id];
-      const days = last ? Math.floor((now - new Date(last).getTime()) / DAY) : Infinity;
-
-      if (ph === "applied" && mine) {
-        out.push({ id: `a${c.id}`, type: "Applied", cand: c, why: "They applied — anything needed from you?", rank: 0 });
-      } else if (ph === "finalist" && mine) {
-        out.push({ id: `f${c.id}`, type: "Finalist prep", cand: c, why: "Confirm logistics", rank: 1 });
-      } else if (ph === "sourced" && !c.point_person_id) {
-        out.push({ id: `u${c.id}`, type: "Claim", cand: c, why: "New & unclaimed", rank: 4 });
-      } else if (mine && (ph === "sourced" || ph === "contacted")) {
-        if (!last) out.push({ id: `x${c.id}`, type: "Next step", cand: c, why: "You claimed them — log your first outreach", rank: 3 });
-        else if (days >= 10) out.push({ id: `t${c.id}`, type: "Follow up", cand: c, why: `No contact in ${days} days`, rank: 2 });
-        else if (days >= 3) out.push({ id: `r${c.id}`, type: "Rapport", cand: c, why: "Warm now — quick intro message?", rank: 3 });
-      }
+      const t = evaluateCandidate(c, { profileId: profile.id, lastContactISO: lastContactByCand[c.id], now });
+      if (t) out.push({ id: `${t.kind}-${c.id}`, type: t.type, cand: c, why: t.why, rank: t.rank });
     }
     return out.sort((a, b) => a.rank - b.rank);
   }, [candidates, lastContactByCand, profile.id]);
@@ -246,6 +232,7 @@ export default function WorkspaceClient({
             <a href="/how-to" style={{ padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: 600, color: "rgba(255,255,255,.55)", textDecoration: "none" }}>How-To</a>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <NotificationBell notifications={notifications} />
             <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
             <button onClick={signOut} style={{ border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "rgba(255,255,255,.75)", fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 8, cursor: "pointer" }}>Sign out</button>
           </div>
@@ -380,6 +367,12 @@ export default function WorkspaceClient({
                   );
                 })}
               </div>
+            </div>
+
+            {/* Recruiting calendar */}
+            <div style={{ marginTop: 30 }}>
+              <h2 style={{ fontSize: 20, color: C.navy, margin: "0 0 12px", fontFamily: HEAD }}>Recruiting Calendar</h2>
+              <RecruitingCalendar events={events} canEdit={canEditEvents(profile.role)} profileId={profile.id} schoolId={school?.id ?? null} team={team} accent={accent} />
             </div>
           </>
         )}

@@ -116,6 +116,42 @@ export default async function WorkspacePage() {
     serviceDb.from("resources").select("id, name, description, link, created_by, created_at").order("created_at", { ascending: false }),
   ]);
 
+  // Recruiting calendar — events for this team's schools + org-wide ones, with RSVPs.
+  const eventSchoolIds = tierSchoolIds.filter(Boolean);
+  const orFilter = `school_id.is.null${eventSchoolIds.length ? `,school_id.in.(${eventSchoolIds.join(",")})` : ""}`;
+  const { data: eventRows } = await serviceDb
+    .from("events")
+    .select("id, title, description, event_date, event_type, school_id, created_by")
+    .or(orFilter)
+    .order("event_date");
+  const eventIds = (eventRows ?? []).map((e: any) => e.id);
+  const rsvpByEvent: Record<string, { going: string[]; not_going: string[] }> = {};
+  let myRsvp: Record<string, string> = {};
+  if (eventIds.length) {
+    const { data: rsvps } = await serviceDb.from("event_rsvps").select("event_id, profile_id, status").in("event_id", eventIds);
+    for (const r of rsvps ?? []) {
+      const e = (r as any).event_id;
+      (rsvpByEvent[e] ??= { going: [], not_going: [] });
+      if ((r as any).status === "going") rsvpByEvent[e].going.push((r as any).profile_id);
+      else rsvpByEvent[e].not_going.push((r as any).profile_id);
+      if ((r as any).profile_id === profile.id) myRsvp[e] = (r as any).status;
+    }
+  }
+  const events = (eventRows ?? []).map((e: any) => ({
+    ...e,
+    going: rsvpByEvent[e.id]?.going ?? [],
+    not_going: rsvpByEvent[e.id]?.not_going ?? [],
+    my_status: (myRsvp[e.id] as "going" | "not_going" | undefined) ?? null,
+  }));
+
+  // In-app notifications (bell) — this user's recent items.
+  const { data: notifications } = await serviceDb
+    .from("notifications")
+    .select("id, type, title, body, link, read, created_at")
+    .eq("recipient_id", profile.id)
+    .order("created_at", { ascending: false })
+    .limit(30);
+
   const favSet = new Set((favs ?? []).map((f) => f.candidate_id));
   const enriched = (candidates ?? []).map((c) => ({ ...c, is_favorite: favSet.has(c.id) }));
   const allEnriched = (allCandidates ?? []).map((c) => ({ ...c, is_favorite: favSet.has(c.id) }));
@@ -133,6 +169,8 @@ export default async function WorkspacePage() {
       groupName={groupName}
       lastContactByCand={lastContactByCand}
       resources={resources ?? []}
+      events={events}
+      notifications={notifications ?? []}
     />
   );
 }

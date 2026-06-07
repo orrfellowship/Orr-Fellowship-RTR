@@ -6,6 +6,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolName } from "@/lib/stages";
+import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -42,7 +43,9 @@ export async function reassignPointPerson(candidateId: string, ownerId: string |
   const supabase = createServerSupabase();
   const { error } = await supabase.from("candidates").update({ point_person_id: ownerId }).eq("id", candidateId);
   if (error) return { error: error.message };
+  await queueClaimNudge(candidateId, ownerId);
   revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true };
 }
 
