@@ -55,3 +55,15 @@ export const isSuper = (r: AppRole) => r === "super_admin";
 export const canEditPlaybook = (r: AppRole) => isAdminPlus(r) || r === "team_lead";
 export const canReassign = (r: AppRole) => isAdminPlus(r) || r === "team_lead";
 export const canSeeAiScore = (r: AppRole) => isSuper(r);
+export const canManageResources = (r: AppRole) => isAdminPlus(r);
+export const canReviewMatches = (r: AppRole) => isAdminPlus(r);
+export const canEditEvents = (r: AppRole) => canEditPlaybook(r);
+
+export interface Resource {
+  id: string;
+  name: string;
+  description: string | null;
+  link: string | null;
+  created_by: string | null;
+  created_at: string | null;
+}

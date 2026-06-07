@@ -3,18 +3,20 @@
 import { useState, useMemo, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import type { Profile } from "@/lib/types";
-import { canReassign, canEditPlaybook } from "@/lib/types";
+import type { Profile, Resource } from "@/lib/types";
+import { canReassign, canEditPlaybook, canManageResources } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, reassignPointPerson,
   getOutreach, addConnection, getConnections, upsertTask, deleteTask, addPhase,
   deleteOutreach, deleteConnection, updatePhase, deletePhase,
-  requestTaskComplete, confirmTaskComplete,
+  requestTaskComplete, confirmTaskComplete, setTaskAssignees,
 } from "./actions";
 import { phaseOf } from "@/lib/stages";
 import StandingsClient from "@/components/StandingsClient";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
+import ResourcesPanel from "@/components/ResourcesPanel";
+import PersonPicker from "@/components/PersonPicker";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -34,10 +36,11 @@ type AllSchool   = { id: string; name: string; tier: string; color_primary: stri
 type AllCand     = { id: string; name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; jazz_id: string | null; linkedin: string | null; point_person_id: string | null; not_interested: boolean; resume_link: string | null; is_favorite: boolean };
 type AllGoal     = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 type TeamMember  = { id: string; full_name: string; role?: string | null };
+type Completion  = { profile_id: string; state: string };
 type Task        = {
   id: string; text: string; assignee_id: string | null; assignee_label: string | null;
   month_label: string | null; notes: string | null; due_date: string | null; done: boolean;
-  pending_review?: boolean;
+  pending_review?: boolean; assignees?: string[]; completions?: Completion[];
 };
 type Phase       = { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] };
 
@@ -49,18 +52,23 @@ function StagePill({ stage }: { stage: string | null }) {
   return <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: tone, background: `${tone}22`, padding: "4px 9px", borderRadius: 999 }}>{stage ?? "—"}</span>;
 }
 
+// Effective assignees for a task: explicit multi-assignees, else the legacy single owner.
+const effAssignees = (t: Task): string[] => (t.assignees && t.assignees.length) ? t.assignees : (t.assignee_id ? [t.assignee_id] : []);
+const compStateOf = (t: Task, pid: string): "confirmed" | "pending_review" | undefined =>
+  ((t.completions ?? []).find((c) => c.profile_id === pid)?.state as any) ?? undefined;
+
 const SOURCED  = new Set(["new", "contacted", "applied", "bmi", "finalist", "fellow"]);
 const CONTACTD = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
 const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
-  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand,
+  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources,
 }: {
   profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
-  lastContactByCand: Record<string, string>;
+  lastContactByCand: Record<string, string>; resources: Resource[];
 }) {
-  const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all">("plan");
+  const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources">("plan");
   const [breakdownScope, setBreakdownScope] = useState<"team" | "org">("team");
   const [allFilter, setAllFilter] = useState<string>("All schools");
   const [allSearch, setAllSearch] = useState("");
@@ -95,12 +103,13 @@ export default function WorkspaceClient({
     if (id === profile.id) return "You";
     return team.find((t) => t.id === id)?.full_name ?? "—";
   };
-  // The drawer can open a candidate from the user's school (always editable) or
-  // from the org-wide Applicants tab (editable only if assigned to this user).
+  // Everyone can OPEN any candidate and read its notes/warm-intros. Editing
+  // (logging outreach, flags, warm intros) is limited to the assigned point
+  // person — or team leads/admins, who manage their whole school.
   const openFromSchool = candidates.find((c) => c.id === openId) ?? null;
   const openFromAll = allCandidates.find((c) => c.id === openId) ?? null;
   const open: Cand | null = openFromSchool ?? (openFromAll as Cand | null);
-  const openCanEdit = openFromSchool ? true : (openFromAll ? openFromAll.point_person_id === profile.id : false);
+  const openCanEdit = open ? (canAssign || open.point_person_id === profile.id) : false;
 
   const PHASE_ORDER_PIPELINE = ["sourced", "contacted", "applied"] as const;
   const PHASE_LABEL: Record<string, string> = { sourced: "Sourced", contacted: "Contacted", applied: "Applied" };
@@ -178,12 +187,18 @@ export default function WorkspaceClient({
     return out.sort((a, b) => a.rank - b.rank);
   }, [candidates, lastContactByCand, profile.id]);
 
-  // Team-lead review: tasks fellows marked done, awaiting confirmation.
+  // Team-lead review: each assignee's submission awaiting confirmation.
   const pendingReviewTasks = useMemo(() => {
-    if (!canEdit) return [] as { task: Task; roleTitle: string }[];
-    const out: { task: Task; roleTitle: string }[] = [];
+    if (!canEdit) return [] as { task: Task; roleTitle: string; profileId: string }[];
+    const out: { task: Task; roleTitle: string; profileId: string }[] = [];
     for (const p of phases) for (const t of p.playbook_tasks) {
-      if (t.pending_review && !t.done) out.push({ task: t, roleTitle: p.title });
+      for (const c of t.completions ?? []) {
+        if (c.state === "pending_review") out.push({ task: t, roleTitle: p.title, profileId: c.profile_id });
+      }
+      // Legacy fallback: pending_review flag with no per-assignee rows yet.
+      if ((t.completions ?? []).length === 0 && t.pending_review && !t.done && t.assignee_id) {
+        out.push({ task: t, roleTitle: p.title, profileId: t.assignee_id });
+      }
     }
     return out;
   }, [phases, canEdit]);
@@ -196,7 +211,7 @@ export default function WorkspaceClient({
     const results: { task: Task; roleTitle: string }[] = [];
     for (const p of phases) {
       for (const t of p.playbook_tasks) {
-        if (t.assignee_id === profile.id) results.push({ task: t, roleTitle: p.title });
+        if (effAssignees(t).includes(profile.id)) results.push({ task: t, roleTitle: p.title });
       }
     }
     return results;
@@ -224,6 +239,7 @@ export default function WorkspaceClient({
               ["playbook",  "Playbook"],
               ["standings", "Standings"],
               ["all",       "Applicants"],
+              ["resources", "Resources"],
             ] as const).map(([k, l]) => (
               <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent" }}>{l}</button>
             ))}
@@ -295,15 +311,15 @@ export default function WorkspaceClient({
                   <div style={{ background: "#fff", border: `1px solid ${C.gold}`, borderRadius: 12, padding: "14px 16px", marginBottom: 14 }}>
                     <div style={{ fontFamily: HEAD, fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#8A6D0E", marginBottom: 10 }}>Review completed work · {pendingReviewTasks.length}</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {pendingReviewTasks.map(({ task: t, roleTitle }) => (
-                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.line}` }}>
+                      {pendingReviewTasks.map(({ task: t, roleTitle, profileId }) => (
+                        <div key={`${t.id}:${profileId}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.line}` }}>
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: 13.5, color: C.gray, fontWeight: 600 }}>{t.text}</div>
-                            <div style={{ fontSize: 11, color: C.grayMute }}>{team.find((m) => m.id === t.assignee_id)?.full_name ?? "Someone"} · {roleTitle}</div>
+                            <div style={{ fontSize: 11, color: C.grayMute }}>{team.find((m) => m.id === profileId)?.full_name ?? "Someone"} · {roleTitle}</div>
                           </div>
-                          <button onClick={() => startTransition(() => { confirmTaskComplete(t.id, true); })}
+                          <button onClick={() => startTransition(() => { confirmTaskComplete(t.id, true, profileId); })}
                             style={{ border: "none", background: C.good, color: "#fff", fontWeight: 700, fontSize: 12, padding: "6px 11px", borderRadius: 7, cursor: "pointer", flexShrink: 0 }}>Confirm</button>
-                          <button onClick={() => startTransition(() => { requestTaskComplete(t.id, false); })}
+                          <button onClick={() => startTransition(() => { confirmTaskComplete(t.id, false, profileId); })}
                             title="Send back to the fellow" style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.grayMute, fontWeight: 700, fontSize: 12, padding: "6px 9px", borderRadius: 7, cursor: "pointer", flexShrink: 0 }}>↩</button>
                         </div>
                       ))}
@@ -327,7 +343,7 @@ export default function WorkspaceClient({
               <div>
                 <h2 style={{ fontSize: 20, color: C.navy, margin: "0 0 12px", fontFamily: HEAD }}>
                   My Tasks
-                  <span style={{ marginLeft: 10, fontSize: 13, fontWeight: 600, color: C.grayMute }}>{myTasks.filter((m) => m.task.done).length}/{myTasks.length} done</span>
+                  <span style={{ marginLeft: 10, fontSize: 13, fontWeight: 600, color: C.grayMute }}>{myTasks.filter((m) => compStateOf(m.task, profile.id) === "confirmed").length}/{myTasks.length} done</span>
                 </h2>
                 {myTasks.length === 0 ? (
                   <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12 }}>No tasks assigned to you.</div>
@@ -339,20 +355,21 @@ export default function WorkspaceClient({
                       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 8 }}>{month}</div>
                       <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
                         {monthTasks.map(({ task: t, roleTitle }) => {
-                          const pending = !!t.pending_review && !t.done;
-                          const checked = t.done || pending;
+                          const myState = compStateOf(t, profile.id);
+                          const confirmed = myState === "confirmed";
+                          const pending = myState === "pending_review";
                           const onToggle = (val: boolean) => startTransition(() => {
-                            if (canEdit) confirmTaskComplete(t.id, val);   // leads confirm directly
-                            else requestTaskComplete(t.id, val);            // fellows send for review
+                            if (canEdit) confirmTaskComplete(t.id, val, profile.id);  // leads confirm their own directly
+                            else requestTaskComplete(t.id, val);                       // fellows send for review
                           });
                           return (
-                            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${C.line}`, opacity: t.done ? 0.55 : 1 }}>
-                              <input type="checkbox" checked={checked} disabled={!canEdit && t.done}
-                                onChange={(e) => onToggle(e.target.checked)}
-                                style={{ accentColor: pending ? C.gold : accent, flexShrink: 0, cursor: !canEdit && t.done ? "default" : "pointer" }} />
+                            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${C.line}`, opacity: confirmed ? 0.55 : 1 }}>
+                              <CompletionBubble state={myState} accent={accent}
+                                disabled={confirmed && !canEdit}
+                                onToggle={() => onToggle(!(confirmed || pending))} />
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <span style={{ fontSize: 13.5, color: C.gray, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
-                                {pending && <div style={{ fontSize: 11, color: "#8A6D0E", fontWeight: 600 }}>Completed · sent to team lead for review</div>}
+                                <span style={{ fontSize: 13.5, color: C.gray, textDecoration: confirmed ? "line-through" : "none" }}>{t.text}</span>
+                                {pending && <div style={{ fontSize: 11, color: "#8A6D0E", fontWeight: 600 }}>Completed · waiting on team-lead review to count</div>}
                               </div>
                               <span style={{ fontSize: 11, color: C.grayMute, flexShrink: 0 }}>{roleTitle}</span>
                             </div>
@@ -426,11 +443,9 @@ export default function WorkspaceClient({
                     <div><StagePill stage={c.stage} /></div>
                     <div onClick={(e) => e.stopPropagation()}>
                       {canAssign ? (
-                        <select value={c.point_person_id ?? ""} onChange={(e) => startTransition(() => { reassignPointPerson(c.id, e.target.value || null); })}
-                          style={{ fontSize: 12.5, fontWeight: 600, color: c.point_person_id ? C.navy : C.orange, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff", cursor: "pointer" }}>
-                          <option value="">Unassigned</option>
-                          {team.map((t) => <option key={t.id} value={t.id}>{t.id === profile.id ? `${t.full_name} (me)` : t.full_name}</option>)}
-                        </select>
+                        <PersonPicker value={c.point_person_id} options={team} meId={profile.id} accent={accent} compact
+                          placeholder="Search your school…"
+                          onChange={(v) => startTransition(() => { reassignPointPerson(c.id, v); })} />
                       ) : (
                         <span style={{ fontSize: 13, color: c.point_person_id ? C.grayMute : C.orange, fontWeight: 600 }}>{nameOf(c.point_person_id)}</span>
                       )}
@@ -607,6 +622,11 @@ export default function WorkspaceClient({
             </>
           );
         })()}
+
+        {/* ---- RESOURCES ---- */}
+        {tab === "resources" && (
+          <ResourcesPanel resources={resources} canManage={canManageResources(profile.role)} accent={accent} />
+        )}
       </div>
 
       {open && (
@@ -626,6 +646,39 @@ export default function WorkspaceClient({
   );
 }
 
+// A task-completion bubble with three states: empty (not done), half-filled gold
+// (submitted, awaiting team-lead review), and full green (confirmed). The half
+// state shows a popup so fellows know it isn't a rendering glitch.
+function CompletionBubble({ state, accent, disabled, onToggle, size = 19 }: {
+  state: "confirmed" | "pending_review" | undefined; accent: string;
+  disabled?: boolean; onToggle: () => void; size?: number;
+}) {
+  const [hover, setHover] = useState(false);
+  const confirmed = state === "confirmed";
+  const pending = state === "pending_review";
+  const bg = confirmed ? C.good : pending ? `linear-gradient(90deg, ${C.gold} 0 50%, #fff 50% 100%)` : "#fff";
+  const border = confirmed ? C.good : pending ? C.gold : C.navy3;
+  return (
+    <div style={{ position: "relative", flexShrink: 0, display: "flex" }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <button type="button" onClick={onToggle} disabled={disabled}
+        aria-label={confirmed ? "Confirmed" : pending ? "Submitted — awaiting review" : "Mark complete"}
+        style={{ width: size, height: size, borderRadius: "50%", border: `2px solid ${border}`, background: bg,
+          cursor: disabled ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+          color: "#fff", fontSize: 11, fontWeight: 800, padding: 0, lineHeight: 1 }}>
+        {confirmed ? "✓" : ""}
+      </button>
+      {pending && hover && (
+        <div style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, zIndex: 90, width: 220,
+          background: C.navy, color: "#fff", fontSize: 11.5, lineHeight: 1.4, fontWeight: 500, padding: "8px 10px",
+          borderRadius: 8, boxShadow: "0 6px 18px rgba(11,12,42,.25)" }}>
+          Submitted — your team lead reviews this before it counts as fully complete.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- PLAYBOOK TAB ----
 const MONTHS = ["July", "August", "September", "Oct/Nov"] as const;
 
@@ -638,6 +691,20 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
 }) {
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set(phases.map((p) => p.id)));
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
+  const [filterAssignee, setFilterAssignee] = useState<string>("all"); // "all" | "unassigned" | "team" | profileId
+  const [filterFrom, setFilterFrom] = useState<string>("");
+  const [filterTo, setFilterTo] = useState<string>("");
+  const filtersActive = filterAssignee !== "all" || filterFrom !== "" || filterTo !== "";
+
+  const matchesFilter = (t: Task): boolean => {
+    if (filterAssignee === "team" && t.assignee_label !== "team") return false;
+    if (filterAssignee === "unassigned" && (t.assignee_id || t.assignee_label === "team")) return false;
+    if (filterAssignee !== "all" && filterAssignee !== "team" && filterAssignee !== "unassigned" && t.assignee_id !== filterAssignee) return false;
+    if ((filterFrom || filterTo) && !t.due_date) return false;
+    if (filterFrom && t.due_date && t.due_date < filterFrom) return false;
+    if (filterTo && t.due_date && t.due_date > filterTo) return false;
+    return true;
+  };
 
   const toggleRole = (id: string) => setExpandedRoles((prev) => {
     const next = new Set(prev);
@@ -703,6 +770,30 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
         </div>
       )}
 
+      {/* Filters */}
+      {phases.length > 0 && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Filter</span>
+          <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}
+            style={{ padding: "8px 11px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13, background: "#fff", color: C.gray, fontWeight: 600 }}>
+            <option value="all">Anyone</option>
+            <option value="team">Whole team</option>
+            <option value="unassigned">Unassigned</option>
+            {team.map((t) => <option key={t.id} value={t.id}>{t.id === profile.id ? `${t.full_name} (me)` : t.full_name}</option>)}
+          </select>
+          <span style={{ fontSize: 12.5, color: C.grayMute }}>Due</span>
+          <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)}
+            style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
+          <span style={{ fontSize: 12.5, color: C.grayMute }}>to</span>
+          <input type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)}
+            style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
+          {filtersActive && (
+            <button onClick={() => { setFilterAssignee("all"); setFilterFrom(""); setFilterTo(""); }}
+              style={{ padding: "8px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
+          )}
+        </div>
+      )}
+
       {/* Roles */}
       {phases.length > 0 && (
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 2 }}>
@@ -716,6 +807,7 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {phases.map((p) => {
+          if (filtersActive && !p.playbook_tasks.some(matchesFilter)) return null;
           const isExpanded = expandedRoles.has(p.id);
           const roleDone  = p.playbook_tasks.filter((t) => t.done).length;
           return (
@@ -742,8 +834,8 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
               {isExpanded && (
                 <div style={{ padding: "0 18px 14px" }}>
                   {MONTHS.map((month) => {
-                    const mTasks = p.playbook_tasks.filter((t) => (t.month_label ?? "July") === month);
-                    if (!mTasks.length && !canEdit) return null;
+                    const mTasks = p.playbook_tasks.filter((t) => (t.month_label ?? "July") === month && matchesFilter(t));
+                    if (!mTasks.length && (!canEdit || filtersActive)) return null;
                     return (
                       <div key={month} style={{ marginTop: 16 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -757,7 +849,7 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
                           {mTasks.map((t) => (
                             <TaskRow key={t.id} task={t} phase={p} canEdit={canEdit} team={team} profile={profile}
                               noteOpen={expandedNotes.has(t.id)} onToggleNote={() => toggleNote(t.id)}
-                              nameOf={nameOf} startTransition={startTransition} />
+                              accent={accent} startTransition={startTransition} />
                           ))}
                           {mTasks.length === 0 && (
                             <div style={{ fontSize: 12, color: C.grayMute, fontStyle: "italic", padding: "4px 0" }}>No tasks for {month} — add one above.</div>
@@ -781,11 +873,11 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
   );
 }
 
-function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNote, nameOf, startTransition }: {
+function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNote, accent, startTransition }: {
   task: Task; phase: { id: string; title: string };
-  canEdit: boolean; team: { id: string; full_name: string }[];
+  canEdit: boolean; team: { id: string; full_name: string; role?: string | null }[];
   profile: Profile; noteOpen: boolean; onToggleNote: () => void;
-  nameOf: (id: string | null, label?: string | null) => string;
+  accent: string;
   startTransition: (cb: () => void) => void;
 }) {
   const [noteText, setNoteText] = useState(t.notes ?? "");
@@ -794,14 +886,33 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
     upsertTask({ id: t.id, phase_id: phase.id, text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label, month_label: t.month_label, notes: t.notes, due_date: t.due_date, done: t.done, ...patch });
   });
 
-  const assigneeValue = t.assignee_label === "team" ? "team" : (t.assignee_id ?? "");
+  const assignees = effAssignees(t);
+  const isTeam = t.assignee_label === "team";
+  const iAmAssignee = assignees.includes(profile.id);
+  const myState = compStateOf(t, profile.id);
+  const addable = team.filter((tm) => !assignees.includes(tm.id));
+
+  const toggleMine = () => startTransition(() => {
+    const on = myState === "confirmed" || myState === "pending_review";
+    if (canEdit) confirmTaskComplete(t.id, !on, profile.id);
+    else requestTaskComplete(t.id, !on);
+  });
+  const toggleAssignee = (id: string) => startTransition(() => {
+    const st = compStateOf(t, id);
+    confirmTaskComplete(t.id, st !== "confirmed", id); // leads confirm / un-confirm a person
+  });
 
   return (
     <div style={{ borderRadius: 8, border: `1px solid ${C.line}`, background: t.done ? "#FAFBFE" : "#fff", marginBottom: 3 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px" }}>
-        <input type="checkbox" checked={t.done} disabled={!canEdit}
-          onChange={(e) => save({ done: e.target.checked })}
-          style={{ accentColor: "#11123E", flexShrink: 0 }} />
+        {canEdit ? (
+          <input type="checkbox" checked={t.done} title="Mark the whole task complete"
+            onChange={(e) => startTransition(() => { confirmTaskComplete(t.id, e.target.checked); })}
+            style={{ accentColor: "#11123E", flexShrink: 0, width: 16, height: 16 }} />
+        ) : (
+          <CompletionBubble state={iAmAssignee ? myState : (t.done ? "confirmed" : undefined)} accent={C.navy}
+            disabled={!iAmAssignee} onToggle={toggleMine} size={18} />
+        )}
 
         {canEdit ? (
           <input defaultValue={t.text}
@@ -809,24 +920,6 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
             style={{ flex: 1, border: "none", background: "transparent", fontSize: 13.5, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none", outline: "none", minWidth: 0 }} />
         ) : (
           <span style={{ flex: 1, fontSize: 13.5, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
-        )}
-
-        {canEdit ? (
-          <select value={assigneeValue}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === "team") save({ assignee_id: null, assignee_label: "team" });
-              else save({ assignee_id: val || null, assignee_label: null });
-            }}
-            style={{ fontSize: 12, fontWeight: 600, color: t.assignee_label === "team" ? C.navy2 : (t.assignee_id ? C.navy2 : C.orange), border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }}>
-            <option value="">Unassigned</option>
-            <option value="team">Team</option>
-            {team.map((tm) => <option key={tm.id} value={tm.id}>{tm.id === profile.id ? `${tm.full_name} (me)` : tm.full_name}</option>)}
-          </select>
-        ) : (
-          <span style={{ fontSize: 12, color: t.assignee_label === "team" ? C.navy2 : (t.assignee_id ? C.navy2 : C.orange), fontWeight: 600, flexShrink: 0 }}>
-            {t.assignee_label === "team" ? "Whole team" : t.assignee_id ? (team.find((m) => m.id === t.assignee_id)?.full_name ?? "—") : "Unassigned"}
-          </span>
         )}
 
         <button onClick={onToggleNote} title={noteOpen ? "Hide notes" : "Show notes"}
@@ -837,6 +930,47 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
         {canEdit && (
           <button onClick={() => startTransition(() => { deleteTask(t.id); })}
             style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16, flexShrink: 0, padding: "0 2px" }}>×</button>
+        )}
+      </div>
+
+      {/* Assignees row — chips with per-person completion bubbles */}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "0 12px 9px 34px" }}>
+        {isTeam ? (
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: C.navy2, background: `${C.navy2}14`, padding: "3px 9px", borderRadius: 999 }}>Whole team</span>
+        ) : assignees.length === 0 ? (
+          <span style={{ fontSize: 11.5, color: C.orange, fontWeight: 600 }}>Unassigned</span>
+        ) : assignees.map((id) => {
+          const st = compStateOf(t, id);
+          const me = id === profile.id;
+          const name = me ? "You" : (team.find((m) => m.id === id)?.full_name ?? "—");
+          const interactive = canEdit || me;
+          return (
+            <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: C.gray, background: C.canvas, border: `1px solid ${C.line}`, padding: "2px 7px 2px 4px", borderRadius: 999 }}>
+              <CompletionBubble state={st} accent={accent} size={15} disabled={!interactive}
+                onToggle={() => { if (canEdit) toggleAssignee(id); else if (me) toggleMine(); }} />
+              {name}
+              {canEdit && (
+                <button onClick={() => startTransition(() => { setTaskAssignees(t.id, assignees.filter((x) => x !== id)); })}
+                  title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 1px" }}>×</button>
+              )}
+            </span>
+          );
+        })}
+        {canEdit && !isTeam && addable.length > 0 && (
+          <div style={{ minWidth: 130 }}>
+            <PersonPicker value={null} options={addable} meId={profile.id} accent={accent} compact
+              placeholder="Add person…" unassignedLabel="+ Assign person"
+              onChange={(v) => { if (v) startTransition(() => { setTaskAssignees(t.id, [...assignees, v]); }); }} />
+          </div>
+        )}
+        {canEdit && (
+          <button onClick={() => startTransition(() => {
+            if (isTeam) { save({ assignee_label: null }); }
+            else { setTaskAssignees(t.id, []); save({ assignee_label: "team" }); }
+          })}
+            style={{ border: `1px solid ${isTeam ? C.navy2 : C.line}`, background: isTeam ? `${C.navy2}14` : "#fff", color: isTeam ? C.navy2 : C.grayMute, fontWeight: 600, fontSize: 11, padding: "3px 9px", borderRadius: 999, cursor: "pointer" }}>
+            {isTeam ? "✓ Team" : "Team"}
+          </button>
         )}
       </div>
 
@@ -880,7 +1014,7 @@ function CandidateDrawer({ c, canEdit, profile, team, onClose, startTransition, 
     if (!rel.trim()) return;
     startTransition(() => {
       addConnection(c.id, rel.trim());
-      setConns((prev) => [{ id: Math.random().toString(), fellow_id: "", name: "You", relationship: rel.trim() }, ...(prev ?? [])]);
+      setConns((prev) => [{ id: Math.random().toString(), fellow_id: profile.id, name: "You", relationship: rel.trim() }, ...(prev ?? [])]);
       setRelDraft("");
     });
   };
@@ -917,7 +1051,7 @@ function CandidateDrawer({ c, canEdit, profile, team, onClose, startTransition, 
         <div style={{ padding: 24 }}>
           {!canEdit && (
             <div style={{ background: "#EEF1F7", borderRadius: 9, padding: "8px 12px", marginBottom: 14, fontSize: 12.5, color: C.grayMute }}>
-              View only — you can log outreach and warm intros for candidates assigned to you.
+              You can log a warm intro for anyone. Editing candidate info and outreach is limited to the assigned point person.
             </div>
           )}
           {canEdit && (
@@ -952,27 +1086,24 @@ function CandidateDrawer({ c, canEdit, profile, team, onClose, startTransition, 
                   <div key={cn.id} style={{ fontSize: 13, color: C.gray, display: "flex", gap: 6, alignItems: "center" }}>
                     <span style={{ fontSize: 16 }}>●</span>
                     <span style={{ flex: 1 }}><b>{cn.name}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span></span>
-                    {canEdit && <button onClick={() => doDelConn(cn.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px" }}>×</button>}
+                    {(cn.fellow_id === profile.id || canEdit) && <button onClick={() => doDelConn(cn.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px" }}>×</button>}
                   </div>
                 ))}
               </div>
             ) : (
               <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic", marginBottom: 10 }}>No connections logged yet.</div>
             )}
-            {canEdit && (
-              <>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
-                  {REL_QUICK.map((r) => (
-                    <button key={r} onClick={() => doAddConn(r)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 11.5, padding: "4px 10px", borderRadius: 999, cursor: "pointer" }}>+ {r}</button>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: 7 }}>
-                  <input value={relDraft} onChange={(e) => setRelDraft(e.target.value)} placeholder="Custom relationship…"
-                    style={{ flex: 1, padding: "8px 11px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 13 }} />
-                  <button onClick={() => doAddConn(relDraft)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 13px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>Add</button>
-                </div>
-              </>
-            )}
+            {/* Anyone can log a warm intro — even for a candidate they don't own. */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+              {REL_QUICK.map((r) => (
+                <button key={r} onClick={() => doAddConn(r)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 11.5, padding: "4px 10px", borderRadius: 999, cursor: "pointer" }}>+ {r}</button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 7 }}>
+              <input value={relDraft} onChange={(e) => setRelDraft(e.target.value)} placeholder="Custom relationship…"
+                style={{ flex: 1, padding: "8px 11px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 13 }} />
+              <button onClick={() => doAddConn(relDraft)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 13px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>Add</button>
+            </div>
           </div>
 
           <div style={{ fontFamily: HEAD, fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 10 }}>Outreach log</div>

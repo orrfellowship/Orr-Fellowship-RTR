@@ -73,7 +73,7 @@ function buildMergedData(
   const mergedSchools: SchoolRow[] = [
     ...Array.from(byTierMap.entries()).map(([tier]) => ({
       id: `group-${tier}`,
-      name: tier === "satellite" ? "Satellite Group" : "Bonus Group",
+      name: tier === "satellite" ? "Satellite School" : "Bonus School",
       tier, color_primary: C.navy2, logo_url: null,
     })),
     ...schools.filter((s) => !GROUPED.has(s.tier)),
@@ -239,7 +239,7 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
   const statsMap = useMemo(() => new Map(stats.map((m) => [m.key, m])), [stats]);
 
   const tierLabel = (t: string) =>
-    t === "core" ? "Core Schools" : t === "satellite" ? "Satellite Group" : t === "bonus" ? "Bonus Group" : t;
+    t === "core" ? "Core Schools" : t === "satellite" ? "Satellite School" : t === "bonus" ? "Bonus School" : t;
 
   const byTier = useMemo(() => {
     const tiers = [...new Set(stats.map((m) => m.tier))].sort();

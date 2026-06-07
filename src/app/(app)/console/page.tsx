@@ -40,6 +40,11 @@ export default async function ConsolePage() {
     .select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)")
     .order("sort_order");
 
+  const { data: resources } = await supabase
+    .from("resources")
+    .select("id, name, description, link, created_by, created_at")
+    .order("created_at", { ascending: false });
+
   let ai: { candidate_id: string; resume_score: number | null; summary: string | null; flags: any; analyzed_at: string | null }[] = [];
   let users: { id: string; full_name: string; email: string; role: string; school_id: string | null; is_active: boolean }[] = [];
   let reviews: { id: string; jazz_snapshot: any; candidate_id: string | null; reason: string | null }[] = [];
@@ -68,6 +73,7 @@ export default async function ConsolePage() {
       phases={phases ?? []}
       users={users}
       reviews={reviews}
+      resources={resources ?? []}
     />
   );
 }

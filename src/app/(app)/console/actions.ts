@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
-import { isSuper, isAdminPlus } from "@/lib/types";
+import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolName } from "@/lib/stages";
 
@@ -398,6 +398,46 @@ export async function unlinkJazzCandidate(candidateId: string) {
   const { error } = await db.from("candidates").update({ jazz_id: null }).eq("id", candidateId);
   if (error) return { error: error.message };
   revalidatePath("/console");
+  return { ok: true };
+}
+
+// ---- RESOURCES (read: everyone; write: admin+) -----------------------------
+export async function addResource(name: string, description: string | null, link: string | null) {
+  const profile = await getCurrentProfile();
+  if (!profile || !canManageResources(profile.role)) return { error: "Forbidden" };
+  if (!name.trim()) return { error: "Name is required" };
+  const db = createServiceClient();
+  const { error } = await db.from("resources").insert({
+    name: name.trim(), description: description?.trim() || null, link: link?.trim() || null, created_by: profile.id,
+  });
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function updateResource(id: string, name: string, description: string | null, link: string | null) {
+  const profile = await getCurrentProfile();
+  if (!profile || !canManageResources(profile.role)) return { error: "Forbidden" };
+  if (!name.trim()) return { error: "Name is required" };
+  const db = createServiceClient();
+  const { error } = await db.from("resources").update({
+    name: name.trim(), description: description?.trim() || null, link: link?.trim() || null,
+  }).eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function deleteResource(id: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !canManageResources(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { error } = await db.from("resources").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true };
 }
 

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditPlaybook } from "@/lib/types";
 
@@ -70,11 +70,14 @@ export async function getOutreach(candidateId: string) {
 }
 
 // ---- WARM-INTRO: add a manual connection (current user knows this candidate) ----
+// Anyone may log that they know a candidate — even one they don't own — so we use
+// the service client. The connection is always recorded under the calling user.
 export async function addConnection(candidateId: string, relationship: string) {
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
-  const { error } = await supabase
+  const db = createServiceClient();
+  const { error } = await db
     .from("connections")
     .upsert({ fellow_id: user.id, candidate_id: candidateId, relationship });
   if (error) return { error: error.message };
@@ -83,8 +86,9 @@ export async function addConnection(candidateId: string, relationship: string) {
 }
 
 export async function getConnections(candidateId: string) {
-  const supabase = createServerSupabase();
-  const { data, error } = await supabase
+  // Warm intros are visible to everyone (read-only unless it's yours).
+  const db = createServiceClient();
+  const { data, error } = await db
     .from("connections")
     .select("id, fellow_id, relationship, profiles(full_name)")
     .eq("candidate_id", candidateId);
@@ -141,33 +145,91 @@ export async function upsertTask(t: {
   return { ok: true };
 }
 
-// Fellow marks their own task complete → pending_review (awaits team-lead confirm).
-// value=false retracts (also used by a lead to "send back" a submission).
-export async function requestTaskComplete(taskId: string, value: boolean) {
-  const supabase = createServerSupabase();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
+// ---- MULTI-ASSIGNEE (team_lead+) -------------------------------------------
+// Replace the set of people assigned to a task. Keeps the legacy assignee_id in
+// sync (first person, or null) so older reads still resolve a primary owner.
+export async function setTaskAssignees(taskId: string, profileIds: string[]) {
   const profile = await getCurrentProfile();
-  const elevated = profile ? canEditPlaybook(profile.role) : false;
-  if (!elevated) {
-    const { data: existing } = await supabase.from("playbook_tasks").select("assignee_id").eq("id", taskId).single();
-    if (!existing || existing.assignee_id !== user.id) return { error: "You can only update tasks assigned to you." };
+  if (!profile || !canEditPlaybook(profile.role)) return { error: "Only team leads or admins can assign tasks." };
+  const db = createServiceClient();
+  await db.from("playbook_task_assignees").delete().eq("task_id", taskId);
+  if (profileIds.length) {
+    const { error } = await db.from("playbook_task_assignees").insert(profileIds.map((profile_id) => ({ task_id: taskId, profile_id })));
+    if (error) return { error: error.message };
   }
-  const { error } = await supabase.from("playbook_tasks").update({ pending_review: value, done: false }).eq("id", taskId);
-  if (error) return { error: error.message };
+  // Clear completions for people no longer assigned.
+  if (profileIds.length) await db.from("playbook_task_completions").delete().eq("task_id", taskId).not("profile_id", "in", `(${profileIds.join(",")})`);
+  else await db.from("playbook_task_completions").delete().eq("task_id", taskId);
+  await db.from("playbook_tasks").update({ assignee_id: profileIds[0] ?? null, assignee_label: null }).eq("id", taskId);
+  await recomputeTaskDone(db, taskId);
   revalidatePath("/workspace");
   return { ok: true };
 }
 
-// Team lead / admin confirms (or un-confirms) a task as officially done.
-export async function confirmTaskComplete(taskId: string, value: boolean) {
+// Effective assignee list = explicit assignees, or the legacy single assignee_id.
+async function assigneeIdsOf(db: ReturnType<typeof createServiceClient>, taskId: string): Promise<string[]> {
+  const { data: rows } = await db.from("playbook_task_assignees").select("profile_id").eq("task_id", taskId);
+  const ids = (rows ?? []).map((r: any) => r.profile_id as string);
+  if (ids.length) return ids;
+  const { data: t } = await db.from("playbook_tasks").select("assignee_id").eq("id", taskId).maybeSingle();
+  return t?.assignee_id ? [t.assignee_id as string] : [];
+}
+
+// Recompute the task's done/pending_review from per-assignee completion state so
+// the existing overview stats keep working. Done = at least one assignee and all confirmed.
+async function recomputeTaskDone(db: ReturnType<typeof createServiceClient>, taskId: string) {
+  const ids = await assigneeIdsOf(db, taskId);
+  const { data: comps } = await db.from("playbook_task_completions").select("profile_id, state").eq("task_id", taskId);
+  const confirmed = new Set((comps ?? []).filter((c: any) => c.state === "confirmed").map((c: any) => c.profile_id));
+  const anyPending = (comps ?? []).some((c: any) => c.state === "pending_review");
+  const done = ids.length > 0 && ids.every((id) => confirmed.has(id));
+  await db.from("playbook_tasks").update({ done, pending_review: !done && anyPending }).eq("id", taskId);
+}
+
+// A fellow (or anyone assigned) submits their portion of a task → pending_review.
+// value=false retracts their submission. Operates on the calling user only.
+export async function requestTaskComplete(taskId: string, value: boolean) {
+  const supabase = createServerSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+  const db = createServiceClient();
+  const ids = await assigneeIdsOf(db, taskId);
+  const profile = await getCurrentProfile();
+  const elevated = profile ? canEditPlaybook(profile.role) : false;
+  if (!elevated && !ids.includes(user.id)) return { error: "You can only update tasks assigned to you." };
+  if (value) await db.from("playbook_task_completions").upsert({ task_id: taskId, profile_id: user.id, state: "pending_review", updated_at: new Date().toISOString() });
+  else await db.from("playbook_task_completions").delete().eq("task_id", taskId).eq("profile_id", user.id);
+  await recomputeTaskDone(db, taskId);
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// Team lead / admin confirms a task. With forProfileId it confirms (value=true)
+// or sends back (value=false) one assignee's submission. Without it (team /
+// unassigned tasks, or the console), it toggles the whole task done directly.
+export async function confirmTaskComplete(taskId: string, value: boolean, forProfileId?: string) {
   const profile = await getCurrentProfile();
   if (!profile || !canEditPlaybook(profile.role)) return { error: "Only team leads or admins can confirm tasks." };
-  const supabase = createServerSupabase();
-  let { error } = await supabase.from("playbook_tasks").update({ done: value, pending_review: false }).eq("id", taskId);
-  // Fallback if the pending_review column isn't present yet (pre-migration).
-  if (error) ({ error } = await supabase.from("playbook_tasks").update({ done: value }).eq("id", taskId));
+  const db = createServiceClient();
+
+  if (forProfileId) {
+    if (value) await db.from("playbook_task_completions").upsert({ task_id: taskId, profile_id: forProfileId, state: "confirmed", updated_at: new Date().toISOString() });
+    else await db.from("playbook_task_completions").delete().eq("task_id", taskId).eq("profile_id", forProfileId);
+    await recomputeTaskDone(db, taskId);
+    revalidatePath("/workspace");
+    return { ok: true };
+  }
+
+  // Legacy / team-task path: toggle done directly. Mirror onto any assignees so
+  // per-assignee bubbles agree with the master state.
+  let { error } = await db.from("playbook_tasks").update({ done: value, pending_review: false }).eq("id", taskId);
+  if (error) ({ error } = await db.from("playbook_tasks").update({ done: value }).eq("id", taskId));
   if (error) return { error: error.message };
+  const ids = await assigneeIdsOf(db, taskId);
+  if (ids.length) {
+    await db.from("playbook_task_completions").delete().eq("task_id", taskId);
+    if (value) await db.from("playbook_task_completions").insert(ids.map((profile_id) => ({ task_id: taskId, profile_id, state: "confirmed" })));
+  }
   revalidatePath("/workspace");
   return { ok: true };
 }
@@ -188,9 +250,18 @@ export async function deleteOutreach(logId: string) {
   return { ok: true };
 }
 
+// Remove a warm intro. You may remove your own; team leads/admins may remove any.
 export async function deleteConnection(connectionId: string) {
   const supabase = createServerSupabase();
-  const { error } = await supabase.from("connections").delete().eq("id", connectionId);
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+  const db = createServiceClient();
+  const { data: conn } = await db.from("connections").select("fellow_id").eq("id", connectionId).maybeSingle();
+  if (!conn) return { ok: true };
+  const profile = await getCurrentProfile();
+  const elevated = profile ? canEditPlaybook(profile.role) : false;
+  if (conn.fellow_id !== user.id && !elevated) return { error: "You can only remove your own warm intros." };
+  const { error } = await db.from("connections").delete().eq("id", connectionId);
   if (error) return { error: error.message };
   revalidatePath("/workspace");
   return { ok: true };

@@ -3,8 +3,8 @@
 import { useState, useMemo, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import type { Profile } from "@/lib/types";
-import { isSuper, isAdminPlus } from "@/lib/types";
+import type { Profile, Resource } from "@/lib/types";
+import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
@@ -15,6 +15,8 @@ import {
 import StandingsClient from "@/components/StandingsClient";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
+import ResourcesPanel from "@/components/ResourcesPanel";
+import PersonPicker from "@/components/PersonPicker";
 import { phaseOf, STAGE_CONFIG } from "@/lib/stages";
 
 const C = {
@@ -50,8 +52,8 @@ function schoolSelectOptions(schools: School[]): { value: string; label: string 
   const opts = byTier("core").map((s) => ({ value: s.id, label: s.name }));
   const sat = byTier("satellite");
   const bon = byTier("bonus");
-  if (sat.length) opts.push({ value: sat[0].id, label: "Satellite" });
-  if (bon.length) opts.push({ value: bon[0].id, label: "Bonus" });
+  if (sat.length) opts.push({ value: sat[0].id, label: "Satellite School" });
+  if (bon.length) opts.push({ value: bon[0].id, label: "Bonus School" });
   return opts;
 }
 
@@ -87,15 +89,28 @@ function fmtPct(actual: number, goal: number) {
 }
 
 export default function ConsoleClient({
-  profile, schools, candidates, team, goals, ai, phases, users, reviews,
+  profile, schools, candidates, team, goals, ai, phases, users, reviews, resources,
 }: {
   profile: Profile; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
-  reviews: JazzReview[];
+  reviews: JazzReview[]; resources: Resource[];
 }) {
-  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "users" | "sync">("overview");
+  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "users" | "sync" | "resources">("overview");
   const [scope, setScope] = useState<string>("Org-wide");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
+  const [pbAssignee, setPbAssignee] = useState<string>("all");
+  const [pbFrom, setPbFrom] = useState<string>("");
+  const [pbTo, setPbTo] = useState<string>("");
+  const pbFiltersActive = pbAssignee !== "all" || pbFrom !== "" || pbTo !== "";
+  const pbMatches = (t: Task): boolean => {
+    if (pbAssignee === "team" && t.assignee_label !== "team") return false;
+    if (pbAssignee === "unassigned" && (t.assignee_id || t.assignee_label === "team")) return false;
+    if (pbAssignee !== "all" && pbAssignee !== "team" && pbAssignee !== "unassigned" && t.assignee_id !== pbAssignee) return false;
+    if ((pbFrom || pbTo) && !t.due_date) return false;
+    if (pbFrom && t.due_date && t.due_date < pbFrom) return false;
+    if (pbTo && t.due_date && t.due_date > pbTo) return false;
+    return true;
+  };
   const [openId, setOpenId] = useState<string | null>(null);
   const [showUnrouted, setShowUnrouted] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -236,6 +251,7 @@ export default function ConsoleClient({
   const TABS: [string, string][] = [["overview", "Overview"], ["applicants", "Applicants"], ["standings", "Standings"], ["playbook", "Playbook"]];
   if (adminPlus) TABS.push(["schools", "Schools"]);
   if (superUser) TABS.push(["users", "Users"], ["sync", "Sync"]);
+  TABS.push(["resources", "Resources"]);
 
   return (
     <div style={{ minHeight: "100vh", background: C.canvas }}>
@@ -509,12 +525,33 @@ export default function ConsoleClient({
                 </button>
               </div>
             </div>
-            <button onClick={() => startTransition(() => { addPhase(playbookSchool, "Month", "New phase", playbookPhases.length); })}
-              style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", marginTop: 16 }}>
-              + Add phase
-            </button>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
+              <button onClick={() => startTransition(() => { addPhase(playbookSchool, "Month", "New phase", playbookPhases.length); })}
+                style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer" }}>
+                + Add phase
+              </button>
+              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5, marginLeft: 8 }}>Filter</span>
+              <select value={pbAssignee} onChange={(e) => setPbAssignee(e.target.value)}
+                style={{ padding: "8px 11px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                <option value="all">Anyone</option>
+                <option value="team">Whole team</option>
+                <option value="unassigned">Unassigned</option>
+                {team.map((t) => <option key={t.id} value={t.id}>{t.id === profile.id ? `${t.full_name} (me)` : t.full_name}</option>)}
+              </select>
+              <span style={{ fontSize: 12.5, color: C.grayMute }}>Due</span>
+              <input type="date" value={pbFrom} onChange={(e) => setPbFrom(e.target.value)} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
+              <span style={{ fontSize: 12.5, color: C.grayMute }}>to</span>
+              <input type="date" value={pbTo} onChange={(e) => setPbTo(e.target.value)} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
+              {pbFiltersActive && (
+                <button onClick={() => { setPbAssignee("all"); setPbFrom(""); setPbTo(""); }}
+                  style={{ padding: "8px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
+              )}
+            </div>
             <div style={{ display: "grid", gap: 14, marginTop: 14 }}>
-              {playbookPhases.map((p) => (
+              {playbookPhases.map((p) => {
+                if (pbFiltersActive && !p.playbook_tasks.some(pbMatches)) return null;
+                const visibleTasks = pbFiltersActive ? p.playbook_tasks.filter(pbMatches) : p.playbook_tasks;
+                return (
                 <div key={p.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22 }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}>
                     <input defaultValue={p.label}
@@ -528,7 +565,7 @@ export default function ConsoleClient({
                       Delete phase
                     </button>
                   </div>
-                  {p.playbook_tasks.map((t) => (
+                  {visibleTasks.map((t) => (
                     <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${C.line}88` }}>
                       <input type="checkbox" defaultChecked={t.done}
                         onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: e.target.checked }); })}
@@ -554,7 +591,8 @@ export default function ConsoleClient({
                   </button>
                   {p.playbook_tasks.length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic", marginTop: 8 }}>No tasks yet.</div>}
                 </div>
-              ))}
+                );
+              })}
               {playbookPhases.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No playbook yet for this school — add the first phase.</div>}
             </div>
           </>
@@ -644,12 +682,12 @@ export default function ConsoleClient({
                 return (
                   <div key={tier} style={{ marginBottom: 28 }}>
                     <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 1, marginBottom: 10 }}>
-                      {tier === "core" ? "Core Schools" : tier === "satellite" ? "Satellite Group" : "Bonus Group"}
+                      {tier === "core" ? "Core Schools" : tier === "satellite" ? "Satellite School" : "Bonus School"}
                     </div>
                     {isGrouped && gDraft ? (
                       <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${C.navy2}`, borderRadius: 14, padding: "18px 22px" }}>
                         <div style={{ marginBottom: 14 }}>
-                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: C.gray, marginBottom: 6 }}>{tier === "satellite" ? "Satellite Group" : "Bonus Group"} ({tierSchools.length} schools)</div>
+                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: C.gray, marginBottom: 6 }}>{tier === "satellite" ? "Satellite School" : "Bonus School"} ({tierSchools.length} schools)</div>
                           <div style={{ display: "flex", gap: 16 }}>
                             {([["Sourced", groupSourced, groupGoalActual.sourced], ["Contacted", groupContacted, groupGoalActual.contacted], ["Applied", groupApplied, groupGoalActual.applied]] as [string, number, number][]).map(([lbl, act, goal]) => {
                               const hasGoal = goal > 0;
@@ -886,6 +924,10 @@ export default function ConsoleClient({
             </div>
           </>
         )}
+
+        {tab === "resources" && (
+          <ResourcesPanel resources={resources} canManage={canManageResources(profile.role)} />
+        )}
       </div>
 
       {open && (
@@ -993,13 +1035,12 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
             </div>
           ))}
 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
             <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>Point person</span>
-            <select defaultValue={c.point_person_id ?? ""} onChange={(e) => startTransition(() => { reassignPointPerson(c.id, e.target.value || null); })}
-              style={{ fontSize: 13, fontWeight: 600, color: c.point_person_id ? C.navy : C.orange, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 8px", background: "#fff" }}>
-              <option value="">Unassigned</option>
-              {team.map((t) => <option key={t.id} value={t.id}>{t.id === profile.id ? `${t.full_name} (me)` : t.full_name}</option>)}
-            </select>
+            <div style={{ minWidth: 180 }}>
+              <PersonPicker value={c.point_person_id} options={team} meId={profile.id}
+                onChange={(v) => startTransition(() => { reassignPointPerson(c.id, v); })} />
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: 8, margin: "16px 0 20px" }}>

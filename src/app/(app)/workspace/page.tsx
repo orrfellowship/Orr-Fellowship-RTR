@@ -37,7 +37,7 @@ export default async function WorkspacePage() {
       .order("name");
     tierSchoolIds = (tierSchools ?? []).map((s: any) => s.id);
     playbookSchoolId = (tierSchools ?? [])[0]?.id ?? schoolId;
-    groupName = tier === "satellite" ? "Satellite Group" : "Bonus Group";
+    groupName = tier === "satellite" ? "Satellite School" : "Bonus School";
   }
 
   // Fetch candidates, team, and phases scoped to the full tier (or just the school).
@@ -71,11 +71,26 @@ export default async function WorkspacePage() {
   // degrades gracefully instead of breaking the whole phases query.
   const phasesWithReview = (phases ?? []) as any[];
   const allTaskIds = phasesWithReview.flatMap((p) => (p.playbook_tasks ?? []).map((t: any) => t.id));
+  // Default the multi-assignee fields so the client can rely on them.
+  for (const p of phasesWithReview) for (const t of (p.playbook_tasks ?? [])) { t.assignees = []; t.completions = []; }
   if (allTaskIds.length) {
     const { data: prRows } = await serviceDb.from("playbook_tasks").select("id, pending_review").in("id", allTaskIds);
     if (prRows) {
       const pr = new Map(prRows.map((r: any) => [r.id, r.pending_review]));
       for (const p of phasesWithReview) for (const t of (p.playbook_tasks ?? [])) t.pending_review = pr.get(t.id) ?? false;
+    }
+    // Multi-assignee + per-assignee completion (tables may not exist pre-migration → ignore errors).
+    const [{ data: aRows }, { data: cRows }] = await Promise.all([
+      serviceDb.from("playbook_task_assignees").select("task_id, profile_id").in("task_id", allTaskIds),
+      serviceDb.from("playbook_task_completions").select("task_id, profile_id, state").in("task_id", allTaskIds),
+    ]);
+    const byTaskA = new Map<string, string[]>();
+    for (const r of aRows ?? []) { const k = (r as any).task_id; (byTaskA.get(k) ?? byTaskA.set(k, []).get(k)!).push((r as any).profile_id); }
+    const byTaskC = new Map<string, { profile_id: string; state: string }[]>();
+    for (const r of cRows ?? []) { const k = (r as any).task_id; (byTaskC.get(k) ?? byTaskC.set(k, []).get(k)!).push({ profile_id: (r as any).profile_id, state: (r as any).state }); }
+    for (const p of phasesWithReview) for (const t of (p.playbook_tasks ?? [])) {
+      t.assignees = byTaskA.get(t.id) ?? [];
+      t.completions = byTaskC.get(t.id) ?? [];
     }
   }
 
@@ -94,10 +109,11 @@ export default async function WorkspacePage() {
   }
 
   // Cross-school data for Standings — serviceDb bypasses RLS so fellows/leads can see org-wide pipeline
-  const [{ data: allSchools }, { data: allCandidates }, { data: allGoals }] = await Promise.all([
+  const [{ data: allSchools }, { data: allCandidates }, { data: allGoals }, { data: resources }] = await Promise.all([
     serviceDb.from("schools").select("id, name, tier, color_primary, logo_url").order("name"),
     serviceDb.from("candidates").select("id, name, email, school_id, stage, gpa, area_of_study, jazz_id, linkedin, point_person_id, not_interested, resume_link").order("name"),
     serviceDb.from("school_goals").select("school_id, goal_sourced, goal_contacted, goal_applied"),
+    serviceDb.from("resources").select("id, name, description, link, created_by, created_at").order("created_at", { ascending: false }),
   ]);
 
   const favSet = new Set((favs ?? []).map((f) => f.candidate_id));
@@ -116,6 +132,7 @@ export default async function WorkspacePage() {
       allGoals={allGoals ?? []}
       groupName={groupName}
       lastContactByCand={lastContactByCand}
+      resources={resources ?? []}
     />
   );
 }
