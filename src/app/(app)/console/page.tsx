@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentProfile } from "@/lib/auth";
-import { createServerSupabase } from "@/lib/supabase/server";
-import { isSuper } from "@/lib/types";
+import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
+import { isSuper, isAdminPlus } from "@/lib/types";
 import ConsoleClient from "./ConsoleClient";
 
 export default async function ConsolePage() {
@@ -48,15 +48,24 @@ export default async function ConsolePage() {
   let ai: { candidate_id: string; resume_score: number | null; summary: string | null; flags: any; analyzed_at: string | null }[] = [];
   let users: { id: string; full_name: string; email: string; role: string; school_id: string | null; is_active: boolean }[] = [];
   let reviews: { id: string; jazz_snapshot: any; candidate_id: string | null; reason: string | null }[] = [];
+
+  // Match-review queue is available to admins + super-admins (loaded via the
+  // service client so it doesn't depend on a super-only RLS policy).
+  if (isAdminPlus(profile.role)) {
+    const { data: reviewData } = await createServiceClient()
+      .from("jazz_match_review")
+      .select("id, jazz_snapshot, candidate_id, reason")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+    reviews = reviewData ?? [];
+  }
   if (isSuper(profile.role)) {
-    const [{ data: aiData }, { data: usersData }, { data: reviewData }] = await Promise.all([
+    const [{ data: aiData }, { data: usersData }] = await Promise.all([
       supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at"),
       supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name"),
-      supabase.from("jazz_match_review").select("id, jazz_snapshot, candidate_id, reason").eq("status", "pending").order("created_at", { ascending: false }),
     ]);
     ai = aiData ?? [];
     users = usersData ?? [];
-    reviews = reviewData ?? [];
   }
 
   const favSet = new Set((favs ?? []).map((f) => f.candidate_id));

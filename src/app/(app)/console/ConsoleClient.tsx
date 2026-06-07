@@ -10,14 +10,15 @@ import {
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
-  approveJazzMatch, rejectJazzMatch, unlinkJazzCandidate,
+  unlinkJazzCandidate,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
-import { phaseOf, STAGE_CONFIG } from "@/lib/stages";
+import MatchReview from "@/components/MatchReview";
+import { phaseOf } from "@/lib/stages";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -122,6 +123,7 @@ export default function ConsoleClient({
   const [appMinGpa, setAppMinGpa] = useState("");
   const [appFavOnly, setAppFavOnly] = useState(false);
   const [appSort, setAppSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage" | "ai"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
@@ -402,6 +404,25 @@ export default function ConsoleClient({
                 <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
               </div>
             </div>
+
+            {/* JazzHR match review — applicants that may be an existing sourced candidate */}
+            {adminPlus && reviews.length > 0 && (
+              <div style={{ marginTop: 16, border: `1px solid ${C.orange}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
+                <button onClick={() => setReviewOpen((v) => !v)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: `${C.orange}0e`, cursor: "pointer", textAlign: "left" }}>
+                  <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
+                    Match review · <span style={{ color: C.orange }}>{reviews.length} need{reviews.length === 1 ? "s" : ""} a decision</span>
+                  </span>
+                  <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>JazzHR applicants that may already be sourced</span>
+                  <span style={{ color: C.grayMute, fontSize: 15 }}>{reviewOpen ? "▲" : "▼"}</span>
+                </button>
+                {reviewOpen && (
+                  <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
+                    <MatchReview reviews={reviews} candidates={candidates} schools={schools} />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Filter bar */}
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px" }}>
@@ -824,46 +845,14 @@ export default function ConsoleClient({
               {syncError && <div style={{ marginTop: 16, background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 10, padding: "12px 14px", fontSize: 13.5, color: "#8A3A1E", wordBreak: "break-word" }}>Sync error: {syncError}</div>}
             </div>
 
-            <div style={{ background: "#fff", border: `1px solid ${reviews.length ? C.orange : C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
+            <div style={{ background: "#fff", border: `1px solid ${reviews.length ? C.orange : C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 820 }}>
               <h3 style={{ fontFamily: HEAD, fontSize: 15, fontWeight: 700, margin: "0 0 4px", color: C.navy }}>
                 Match review {reviews.length > 0 && <span style={{ color: C.orange }}>· {reviews.length} pending</span>}
               </h3>
               <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 14px" }}>
-                Name-only matches from the last sync. <b>Approve</b> links the JazzHR applicant to the existing candidate (keeping their notes & owner). <b>Not a match</b> imports the JazzHR applicant as a separate candidate.
+                Applicants that look like an existing sourced candidate but couldn't be auto-linked (different email, nickname). <b>Match</b> links them (keeping notes & owner); <b>Add as new candidate</b> imports them separately.
               </p>
-              {reviews.length === 0 ? (
-                <div style={{ fontSize: 13.5, color: C.grayMute, fontStyle: "italic" }}>Nothing to review — all matches were confident.</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {reviews.map((r) => {
-                    const cand = candidates.find((c) => c.id === r.candidate_id);
-                    const snap = r.jazz_snapshot ?? {};
-                    return (
-                      <div key={r.id} style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 14px" }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
-                          <div>
-                            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 3 }}>From JazzHR</div>
-                            <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{snap.name ?? "—"}</div>
-                            <div style={{ fontSize: 12, color: C.grayMute }}>{snap.email ?? "no email"}</div>
-                            <div style={{ fontSize: 12, color: C.navy2, marginTop: 2 }}>Stage: {snap.stage ?? "—"}</div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 3 }}>Existing candidate</div>
-                            <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{cand?.name ?? "(deleted)"}</div>
-                            <div style={{ fontSize: 12, color: C.grayMute }}>{cand?.email ?? "no email"}</div>
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button onClick={() => startTransition(() => { approveJazzMatch(r.id); })}
-                            style={{ border: "none", background: C.good, color: "#fff", fontWeight: 700, fontSize: 13, padding: "8px 14px", borderRadius: 8, cursor: "pointer" }}>✓ Same person — link</button>
-                          <button onClick={() => startTransition(() => { rejectJazzMatch(r.id); })}
-                            style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 700, fontSize: 13, padding: "8px 14px", borderRadius: 8, cursor: "pointer" }}>Not a match — import separately</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <MatchReview reviews={reviews} candidates={candidates} schools={schools} />
             </div>
 
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
@@ -1196,9 +1185,10 @@ function AddCandidateModal({ schools, existingEmails, onClose, startTransition }
         name: form.name.trim(),
         email: form.email.trim() || null,
         school_id: form.school_id || null,
-        stage: form.stage || null,
-        gpa: form.gpa.trim() || null,
-        area_of_study: form.area_of_study.trim() || null,
+        // Stage / GPA / major are filled in later from JazzHR — not part of sourcing.
+        stage: null,
+        gpa: null,
+        area_of_study: null,
       }).then((r) => {
         if ("error" in r && r.error) setError(r.error);
         else { setSaved(true); setTimeout(onClose, 800); }
@@ -1234,16 +1224,9 @@ function AddCandidateModal({ schools, existingEmails, onClose, startTransition }
             {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Stage</label>
-          <select value={form.stage} onChange={(e) => set("stage", e.target.value)}
-            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
-            <option value="">— None —</option>
-            {STAGE_CONFIG.map((s) => <option key={s.key} value={s.key}>{s.key} ({s.phase})</option>)}
-          </select>
+        <div style={{ background: "#EEF1F7", borderRadius: 9, padding: "9px 12px", marginBottom: 14, fontSize: 12, color: C.grayMute }}>
+          Stage, GPA, and major are added automatically once the candidate applies through JazzHR.
         </div>
-        {field("GPA", "gpa", "3.5")}
-        {field("Major / Area of Study", "area_of_study", "Computer Science")}
         {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E", marginBottom: 14 }}>{error}</div>}
         {saved && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>✓ Candidate added!</div>}
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>

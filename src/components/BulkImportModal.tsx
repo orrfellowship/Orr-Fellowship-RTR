@@ -63,6 +63,25 @@ export default function BulkImportModal({ schools, existingEmails, onClose }: {
     return { items, dupes };
   })();
 
+  // Read an uploaded CSV/Excel file into the textarea so the same preview +
+  // dedupe pipeline runs. Excel is parsed with SheetJS (loaded on demand).
+  const onFile = async (file: File) => {
+    setResult(null); setError(null);
+    try {
+      if (/\.(xlsx|xls)$/i.test(file.name)) {
+        const XLSX = await import("xlsx");
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        setText(XLSX.utils.sheet_to_csv(ws));
+      } else {
+        setText(await file.text());
+      }
+    } catch {
+      setError("Couldn't read that file — please upload a .csv or .xlsx.");
+    }
+  };
+
   const doImport = () => {
     if (!parsed || parsed.items.length === 0) { setError("No valid rows to import."); return; }
     setError(null);
@@ -83,10 +102,14 @@ export default function BulkImportModal({ schools, existingEmails, onClose }: {
       <div style={{ position: "relative", background: "#fff", borderRadius: 16, padding: 28, width: 560, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto" }}>
         <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 8px" }}>Bulk Import</h2>
         <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 16px" }}>
-          Paste CSV with columns: <code style={{ background: C.canvas, padding: "1px 5px", borderRadius: 4 }}>Name, Email, School, Stage, GPA, Major</code>. Header row is auto-detected.
+          Columns: <code style={{ background: C.canvas, padding: "1px 5px", borderRadius: 4 }}>Name, Email, School</code>. Header row is auto-detected. Upload a CSV/Excel file or paste below.
         </p>
+        <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px", marginBottom: 12, borderRadius: 10, border: `1.5px dashed ${C.line}`, background: C.canvas, cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: C.navy }}>
+          ⬆ Upload .csv or .xlsx
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} style={{ display: "none" }} />
+        </label>
         <textarea value={text} onChange={(e) => { setText(e.target.value); setResult(null); setError(null); }}
-          placeholder={"Name,Email,School,Stage,GPA,Major\nJane Doe,jane@example.com,Purdue,new,3.7,Computer Science"}
+          placeholder={"Name,Email,School\nJane Doe,jane@example.com,Purdue"}
           rows={8} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 13, fontFamily: "monospace", resize: "vertical", boxSizing: "border-box" }} />
         {parsed && (
           <div style={{ margin: "12px 0", padding: "10px 14px", background: C.canvas, borderRadius: 9, fontSize: 13 }}>

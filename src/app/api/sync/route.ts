@@ -72,9 +72,49 @@ function mapDetail(d: any) {
 }
 
 // ---- matching helpers (link JazzHR applicants to existing candidates) -------
+// Sourced candidates often apply through JazzHR with a DIFFERENT email than the
+// one they were sourced under, so name+school is the workhorse match. To keep it
+// precise we (a) auto-link only on an EXACT canonical name (suffix-stripped,
+// middle names dropped) + same school, and (b) route nickname-equivalents
+// (Jon↔Jonathan) and same-name-different-school to human review instead.
 const normEmail = (e?: string | null) => (e ?? "").trim().toLowerCase();
 const normPhone = (p?: string | null) => { const d = (p ?? "").replace(/\D/g, ""); return d.length >= 10 ? d.slice(-10) : ""; };
-const normName  = (n?: string | null) => (n ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+const NAME_SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
+const NICKNAMES: Record<string, string> = {
+  jon: "jonathan", jonny: "jonathan", johnny: "john", mike: "michael", mikey: "michael",
+  chris: "christopher", matt: "matthew", dave: "david", dan: "daniel", danny: "daniel",
+  tom: "thomas", tommy: "thomas", tony: "anthony", rob: "robert", bob: "robert", bobby: "robert",
+  bill: "william", billy: "william", will: "william", jim: "james", jimmy: "james",
+  jake: "jacob", joe: "joseph", joey: "joseph", nick: "nicholas", alex: "alexander",
+  sam: "samuel", ben: "benjamin", andy: "andrew", drew: "andrew", ed: "edward", eddie: "edward",
+  ron: "ronald", rick: "richard", rich: "richard", steve: "steven", greg: "gregory",
+  jeff: "jeffrey", ken: "kenneth", charlie: "charles", chuck: "charles", fred: "frederick",
+  gabe: "gabriel", nate: "nathaniel", pat: "patrick", phil: "phillip", ray: "raymond",
+  ted: "theodore", vince: "vincent", zack: "zachary", zach: "zachary",
+  liz: "elizabeth", beth: "elizabeth", kate: "katherine", katie: "katherine", abby: "abigail",
+  becky: "rebecca", jen: "jennifer", jenny: "jennifer", jess: "jessica", kim: "kimberly",
+  sue: "susan", maggie: "margaret", meg: "margaret", vicky: "victoria", tina: "christina",
+  steph: "stephanie", allie: "allison", ally: "allison", angie: "angela", gabby: "gabrielle",
+  mandy: "amanda", cathy: "catherine", kathy: "katherine", debbie: "deborah", deb: "deborah",
+};
+const nameTokens = (n?: string | null): string[] =>
+  (n ?? "").toLowerCase().normalize("NFKD")
+    .replace(/[^a-z\s'-]/g, " ").replace(/['-]/g, " ")
+    .split(/\s+/).filter(Boolean).filter((t) => !NAME_SUFFIXES.has(t));
+// Exact canonical name: first + last token only (drops middle names/initials).
+const canonName = (n?: string | null): string => {
+  const t = nameTokens(n);
+  if (t.length === 0) return "";
+  return t.length === 1 ? t[0] : `${t[0]} ${t[t.length - 1]}`;
+};
+// Nickname-folded key: first name mapped to its formal version, + last token.
+const nickKey = (n?: string | null): string => {
+  const t = nameTokens(n);
+  if (t.length === 0) return "";
+  const first = NICKNAMES[t[0]] ?? t[0];
+  return t.length === 1 ? first : `${first} ${t[t.length - 1]}`;
+};
 
 // Factual fields JazzHR owns (overwrites on link/refresh). Excludes `source`
 // and all opinionated/local data (owner, notes, favorites, outreach, AI).
@@ -138,12 +178,13 @@ export async function POST(request: NextRequest) {
   const reviewExisting = new Set((reviewRows ?? []).map((r: any) => String(r.jazz_applicant_id)));
 
   const linkedByJazz = new Map<string, string>(); // jazz_id -> candidate id
-  type U = { id: string; email: string; phone: string; nameN: string; schoolName: string };
+  type U = { id: string; email: string; phone: string; canon: string; nick: string; schoolName: string };
   const unlinked: U[] = [];
   for (const c of allCands ?? []) {
     if (c.jazz_id) { linkedByJazz.set(String(c.jazz_id), c.id); continue; }
     unlinked.push({
-      id: c.id, email: normEmail(c.email), phone: normPhone(c.phone), nameN: normName(c.name),
+      id: c.id, email: normEmail(c.email), phone: normPhone(c.phone),
+      canon: canonName(c.name), nick: nickKey(c.name),
       schoolName: c.school_id ? (schoolNameById.get(c.school_id) ?? "") : "",
     });
   }
@@ -188,11 +229,13 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // b) confident match → link to the existing record
-      const em = normEmail(m.email), ph = normPhone(m.phone), nm = normName(m.name);
+      // b) confident match → link to the existing record.
+      //    Email/phone first; then EXACT canonical name + same school.
+      const em = normEmail(m.email), ph = normPhone(m.phone);
+      const canon = canonName(m.name), nick = nickKey(m.name);
       let match = em ? unlinked.find((u) => u.email && u.email === em) : undefined;
       if (!match && ph) match = unlinked.find((u) => u.phone && u.phone === ph);
-      if (!match && nm && routedSchool) match = unlinked.find((u) => u.nameN === nm && u.schoolName === routedSchool);
+      if (!match && canon && routedSchool) match = unlinked.find((u) => u.canon === canon && u.schoolName === routedSchool);
       if (match) {
         await db.from("candidates").update(factual).eq("id", match.id);
         linkedByJazz.set(jid, match.id);
@@ -201,12 +244,17 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // c) name-only match → hold for Super-Admin review (don't auto-link/import)
-      if (nm) {
-        const weak = unlinked.find((u) => u.nameN === nm);
+      // c) likely-but-uncertain → hold for admin review (never auto-link/import):
+      //    same exact name at a DIFFERENT school, or a nickname-equivalent
+      //    (Jon↔Jonathan) at the same school.
+      if (canon) {
+        const weak =
+          unlinked.find((u) => u.canon === canon) ??
+          (routedSchool ? unlinked.find((u) => u.nick === nick && u.schoolName === routedSchool) : undefined);
         if (weak) {
           if (!reviewExisting.has(jid)) {
-            await db.from("jazz_match_review").insert({ jazz_applicant_id: jid, jazz_snapshot: m, candidate_id: weak.id, reason: "name_only" });
+            const reason = weak.canon === canon ? "name_only" : "nickname";
+            await db.from("jazz_match_review").insert({ jazz_applicant_id: jid, jazz_snapshot: m, candidate_id: weak.id, reason });
             reviewExisting.add(jid);
             queued++;
           }

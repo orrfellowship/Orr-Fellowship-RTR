@@ -361,7 +361,7 @@ async function routeSchoolId(db: ReturnType<typeof createServiceClient>, univers
 // Approve a name-only match: link the JazzHR applicant to the suspected candidate.
 export async function approveJazzMatch(reviewId: string) {
   const profile = await getCurrentProfile();
-  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
   const { data: rev } = await db.from("jazz_match_review").select("jazz_snapshot, candidate_id").eq("id", reviewId).single();
   if (!rev || !rev.candidate_id) return { error: "Review not found" };
@@ -377,7 +377,7 @@ export async function approveJazzMatch(reviewId: string) {
 // Reject a name-only match: import the JazzHR applicant as a separate candidate.
 export async function rejectJazzMatch(reviewId: string) {
   const profile = await getCurrentProfile();
-  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
   const { data: rev } = await db.from("jazz_match_review").select("jazz_snapshot").eq("id", reviewId).single();
   if (!rev) return { error: "Review not found" };
