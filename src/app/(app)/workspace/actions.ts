@@ -101,9 +101,13 @@ export async function addConnection(candidateId: string, relationship: string, t
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const db = createServiceClient();
-  const { error } = await db
-    .from("connections")
-    .insert({ fellow_id: user.id, candidate_id: candidateId, relationship, tagged_profile_id: taggedProfileId });
+  const base = { fellow_id: user.id, candidate_id: candidateId, relationship };
+  let { error } = await db.from("connections").insert({ ...base, tagged_profile_id: taggedProfileId });
+  // If the tagged_profile_id column doesn't exist yet (db/phase4.sql not run),
+  // still save the intro without the tag rather than failing entirely.
+  if (error && /tagged_profile_id/i.test(error.message)) {
+    ({ error } = await db.from("connections").insert(base));
+  }
   if (error) return { error: error.message };
 
   // Notify the tagged person (unless they tagged themselves).
@@ -130,10 +134,18 @@ export async function addConnection(candidateId: string, relationship: string, t
 export async function getConnections(candidateId: string) {
   // Warm intros are visible to everyone (read-only unless it's yours).
   const db = createServiceClient();
-  const { data, error } = await db
+  let data: any = null, error: any = null;
+  ({ data, error } = await db
     .from("connections")
     .select("id, fellow_id, relationship, tagged_profile_id, profiles(full_name)")
-    .eq("candidate_id", candidateId);
+    .eq("candidate_id", candidateId));
+  // Fallback if the tagged_profile_id column isn't present yet (pre-migration).
+  if (error && /tagged_profile_id/i.test(error.message)) {
+    ({ data, error } = await db
+      .from("connections")
+      .select("id, fellow_id, relationship, profiles(full_name)")
+      .eq("candidate_id", candidateId));
+  }
   if (error) return { error: error.message, connections: [] as any[] };
   return {
     ok: true,

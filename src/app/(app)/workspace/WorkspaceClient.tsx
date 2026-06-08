@@ -1118,11 +1118,15 @@ function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, star
   const doAddConn = (rel: string) => {
     if (!rel.trim()) return;
     const tagged = tagId;
-    startTransition(() => {
-      addConnection(c.id, rel.trim(), tagged);
-      setConns((prev) => [{ id: Math.random().toString(), fellow_id: profile.id, name: "You", relationship: rel.trim(), tagged_profile_id: tagged }, ...(prev ?? [])]);
-      setRelDraft("");
-      setTagId(null);
+    const tempId = `temp-${Math.random()}`;
+    setConns((prev) => [{ id: tempId, fellow_id: profile.id, name: "You", relationship: rel.trim(), tagged_profile_id: tagged }, ...(prev ?? [])]);
+    setRelDraft("");
+    setTagId(null);
+    addConnection(c.id, rel.trim(), tagged).then((res) => {
+      if (res && "error" in res && res.error) {
+        setConns((prev) => (prev ?? []).filter((cn) => cn.id !== tempId)); // revert
+        alert(`Couldn't save warm intro: ${res.error}`);
+      }
     });
   };
 
