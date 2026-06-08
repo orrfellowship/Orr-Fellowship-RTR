@@ -108,6 +108,13 @@ export async function addConnection(candidateId: string, relationship: string, t
   if (error && /tagged_profile_id/i.test(error.message)) {
     ({ error } = await db.from("connections").insert(base));
   }
+  // A matching intro already exists (unique constraint) → refresh its relationship
+  // instead of erroring. Covers both the new and the legacy unique key.
+  if (error && (error as any).code === "23505") {
+    let q = db.from("connections").update({ relationship }).eq("fellow_id", user.id).eq("candidate_id", candidateId);
+    q = taggedProfileId ? q.eq("tagged_profile_id", taggedProfileId) : q.is("tagged_profile_id", null);
+    ({ error } = await q);
+  }
   if (error) return { error: error.message };
 
   // Notify the tagged person (unless they tagged themselves).
