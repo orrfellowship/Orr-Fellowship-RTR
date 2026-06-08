@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useMemo, useTransition, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import type { Profile, Resource } from "@/lib/types";
 import { canReassign, canEditPlaybook, canManageResources, canEditEvents } from "@/lib/types";
 import {
@@ -19,7 +17,6 @@ import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
-import NotificationBell, { type AppNotification } from "@/components/NotificationBell";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -87,15 +84,15 @@ const CONTACTD = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
 const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
-  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, notifications, allProfiles,
+  profile, initialSection, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
 }: {
-  profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
+  profile: Profile; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
-  lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[]; notifications: AppNotification[];
+  lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[];
   allProfiles: { id: string; full_name: string }[];
 }) {
   const isMobile = useIsMobile();
-  const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources">("plan");
+  const [tab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources">(initialSection as any);
   const [breakdownScope, setBreakdownScope] = useState<"team" | "org">("team");
   const [allFilter, setAllFilter] = useState<string>("All schools");
   const [allSearch, setAllSearch] = useState("");
@@ -114,14 +111,9 @@ export default function WorkspaceClient({
   const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [pending, startTransition] = useTransition();
-  const router = useRouter();
   const canEdit = canEditPlaybook(profile.role);
   const canAssign = canReassign(profile.role);
 
-  async function signOut() {
-    await createClient().auth.signOut();
-    router.push("/login");
-  }
   const accent = school?.color_primary ?? C.orange;
 
   const nameOf = (id: string | null, label?: string | null): string => {
@@ -230,39 +222,7 @@ export default function WorkspaceClient({
   const MONTHS = ["July", "August", "September", "Oct/Nov"];
 
   return (
-    <div style={{ minHeight: "100vh", background: C.canvas }}>
-      <div style={{ background: C.navy, padding: isMobile ? "0 14px" : "0 28px" }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 16 : 36, minWidth: 0, flex: 1, overflowX: "auto" }}>
-            <div style={{ padding: "14px 0", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-              {school?.logo_url && (
-                <img src={school.logo_url} alt={school.name} style={{ height: 32, width: 32, objectFit: "contain", borderRadius: 6, background: "rgba(255,255,255,.12)", padding: 3 }} />
-              )}
-              <div>
-                <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16, color: "#fff" }}>{groupName ?? school?.name ?? "Orr Recruiting"}</div>
-                <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{profile.role === "team_lead" ? "Team Lead" : "Fellow"} Workspace</div>
-              </div>
-            </div>
-            {([
-              ["plan",      `Weekly Snapshot`],
-              ["board",     "My School"],
-              ["playbook",  "Playbook"],
-              ["standings", "Standings"],
-              ["all",       "Applicants"],
-              ["resources", "Resources"],
-            ] as const).map(([k, l]) => (
-              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent", flexShrink: 0, whiteSpace: "nowrap" }}>{l}</button>
-            ))}
-            <a href="/how-to" style={{ padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: 600, color: "rgba(255,255,255,.55)", textDecoration: "none", flexShrink: 0, whiteSpace: "nowrap" }}>How-To</a>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-            <NotificationBell notifications={notifications} />
-            {!isMobile && <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>}
-            <button onClick={signOut} style={{ border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "rgba(255,255,255,.75)", fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 8, cursor: "pointer", whiteSpace: "nowrap" }}>Sign out</button>
-          </div>
-        </div>
-      </div>
-
+    <>
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: isMobile ? "20px 14px 60px" : "30px 28px 80px", opacity: pending ? 0.7 : 1 }}>
 
         {/* ---- WEEKLY SNAPSHOT ---- */}
@@ -666,7 +626,7 @@ export default function WorkspaceClient({
           onClose={() => setBulkOpen(false)}
         />
       )}
-    </div>
+    </>
   );
 }
 

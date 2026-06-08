@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useMemo, useTransition, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import type { Profile, Resource } from "@/lib/types";
 import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import {
@@ -91,14 +89,14 @@ function fmtPct(actual: number, goal: number) {
 }
 
 export default function ConsoleClient({
-  profile, schools, candidates, team, goals, ai, phases, users, reviews, resources,
+  profile, initialSection, schools, candidates, team, goals, ai, phases, users, reviews, resources,
 }: {
-  profile: Profile; schools: School[]; candidates: Cand[]; team: TeamMember[];
+  profile: Profile; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
 }) {
   const isMobile = useIsMobile();
-  const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "users" | "sync" | "resources">("overview");
+  const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "users" | "sync" | "resources" | "review">(initialSection as any);
   const [scope, setScope] = useState<string>("Org-wide");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
   const [pbAssignee, setPbAssignee] = useState<string>("all");
@@ -133,14 +131,9 @@ export default function ConsoleClient({
   const [syncingIds, setSyncingIds] = useState(false);
   const [syncIdsMsg, setSyncIdsMsg] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const router = useRouter();
   const superUser = isSuper(profile.role);
   const adminPlus = isAdminPlus(profile.role);
 
-  async function signOut() {
-    await createClient().auth.signOut();
-    router.push("/login");
-  }
   const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a as AI])), [ai]);
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
 
@@ -252,34 +245,8 @@ export default function ConsoleClient({
   const setGroupGoalField = (tier: string, tierSchoolIds: string[], field: "sourced" | "contacted" | "applied", val: string) =>
     setGroupGoalDrafts((prev) => ({ ...prev, [tier]: { ...groupGoalDraft(tier, tierSchoolIds), [field]: val } }));
 
-  const TABS: [string, string][] = [["overview", "Overview"], ["applicants", "Applicants"], ["standings", "Standings"], ["playbook", "Playbook"]];
-  if (adminPlus) TABS.push(["schools", "Schools"]);
-  if (superUser) TABS.push(["users", "Users"], ["sync", "Sync"]);
-  TABS.push(["resources", "Resources"]);
-
   return (
-    <div style={{ minHeight: "100vh", background: C.canvas }}>
-      <div style={{ background: C.navy, padding: isMobile ? "0 14px" : "0 28px" }}>
-        <div style={{ maxWidth: 1240, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 16 : 28, minWidth: 0, flex: 1, overflowX: "auto" }}>
-            <div style={{ padding: "14px 0", flexShrink: 0 }}>
-              <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16, color: "#fff" }}>Orr Recruiting</div>
-              <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{superUser ? "Super Admin" : "Admin"} Console</div>
-            </div>
-            {TABS.map(([k, l]) => (
-              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${C.orange}` : "3px solid transparent", flexShrink: 0, whiteSpace: "nowrap" }}>
-                {l}
-              </button>
-            ))}
-            <a href="/how-to" style={{ padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: 600, color: "rgba(255,255,255,.55)", textDecoration: "none", flexShrink: 0, whiteSpace: "nowrap" }}>How-To</a>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-            {!isMobile && <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>}
-            <button onClick={signOut} style={{ border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "rgba(255,255,255,.75)", fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 8, cursor: "pointer" }}>Sign out</button>
-          </div>
-        </div>
-      </div>
-
+    <>
       <div style={{ maxWidth: 1240, margin: "0 auto", padding: isMobile ? "20px 14px 60px" : "30px 28px 80px", opacity: pending ? 0.7 : 1 }}>
 
         {/* ---- OVERVIEW ---- */}
@@ -919,6 +886,15 @@ export default function ConsoleClient({
         {tab === "resources" && (
           <ResourcesPanel resources={resources} canManage={canManageResources(profile.role)} />
         )}
+
+        {/* ---- REVIEW SYNC (admin "Review Sync" route) ---- */}
+        {tab === "review" && (
+          <>
+            <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Review Sync</h1>
+            <p style={{ color: C.grayMute, margin: "4px 0 18px" }}>JazzHR applicants that may match an existing sourced candidate. Match to link them, or add as a new candidate.</p>
+            <MatchReview reviews={reviews} candidates={candidates} schools={schools} />
+          </>
+        )}
       </div>
 
       {open && (
@@ -936,7 +912,7 @@ export default function ConsoleClient({
       {bulkInviteOpen && (
         <BulkInviteModal schools={schools} onClose={() => setBulkInviteOpen(false)} />
       )}
-    </div>
+    </>
   );
 }
 

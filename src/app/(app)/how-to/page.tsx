@@ -28,16 +28,9 @@ export default async function HowToPage() {
   const sup = isSuper(profile.role);
   const home = admin ? "/console" : "/workspace";
 
+  void home;
   return (
-    <div style={{ minHeight: "100vh", background: C.canvas }}>
-      <div style={{ background: C.navy, padding: "0 28px" }}>
-        <div style={{ maxWidth: 880, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 0" }}>
-          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 18, color: "#fff" }}>How-To Guide</div>
-          <a href={home} style={{ color: "rgba(255,255,255,.8)", fontSize: 13, fontWeight: 600, textDecoration: "none", border: "1px solid rgba(255,255,255,.3)", padding: "6px 14px", borderRadius: 8 }}>← Back to app</a>
-        </div>
-      </div>
-
-      <div style={{ maxWidth: 880, margin: "0 auto", padding: "30px 28px 80px" }}>
+    <div style={{ maxWidth: 880, margin: "0 auto", padding: "30px 28px 80px" }}>
         <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 4px" }}>Welcome to Orr Recruiting</h1>
         <p style={{ color: C.grayMute, margin: "0 0 24px", fontSize: 15 }}>
           A quick guide to getting around. You're signed in as <b style={{ color: C.gray }}>{profile.full_name}</b> ({profile.role.replace("_", " ")}).
@@ -144,7 +137,6 @@ Jane Doe,jane@example.com,Purdue,new,3.7,Computer Science`}
         <Section title="Need help?">
           <p style={{ margin: 0 }}>If something looks off or you need access you don't have, reach out to an Orr program admin.</p>
         </Section>
-      </div>
     </div>
   );
 }

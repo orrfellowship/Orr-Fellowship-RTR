@@ -1,0 +1,60 @@
+import { redirect } from "next/navigation";
+import { getCurrentProfile } from "@/lib/auth";
+import { createServiceClient } from "@/lib/supabase/server";
+import { isAdminPlus } from "@/lib/types";
+import { accentFor, type Role } from "@/lib/nav/config";
+import { loadNavData } from "@/lib/nav/thisWeek";
+import AppShell from "@/components/nav/AppShell";
+
+const ROLE_BADGE: Record<Role, string> = {
+  super_admin: "Super Admin", admin: "Admin", team_lead: "Team Lead", fellow: "Fellow",
+};
+const SUBLABEL: Record<Role, string> = {
+  super_admin: "Super Admin", admin: "Admin", team_lead: "Team Lead Workspace", fellow: "Fellow Workspace",
+};
+
+function initials(s: string): string {
+  const p = s.trim().split(/\s+/);
+  return ((p[0]?.[0] ?? "") + (p[1]?.[0] ?? "")).toUpperCase() || "OR";
+}
+
+// One shell for the whole authenticated area (workspace + console + how-to).
+// Role + school are resolved here, server-side, and passed down as data so the
+// client shell never guesses.
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const profile = await getCurrentProfile();
+  if (!profile) redirect("/login");
+  const role = profile.role as Role;
+  const db = createServiceClient();
+
+  const school = profile.school_id
+    ? (await db.from("schools").select("id, name, color_primary, logo_url").eq("id", profile.school_id).maybeSingle()).data
+    : null;
+
+  const accent = isAdminPlus(role)
+    ? accentFor(role)
+    : ((school as any)?.color_primary ?? accentFor(role, (school as any)?.name));
+
+  const brand = isAdminPlus(role)
+    ? { label: "Orr Recruiting", sublabel: SUBLABEL[role], crest: "OR", logoUrl: null as string | null }
+    : { label: (school as any)?.name ?? "Workspace", sublabel: SUBLABEL[role], crest: initials((school as any)?.name ?? "Orr"), logoUrl: (school as any)?.logo_url ?? null };
+
+  const [{ data: notifications }, navData] = await Promise.all([
+    db.from("notifications").select("id, type, title, body, link, read, created_at").eq("recipient_id", profile.id).order("created_at", { ascending: false }).limit(30),
+    loadNavData(profile),
+  ]);
+
+  return (
+    <AppShell
+      role={role}
+      accent={accent}
+      brand={brand}
+      user={{ name: profile.full_name, roleBadge: ROLE_BADGE[role], schoolName: isAdminPlus(role) ? null : (school as any)?.name ?? null }}
+      badges={navData.badges}
+      thisWeek={navData.thisWeek}
+      notifications={notifications ?? []}
+    >
+      {children}
+    </AppShell>
+  );
+}
