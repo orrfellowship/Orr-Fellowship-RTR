@@ -142,9 +142,11 @@ export async function getConnections(candidateId: string) {
   // Warm intros are visible to everyone (read-only unless it's yours).
   const db = createServiceClient();
   let data: any = null, error: any = null;
+  // Disambiguate the embed: connections now has TWO FKs to profiles
+  // (fellow_id + tagged_profile_id), so we must name which one to join.
   ({ data, error } = await db
     .from("connections")
-    .select("id, fellow_id, relationship, tagged_profile_id, profiles(full_name)")
+    .select("id, fellow_id, relationship, tagged_profile_id, profiles!fellow_id(full_name)")
     .eq("candidate_id", candidateId));
   // Fallback if the tagged_profile_id column isn't present yet (pre-migration).
   if (error && /tagged_profile_id/i.test(error.message)) {

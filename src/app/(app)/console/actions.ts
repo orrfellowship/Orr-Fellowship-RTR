@@ -203,7 +203,7 @@ export async function getConnections(candidateId: string) {
   const supabase = createServerSupabase();
   const { data, error } = await supabase
     .from("connections")
-    .select("id, fellow_id, relationship, profiles(full_name)")
+    .select("id, fellow_id, relationship, profiles!fellow_id(full_name)")
     .eq("candidate_id", candidateId);
   if (error) return { error: error.message, connections: [] as any[] };
   return {
