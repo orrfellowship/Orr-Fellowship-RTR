@@ -94,16 +94,35 @@ export async function getOutreach(candidateId: string) {
 
 // ---- WARM-INTRO: add a manual connection (current user knows this candidate) ----
 // Anyone may log that they know a candidate — even one they don't own — so we use
-// the service client. The connection is always recorded under the calling user.
-export async function addConnection(candidateId: string, relationship: string) {
+// the service client. Optionally TAG another person (anyone, any school); they get
+// notified + the intro shows up in their queue.
+export async function addConnection(candidateId: string, relationship: string, taggedProfileId: string | null = null) {
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const db = createServiceClient();
   const { error } = await db
     .from("connections")
-    .upsert({ fellow_id: user.id, candidate_id: candidateId, relationship });
+    .insert({ fellow_id: user.id, candidate_id: candidateId, relationship, tagged_profile_id: taggedProfileId });
   if (error) return { error: error.message };
+
+  // Notify the tagged person (unless they tagged themselves).
+  if (taggedProfileId && taggedProfileId !== user.id) {
+    const [{ data: cand }, { data: me }] = await Promise.all([
+      db.from("candidates").select("name").eq("id", candidateId).maybeSingle(),
+      db.from("profiles").select("full_name").eq("id", user.id).maybeSingle(),
+    ]);
+    const candName = cand?.name ?? "a candidate";
+    await queueNotification({
+      recipientId: taggedProfileId,
+      type: "tagged",
+      title: `You were tagged on a warm intro`,
+      body: `${me?.full_name ?? "Someone"} noted you may know ${candName}${relationship ? ` — ${relationship}` : ""}.`,
+      link: "/workspace",
+      candidateId,
+      dedupeKey: `tagged:${candidateId}:${taggedProfileId}:${relationship}`,
+    });
+  }
   revalidatePath("/workspace");
   return { ok: true };
 }
@@ -113,7 +132,7 @@ export async function getConnections(candidateId: string) {
   const db = createServiceClient();
   const { data, error } = await db
     .from("connections")
-    .select("id, fellow_id, relationship, profiles(full_name)")
+    .select("id, fellow_id, relationship, tagged_profile_id, profiles(full_name)")
     .eq("candidate_id", candidateId);
   if (error) return { error: error.message, connections: [] as any[] };
   return {
@@ -123,6 +142,7 @@ export async function getConnections(candidateId: string) {
       fellow_id: c.fellow_id as string,
       name: (c.profiles as any)?.full_name ?? "Team member",
       relationship: c.relationship as string,
+      tagged_profile_id: (c.tagged_profile_id as string | null) ?? null,
     })),
   };
 }

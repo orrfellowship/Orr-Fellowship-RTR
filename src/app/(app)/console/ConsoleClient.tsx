@@ -19,6 +19,7 @@ import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
 import { phaseOf } from "@/lib/stages";
+import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -96,6 +97,7 @@ export default function ConsoleClient({
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
 }) {
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "users" | "sync" | "resources">("overview");
   const [scope, setScope] = useState<string>("Org-wide");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
@@ -257,28 +259,28 @@ export default function ConsoleClient({
 
   return (
     <div style={{ minHeight: "100vh", background: C.canvas }}>
-      <div style={{ background: C.navy, padding: "0 28px" }}>
-        <div style={{ maxWidth: 1240, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
-            <div style={{ padding: "14px 0" }}>
+      <div style={{ background: C.navy, padding: isMobile ? "0 14px" : "0 28px" }}>
+        <div style={{ maxWidth: 1240, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 16 : 28, minWidth: 0, flex: 1, overflowX: "auto" }}>
+            <div style={{ padding: "14px 0", flexShrink: 0 }}>
               <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16, color: "#fff" }}>Orr Recruiting</div>
               <div style={{ fontSize: 10, letterSpacing: 1.5, color: "rgba(255,255,255,.45)", textTransform: "uppercase" }}>{superUser ? "Super Admin" : "Admin"} Console</div>
             </div>
             {TABS.map(([k, l]) => (
-              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${C.orange}` : "3px solid transparent" }}>
+              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${C.orange}` : "3px solid transparent", flexShrink: 0, whiteSpace: "nowrap" }}>
                 {l}
               </button>
             ))}
-            <a href="/how-to" style={{ padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: 600, color: "rgba(255,255,255,.55)", textDecoration: "none" }}>How-To</a>
+            <a href="/how-to" style={{ padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: 600, color: "rgba(255,255,255,.55)", textDecoration: "none", flexShrink: 0, whiteSpace: "nowrap" }}>How-To</a>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+            {!isMobile && <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>}
             <button onClick={signOut} style={{ border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "rgba(255,255,255,.75)", fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 8, cursor: "pointer" }}>Sign out</button>
           </div>
         </div>
       </div>
 
-      <div style={{ maxWidth: 1240, margin: "0 auto", padding: "30px 28px 80px", opacity: pending ? 0.7 : 1 }}>
+      <div style={{ maxWidth: 1240, margin: "0 auto", padding: isMobile ? "20px 14px 60px" : "30px 28px 80px", opacity: pending ? 0.7 : 1 }}>
 
         {/* ---- OVERVIEW ---- */}
         {tab === "overview" && (
@@ -458,8 +460,8 @@ export default function ConsoleClient({
               )}
             </div>
 
-            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: `1.7fr 1fr 1fr 0.6fr 1fr${superUser ? " 0.8fr" : ""} 40px`, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16, ...(isMobile ? { overflowX: "auto" } : {}) }}>
+              <div style={{ display: "grid", gridTemplateColumns: `1.7fr 1fr 1fr 0.6fr 1fr${superUser ? " 0.8fr" : ""} 40px`, minWidth: isMobile ? 640 : undefined, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                 <SortHead k="name" label="Applicant" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" />{superUser && <SortHead k="ai" label="AI" />}<div></div>
               </div>
               {visible.map((c) => {
@@ -469,7 +471,7 @@ export default function ConsoleClient({
                   const schoolName = schools.find((s) => s.id === c.school_id)?.name;
                   return (
                     <div key={c.id} onClick={() => setOpenId(c.id)}
-                      style={{ display: "grid", gridTemplateColumns: `1.7fr 1fr 1fr 0.6fr 1fr${superUser ? " 0.8fr" : ""} 40px`, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", opacity: c.not_interested ? 0.5 : 1 }}
+                      style={{ display: "grid", gridTemplateColumns: `1.7fr 1fr 1fr 0.6fr 1fr${superUser ? " 0.8fr" : ""} 40px`, minWidth: isMobile ? 640 : undefined, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", opacity: c.not_interested ? 0.5 : 1 }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = "#F0F4FA")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
                       <div>

@@ -20,6 +20,7 @@ import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
 import NotificationBell, { type AppNotification } from "@/components/NotificationBell";
+import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD",
@@ -39,7 +40,7 @@ type AllSchool   = { id: string; name: string; tier: string; color_primary: stri
 type AllCand     = { id: string; name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; jazz_id: string | null; linkedin: string | null; point_person_id: string | null; not_interested: boolean; resume_link: string | null; is_favorite: boolean };
 type AllGoal     = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 type TeamMember  = { id: string; full_name: string; role?: string | null };
-type Completion  = { profile_id: string; state: string };
+type Completion  = { profile_id: string; state: string; updated_at?: string };
 type Task        = {
   id: string; text: string; assignee_id: string | null; assignee_label: string | null;
   month_label: string | null; notes: string | null; due_date: string | null; done: boolean;
@@ -59,18 +60,41 @@ function StagePill({ stage }: { stage: string | null }) {
 const effAssignees = (t: Task): string[] => (t.assignees && t.assignees.length) ? t.assignees : (t.assignee_id ? [t.assignee_id] : []);
 const compStateOf = (t: Task, pid: string): "confirmed" | "pending_review" | undefined =>
   ((t.completions ?? []).find((c) => c.profile_id === pid)?.state as any) ?? undefined;
+// When the task became fully confirmed (latest confirm time) — for on-time/late.
+const taskDoneAt = (t: Task): string | null => {
+  const conf = (t.completions ?? []).filter((c) => c.state === "confirmed" && c.updated_at).map((c) => c.updated_at!);
+  return conf.length ? conf.reduce((m, v) => (v > m ? v : m)) : null;
+};
+const TODAY_STR = () => new Date().toISOString().slice(0, 10);
+// Classify a task's timeliness for the lead progress panel.
+const dueClass = (t: Task, today: string): "on_time" | "late" | "overdue" | "none" => {
+  if (t.done) {
+    if (!t.due_date) return "on_time";
+    const at = taskDoneAt(t);
+    const doneDay = at ? at.slice(0, 10) : null;
+    return doneDay && doneDay > t.due_date ? "late" : "on_time";
+  }
+  if (t.due_date && t.due_date < today) return "overdue";
+  return "none";
+};
+const fmtDue = (d: string): string => {
+  const [y, m, day] = d.split("-").map(Number);
+  return new Date(y, m - 1, day).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
 
 const SOURCED  = new Set(["new", "contacted", "applied", "bmi", "finalist", "fellow"]);
 const CONTACTD = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
 const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
-  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, notifications,
+  profile, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, notifications, allProfiles,
 }: {
   profile: Profile; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
   lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[]; notifications: AppNotification[];
+  allProfiles: { id: string; full_name: string }[];
 }) {
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources">("plan");
   const [breakdownScope, setBreakdownScope] = useState<"team" | "org">("team");
   const [allFilter, setAllFilter] = useState<string>("All schools");
@@ -207,10 +231,10 @@ export default function WorkspaceClient({
 
   return (
     <div style={{ minHeight: "100vh", background: C.canvas }}>
-      <div style={{ background: C.navy, padding: "0 28px" }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 36 }}>
-            <div style={{ padding: "14px 0", display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ background: C.navy, padding: isMobile ? "0 14px" : "0 28px" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 16 : 36, minWidth: 0, flex: 1, overflowX: "auto" }}>
+            <div style={{ padding: "14px 0", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
               {school?.logo_url && (
                 <img src={school.logo_url} alt={school.name} style={{ height: 32, width: 32, objectFit: "contain", borderRadius: 6, background: "rgba(255,255,255,.12)", padding: 3 }} />
               )}
@@ -227,19 +251,19 @@ export default function WorkspaceClient({
               ["all",       "Applicants"],
               ["resources", "Resources"],
             ] as const).map(([k, l]) => (
-              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent" }}>{l}</button>
+              <button key={k} onClick={() => setTab(k as any)} style={{ border: "none", background: "none", cursor: "pointer", padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: tab === k ? 700 : 600, color: tab === k ? "#fff" : "rgba(255,255,255,.55)", borderBottom: tab === k ? `3px solid ${accent}` : "3px solid transparent", flexShrink: 0, whiteSpace: "nowrap" }}>{l}</button>
             ))}
-            <a href="/how-to" style={{ padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: 600, color: "rgba(255,255,255,.55)", textDecoration: "none" }}>How-To</a>
+            <a href="/how-to" style={{ padding: "15px 0", fontFamily: HEAD, fontSize: 14.5, fontWeight: 600, color: "rgba(255,255,255,.55)", textDecoration: "none", flexShrink: 0, whiteSpace: "nowrap" }}>How-To</a>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
             <NotificationBell notifications={notifications} />
-            <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>
-            <button onClick={signOut} style={{ border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "rgba(255,255,255,.75)", fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 8, cursor: "pointer" }}>Sign out</button>
+            {!isMobile && <div style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>{profile.full_name}</div>}
+            <button onClick={signOut} style={{ border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "rgba(255,255,255,.75)", fontSize: 12, fontWeight: 600, padding: "5px 12px", borderRadius: 8, cursor: "pointer", whiteSpace: "nowrap" }}>Sign out</button>
           </div>
         </div>
       </div>
 
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "30px 28px 80px", opacity: pending ? 0.7 : 1 }}>
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: isMobile ? "20px 14px 60px" : "30px 28px 80px", opacity: pending ? 0.7 : 1 }}>
 
         {/* ---- WEEKLY SNAPSHOT ---- */}
         {tab === "plan" && (
@@ -287,7 +311,7 @@ export default function WorkspaceClient({
             </div>
 
             {/* Action Queue + My Tasks, side by side */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginTop: 26, alignItems: "start" }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20, marginTop: 26, alignItems: "start" }}>
 
               {/* Action Queue */}
               <div>
@@ -422,14 +446,14 @@ export default function WorkspaceClient({
               </button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 240px", gap: 18, marginTop: 16, alignItems: "start" }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 240px", gap: 18, marginTop: 16, alignItems: "start" }}>
               {/* Candidate table */}
-              <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#ececec" }}>
+              <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", ...(isMobile ? { overflowX: "auto" } : {}) }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", minWidth: isMobile ? 560 : undefined, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#ececec" }}>
                   <div>Candidate</div><div>Major</div><div>GPA</div><div>Stage</div><div>Owner</div><div></div>
                 </div>
                 {boardVisible.map((c) => (
-                  <div key={c.id} onClick={() => setOpenId(c.id)} onMouseEnter={() => setHoveredId(c.id)} onMouseLeave={() => setHoveredId(null)} style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: c.not_interested ? 0.5 : 1, cursor: "pointer", background: hoveredId === c.id ? C.canvas : "#ececec", transition: "background 0.1s" }}>
+                  <div key={c.id} onClick={() => setOpenId(c.id)} onMouseEnter={() => setHoveredId(c.id)} onMouseLeave={() => setHoveredId(null)} style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", minWidth: isMobile ? 560 : undefined, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: c.not_interested ? 0.5 : 1, cursor: "pointer", background: hoveredId === c.id ? C.canvas : "#ececec", transition: "background 0.1s" }}>
                     <div><div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div><div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div></div>
                     <div style={{ fontSize: 13.5 }}>{c.area_of_study}</div>
                     <div style={{ fontSize: 13.5, fontWeight: 600 }}>{c.gpa}</div>
@@ -585,8 +609,8 @@ export default function WorkspaceClient({
                 )}
               </div>
 
-              <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+              <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16, ...(isMobile ? { overflowX: "auto" } : {}) }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", minWidth: isMobile ? 620 : undefined, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                   <SortHead k="name" label="Candidate" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" /><div></div>
                 </div>
                 {visible.map((c) => {
@@ -595,7 +619,7 @@ export default function WorkspaceClient({
                   const mine = c.point_person_id === profile.id;
                   return (
                     <div key={c.id} onClick={() => setOpenId(c.id)}
-                      style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", opacity: c.not_interested ? 0.5 : 1 }}
+                      style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", minWidth: isMobile ? 620 : undefined, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", opacity: c.not_interested ? 0.5 : 1 }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = "#F0F4FA")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
                       <div>
@@ -630,7 +654,7 @@ export default function WorkspaceClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} onClose={() => setOpenId(null)} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
+        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} allProfiles={allProfiles} onClose={() => setOpenId(null)} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
       )}
       {resumeFor && (
         <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
@@ -686,6 +710,15 @@ function CompletionBubble({ state, accent, disabled, onToggle, size = 19 }: {
   );
 }
 
+function Stat({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7, background: `${tone}12`, border: `1px solid ${tone}40`, borderRadius: 9, padding: "6px 12px" }}>
+      <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: tone }}>{value}</span>
+      <span style={{ fontSize: 11.5, fontWeight: 600, color: C.grayMute, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</span>
+    </div>
+  );
+}
+
 // ---- PLAYBOOK TAB ----
 const MONTHS = ["July", "August", "September", "Oct/Nov"] as const;
 
@@ -725,9 +758,28 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
   });
 
   // Completion overview
-  const totalTasks = phases.reduce((s, p) => s + p.playbook_tasks.length, 0);
-  const doneTasks  = phases.reduce((s, p) => s + p.playbook_tasks.filter((t) => t.done).length, 0);
+  const allTasks = phases.flatMap((p) => p.playbook_tasks);
+  const totalTasks = allTasks.length;
+  const doneTasks  = allTasks.filter((t) => t.done).length;
   const overallPct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+
+  // Lead progress: on-time vs late completions, overdue, and per-person rollup.
+  const progress = useMemo(() => {
+    const today = TODAY_STR();
+    let onTime = 0, late = 0, overdue = 0;
+    for (const t of allTasks) {
+      const k = dueClass(t, today);
+      if (k === "on_time" && t.done) onTime++;
+      else if (k === "late") late++;
+      else if (k === "overdue") overdue++;
+    }
+    const perPerson = team.map((m) => {
+      const mine = allTasks.filter((t) => effAssignees(t).includes(m.id));
+      const done = mine.filter((t) => compStateOf(t, m.id) === "confirmed").length;
+      return { id: m.id, name: m.full_name, total: mine.length, done };
+    }).filter((p) => p.total > 0).sort((a, b) => b.total - a.total);
+    return { onTime, late, overdue, perPerson };
+  }, [allTasks, team]);
 
   function makeTask(phaseId: string, monthLabel: string) {
     startTransition(() => {
@@ -774,6 +826,33 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
               );
             })}
           </div>
+
+          {/* Lead progress: timeliness + per-person rollup */}
+          {canEdit && (
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.line}` }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                <Stat label="On time" value={progress.onTime} tone={C.good} />
+                <Stat label="Late" value={progress.late} tone={C.gold} />
+                <Stat label="Overdue" value={progress.overdue} tone={C.orange} />
+              </div>
+              {progress.perPerson.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px" }}>
+                  {progress.perPerson.map((p) => {
+                    const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0;
+                    return (
+                      <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 200 }}>
+                        <div style={{ fontSize: 12, color: C.gray, fontWeight: 600, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                        <div style={{ width: 60, height: 4, borderRadius: 99, background: C.line, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${pct}%`, background: pct >= 80 ? C.good : pct >= 50 ? C.gold : C.orange, borderRadius: 99 }} />
+                        </div>
+                        <div style={{ fontSize: 11, color: C.grayMute, width: 48, textAlign: "right" }}>{p.done}/{p.total}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -929,6 +1008,22 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
           <span style={{ flex: 1, fontSize: 13.5, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
         )}
 
+        {(() => {
+          const overdue = !t.done && !!t.due_date && t.due_date < TODAY_STR();
+          if (canEdit) {
+            return (
+              <input type="date" value={t.due_date ?? ""} title="Due date"
+                onChange={(e) => save({ due_date: e.target.value || null })}
+                style={{ fontSize: 11.5, color: overdue ? C.orange : (t.due_date ? C.navy2 : C.grayMute), border: `1px solid ${overdue ? C.orange : C.line}`, borderRadius: 6, padding: "3px 5px", background: "#fff", flexShrink: 0 }} />
+            );
+          }
+          return t.due_date ? (
+            <span title="Due date" style={{ fontSize: 11.5, fontWeight: 700, color: overdue ? C.orange : C.navy2, flexShrink: 0, whiteSpace: "nowrap" }}>
+              {overdue ? "⚠ " : ""}{fmtDue(t.due_date)}
+            </span>
+          ) : null;
+        })()}
+
         <button onClick={onToggleNote} title={noteOpen ? "Hide notes" : "Show notes"}
           style={{ border: "none", background: "none", cursor: "pointer", fontSize: 15, color: (t.notes?.trim()) ? C.navy2 : C.grayMute, flexShrink: 0, padding: "0 4px" }}>
           {noteOpen ? "▲" : "📝"}
@@ -993,11 +1088,12 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
   );
 }
 
-type Connection = { id: string; fellow_id: string; name: string; relationship: string };
+type Connection = { id: string; fellow_id: string; name: string; relationship: string; tagged_profile_id?: string | null };
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
-function CandidateDrawer({ c, canEdit, profile, team, onClose, startTransition, onResume }: {
+function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, startTransition, onResume }: {
   c: Cand; canEdit: boolean; profile: Profile; team: TeamMember[];
+  allProfiles: { id: string; full_name: string }[];
   onClose: () => void; startTransition: (cb: () => void) => void;
   onResume: (jazzId: string, name: string) => void;
 }) {
@@ -1005,6 +1101,8 @@ function CandidateDrawer({ c, canEdit, profile, team, onClose, startTransition, 
   const [log, setLog] = useState<{ id: string; body: string; created_at: string; author_id: string | null }[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
   const [relDraft, setRelDraft] = useState("");
+  const [tagId, setTagId] = useState<string | null>(null); // optional person to tag on a warm intro
+  const profileName = (id: string | null) => (id === profile.id ? "You" : allProfiles.find((p) => p.id === id)?.full_name ?? "Someone");
   const QUICK = ["Called — left voicemail", "Emailed", "Met in person", "Scheduled follow-up"];
 
   useEffect(() => {
@@ -1019,10 +1117,12 @@ function CandidateDrawer({ c, canEdit, profile, team, onClose, startTransition, 
 
   const doAddConn = (rel: string) => {
     if (!rel.trim()) return;
+    const tagged = tagId;
     startTransition(() => {
-      addConnection(c.id, rel.trim());
-      setConns((prev) => [{ id: Math.random().toString(), fellow_id: profile.id, name: "You", relationship: rel.trim() }, ...(prev ?? [])]);
+      addConnection(c.id, rel.trim(), tagged);
+      setConns((prev) => [{ id: Math.random().toString(), fellow_id: profile.id, name: "You", relationship: rel.trim(), tagged_profile_id: tagged }, ...(prev ?? [])]);
       setRelDraft("");
+      setTagId(null);
     });
   };
 
@@ -1089,18 +1189,34 @@ function CandidateDrawer({ c, canEdit, profile, team, onClose, startTransition, 
               <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>Loading…</div>
             ) : conns.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
-                {conns.map((cn) => (
-                  <div key={cn.id} style={{ fontSize: 13, color: C.gray, display: "flex", gap: 6, alignItems: "center" }}>
-                    <span style={{ fontSize: 16 }}>●</span>
-                    <span style={{ flex: 1 }}><b>{cn.name}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span></span>
-                    {(cn.fellow_id === profile.id || canEdit) && <button onClick={() => doDelConn(cn.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px" }}>×</button>}
-                  </div>
-                ))}
+                {conns.map((cn) => {
+                  const holder = cn.tagged_profile_id ? profileName(cn.tagged_profile_id) : cn.name;
+                  const taggedByOther = cn.tagged_profile_id && cn.tagged_profile_id !== cn.fellow_id;
+                  return (
+                    <div key={cn.id} style={{ fontSize: 13, color: C.gray, display: "flex", gap: 6, alignItems: "center" }}>
+                      <span style={{ fontSize: 16, color: cn.tagged_profile_id ? C.gold : C.gray }}>●</span>
+                      <span style={{ flex: 1 }}>
+                        <b>{holder}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span>
+                        {taggedByOther && <span style={{ color: C.navy3, fontSize: 11.5 }}> · tagged by {cn.name}</span>}
+                      </span>
+                      {(cn.fellow_id === profile.id || canEdit) && <button onClick={() => doDelConn(cn.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px" }}>×</button>}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic", marginBottom: 10 }}>No connections logged yet.</div>
             )}
-            {/* Anyone can log a warm intro — even for a candidate they don't own. */}
+            {/* Anyone can log a warm intro — even for a candidate they don't own.
+                Optionally tag a person (anyone, any school); they get notified. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 11.5, color: C.grayMute, fontWeight: 600, flexShrink: 0 }}>Who knows them?</span>
+              <div style={{ flex: 1 }}>
+                <PersonPicker value={tagId} options={allProfiles} meId={profile.id} accent={C.gold} compact
+                  unassignedLabel="You" placeholder="Tag anyone…"
+                  onChange={(v) => setTagId(v)} />
+              </div>
+            </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
               {REL_QUICK.map((r) => (
                 <button key={r} onClick={() => doAddConn(r)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 11.5, padding: "4px 10px", borderRadius: 999, cursor: "pointer" }}>+ {r}</button>
