@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentProfile } from "@/lib/auth";
+import { getCurrentProfile, getSchoolById } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus } from "@/lib/types";
 import { accentFor, type Role } from "@/lib/nav/config";
@@ -27,9 +27,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const role = profile.role as Role;
   const db = createServiceClient();
 
-  const school = profile.school_id
-    ? (await db.from("schools").select("id, name, color_primary, logo_url").eq("id", profile.school_id).maybeSingle()).data
-    : null;
+  const school = await getSchoolById(profile.school_id);
 
   const accent = isAdminPlus(role)
     ? accentFor(role)
