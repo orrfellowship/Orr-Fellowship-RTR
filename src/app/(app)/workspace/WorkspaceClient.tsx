@@ -233,7 +233,7 @@ export default function WorkspaceClient({
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Weekly Snapshot</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{plan.length} move{plan.length !== 1 ? "s" : ""} queued · {totalActive} active candidates</p>
               </div>
-              <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+              <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Bulk import</button>
             </div>
 
             {/* Pipeline breakdown — toggle between your team and the whole org */}
@@ -385,7 +385,7 @@ export default function WorkspaceClient({
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>My School Board</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardVisible.length}{boardFiltersActive ? ` of ${candidates.length}` : ""} candidate{candidates.length !== 1 ? "s" : ""}.</p>
               </div>
-              <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+              <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Bulk import</button>
             </div>
 
             {/* Search bar */}
@@ -538,7 +538,7 @@ export default function WorkspaceClient({
                   <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Applicants</h1>
                   <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates · click a row to view details</p>
                 </div>
-                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Bulk import</button>
               </div>
 
               {/* Filter bar */}

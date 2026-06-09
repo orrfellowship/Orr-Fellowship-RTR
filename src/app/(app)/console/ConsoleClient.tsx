@@ -370,7 +370,7 @@ export default function ConsoleClient({
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <button onClick={() => setAddOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add</button>
-                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Bulk import</button>
               </div>
             </div>
 
@@ -660,7 +660,7 @@ export default function ConsoleClient({
                   <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Schools & Goals</h1>
                   <p style={{ color: C.grayMute, margin: "4px 0 0" }}>Pipeline stats and goals per school. Satellite and bonus schools are grouped.</p>
                 </div>
-                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Bulk import</button>
               </div>
               {schoolsByTier.map(({ tier, schools: tierSchools }) => {
                 const isGrouped = tier === "satellite" || tier === "bonus";
