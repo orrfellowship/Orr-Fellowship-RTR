@@ -94,7 +94,7 @@ export default function Sidebar({
       </div>
 
       {/* Nav groups */}
-      <nav style={{ flex: 1, overflowY: "auto", padding: "4px 14px 12px", position: "relative" }}>
+      <nav className="orr-sidebar-scroll" style={{ flex: 1, overflowY: "auto", padding: "4px 14px 12px", position: "relative" }}>
         {groups.map((section, si) => (
           <div key={si} style={{ marginTop: si === 0 ? 0 : 18 }}>
             {section.group && !collapsed && <div style={{ fontFamily: FM, fontSize: 10, letterSpacing: 1.4, textTransform: "uppercase", color: t.textLo, padding: "0 10px 8px" }}>{section.group}</div>}

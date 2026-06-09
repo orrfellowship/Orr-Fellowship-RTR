@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Bell } from "lucide-react";
 import { markNotificationsRead } from "@/app/(app)/workspace/actions";
 
 const C = {
@@ -49,9 +50,14 @@ export default function NotificationBell({ notifications }: { notifications: App
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
-      <button onClick={openPanel} aria-label="Notifications"
-        style={{ position: "relative", border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "rgba(255,255,255,.85)", width: 34, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        🔔
+      <style>{`
+        .orr-bell { transition: background .12s, border-color .12s, transform .1s; }
+        .orr-bell:hover { background: #f0eff7 !important; border-color: #d4d1e8 !important; }
+        .orr-bell:active { background: #e4e2f2 !important; transform: scale(.93); }
+      `}</style>
+      <button onClick={openPanel} aria-label="Notifications" className="orr-bell"
+        style={{ position: "relative", border: "1px solid #eceaf2", background: "#ffffff", color: "#211d44", width: 34, height: 30, borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Bell size={15} />
         {unread > 0 && (
           <span style={{ position: "absolute", top: -6, right: -6, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 999, background: C.orange, color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{unread > 9 ? "9+" : unread}</span>
         )}

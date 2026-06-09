@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard, UserSearch, Trophy, GraduationCap, Users, RefreshCw,
-  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck,
+  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck, Upload,
 } from "lucide-react";
 import type { AppRole } from "@/lib/types";
 import { isAdminPlus, isSuper } from "@/lib/types";
@@ -67,6 +67,7 @@ function consoleNav(role: Role): NavGroup[] {
       { id: "applicants", label: "Applicants", href: "/console/applicants", icon: UserSearch, hint: "Candidate pipeline", badgeKey: "applicants" },
       { id: "standings", label: "Standings", href: "/console/standings", icon: Trophy, hint: "School leaderboard" },
       { id: "schools", label: "Schools", href: "/console/schools", icon: GraduationCap, hint: "Programs & targets" },
+      { id: "import", label: "Import", href: "/import", icon: Upload, hint: "Bulk import applicants" },
     ] },
     { group: "Operations", items: operations },
     { group: "Knowledge", items: [
@@ -84,6 +85,7 @@ function workspaceNav(): NavGroup[] {
       { id: "my-school", label: "My School", href: "/workspace/my-school", icon: School, hint: "Your school dashboard" },
       { id: "standings", label: "Standings", href: "/workspace/standings", icon: Trophy, hint: "How schools rank" },
       { id: "applicants", label: "Applicants", href: "/workspace/applicants", icon: UserSearch, hint: "Your candidate pipeline", badgeKey: "applicants" },
+      { id: "import", label: "Import", href: "/import", icon: Upload, hint: "Bulk import applicants" },
     ] },
     { group: "Playbook", items: [
       { id: "playbook", label: "Playbook", href: "/workspace/playbook", icon: BookMarked, hint: "Strategy & process" },
