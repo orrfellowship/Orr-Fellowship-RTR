@@ -655,8 +655,13 @@ export default function ConsoleClient({
 
           return (
             <>
-              <h1 style={{ fontSize: 30, color: C.navy, margin: "0 0 6px" }}>Schools & Goals</h1>
-              <p style={{ color: C.grayMute, margin: "0 0 20px" }}>Pipeline stats and goals per school. Satellite and bonus schools are grouped.</p>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 20 }}>
+                <div>
+                  <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Schools & Goals</h1>
+                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>Pipeline stats and goals per school. Satellite and bonus schools are grouped.</p>
+                </div>
+                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+              </div>
               {schoolsByTier.map(({ tier, schools: tierSchools }) => {
                 const isGrouped = tier === "satellite" || tier === "bonus";
                 const tierSchoolIds = tierSchools.map((s) => s.id);

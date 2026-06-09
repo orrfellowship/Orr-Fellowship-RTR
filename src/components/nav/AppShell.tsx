@@ -105,6 +105,10 @@ function NavStyles() {
       .orr-lift:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(33,29,68,0.12); }
       .orr-scroll::-webkit-scrollbar { width: 9px; }
       .orr-scroll::-webkit-scrollbar-thumb { background: #e2e0ec; border-radius: 8px; }
+      .orr-sidebar-scroll::-webkit-scrollbar { width: 5px; }
+      .orr-sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+      .orr-sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 99px; }
+      .orr-sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
       @media (max-width: 720px) { .orr-hide-sm { display: none; } }
     `}</style>
   );
