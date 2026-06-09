@@ -3,66 +3,68 @@ import { getCurrentProfile } from "@/lib/auth";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { isSuper, isAdminPlus } from "@/lib/types";
 import { canAccessConsoleSection } from "@/lib/nav/config";
+import {
+  getSchoolsCached, getGoalsCached, getResourcesCached,
+  CAND_COLS_STANDINGS, CAND_COLS_CONSOLE,
+} from "@/lib/queries";
 import ConsoleClient from "../ConsoleClient";
 
+// Each route renders one section → only fetch what that section reads.
 export default async function ConsoleSection({ params }: { params: { section: string } }) {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
   if (!isAdminPlus(profile.role)) redirect("/workspace/snapshot");
-  // Per-section server guard (mirrors the sidebar's allowed routes). A hand-typed
-  // /console/users by an admin (non-super) lands here and is bounced.
   if (!canAccessConsoleSection(profile.role, params.section)) redirect("/console/overview");
-  const initialSection = params.section;
+  const S = params.section;
+  const sup = isSuper(profile.role);
+
+  const need = {
+    candidates: ["overview", "applicants", "standings", "schools", "sync", "review"].includes(S),
+    goals: ["overview", "standings", "schools"].includes(S),
+    team: ["applicants", "playbook"].includes(S),
+    phases: S === "playbook",
+    resources: S === "resources",
+    reviews: ["applicants", "sync", "review"].includes(S),
+    ai: S === "applicants" && sup,
+    users: S === "users" && sup,
+    favs: S === "applicants",
+  };
 
   const supabase = createServerSupabase();
+  const serviceDb = createServiceClient();
 
-  const { data: schools } = await supabase.from("schools").select("id, name, tier, color_primary, logo_url").order("name");
-  const { data: candidates } = await supabase
-    .from("candidates")
-    .select("id, jazz_id, name, email, school_id, stage, gpa, area_of_study, university_raw, linkedin, resume_link, point_person_id, not_interested, grad_date")
-    .order("name");
-  const { data: favs } = await supabase.from("favorites").select("candidate_id").eq("user_id", profile.id);
-  const { data: team } = await supabase.from("profiles").select("id, full_name").order("full_name");
-  const { data: goals } = await supabase.from("school_goals").select("school_id, goal_sourced, goal_contacted, goal_applied");
-  const { data: phases } = await supabase
-    .from("playbook_phases")
-    .select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)")
-    .order("sort_order");
-  const { data: resources } = await supabase.from("resources").select("id, name, description, link, created_by, created_at").order("created_at", { ascending: false });
+  // Standings only reads id/school_id/stage; every other view needs the full row.
+  const candSelect = S === "standings" ? CAND_COLS_STANDINGS : CAND_COLS_CONSOLE;
 
-  let ai: { candidate_id: string; resume_score: number | null; summary: string | null; flags: any; analyzed_at: string | null }[] = [];
-  let users: { id: string; full_name: string; email: string; role: string; school_id: string | null; is_active: boolean }[] = [];
-  let reviews: { id: string; jazz_snapshot: any; candidate_id: string | null; reason: string | null }[] = [];
+  // Reference tables (schools/goals/resources) come from the shared Data Cache.
+  const [schools, candidates, favs, team, goals, phases, resources, reviewData, aiData, usersData] = await Promise.all([
+    getSchoolsCached(),
+    need.candidates ? supabase.from("candidates").select(candSelect).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.favs ? supabase.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.team ? supabase.from("profiles").select("id, full_name").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.goals ? getGoalsCached() : Promise.resolve([] as any[]),
+    need.phases ? supabase.from("playbook_phases").select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.resources ? getResourcesCached() : Promise.resolve([] as any[]),
+    need.reviews ? serviceDb.from("jazz_match_review").select("id, jazz_snapshot, candidate_id, reason").eq("status", "pending").order("created_at", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.ai ? supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.users ? supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+  ]);
 
-  if (isAdminPlus(profile.role)) {
-    const { data: reviewData } = await createServiceClient()
-      .from("jazz_match_review").select("id, jazz_snapshot, candidate_id, reason").eq("status", "pending").order("created_at", { ascending: false });
-    reviews = reviewData ?? [];
-  }
-  if (isSuper(profile.role)) {
-    const [{ data: aiData }, { data: usersData }] = await Promise.all([
-      supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at"),
-      supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name"),
-    ]);
-    ai = aiData ?? [];
-    users = usersData ?? [];
-  }
-
-  const favSet = new Set((favs ?? []).map((f) => f.candidate_id));
-  const enriched = (candidates ?? []).map((c) => ({ ...c, is_favorite: favSet.has(c.id) }));
+  const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
+  const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
 
   return (
     <ConsoleClient
       profile={profile}
-      initialSection={initialSection}
+      initialSection={S}
       schools={schools ?? []}
       candidates={enriched}
       team={team ?? []}
       goals={goals ?? []}
-      ai={ai}
+      ai={aiData ?? []}
       phases={phases ?? []}
-      users={users}
-      reviews={reviews}
+      users={usersData ?? []}
+      reviews={reviewData ?? []}
       resources={resources ?? []}
     />
   );

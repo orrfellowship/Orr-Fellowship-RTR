@@ -1,8 +1,12 @@
 import { redirect } from "next/navigation";
-import { getCurrentProfile } from "@/lib/auth";
-import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
+import { getCurrentProfile, getSchoolById } from "@/lib/auth";
+import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus } from "@/lib/types";
 import { canAccessWorkspaceSection } from "@/lib/nav/config";
+import {
+  getTierSchoolIds, getSchoolsCached, getGoalsCached, getResourcesCached,
+  CAND_COLS_STANDINGS, CAND_COLS_WORKSPACE,
+} from "@/lib/queries";
 import WorkspaceClient from "../WorkspaceClient";
 
 // slug (URL) → internal tab key used by WorkspaceClient
@@ -11,46 +15,61 @@ const TAB: Record<string, string> = {
   applicants: "all", playbook: "playbook", resources: "resources",
 };
 
+// Each route renders exactly ONE section, so we only fetch what that section
+// reads. Everything else is passed empty — the other tabs' code never runs.
 export default async function WorkspaceSection({ params }: { params: { section: string } }) {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
   if (isAdminPlus(profile.role)) redirect("/console/overview");
-  // Unknown / disallowed section → home.
   if (!canAccessWorkspaceSection(profile.role, params.section)) redirect("/workspace/snapshot");
-  const initialSection = TAB[params.section];
+  const S = TAB[params.section]; // internal tab key
 
-  const supabase = createServerSupabase();
+  const need = {
+    candidates: S === "plan" || S === "board",
+    phases: S === "plan" || S === "playbook",
+    team: S === "plan" || S === "board" || S === "playbook" || S === "all",
+    allCandidates: S === "plan" || S === "standings" || S === "all",
+    allSchools: S === "standings" || S === "all",
+    allGoals: S === "plan" || S === "standings",
+    events: S === "plan",
+    resources: S === "resources",
+    allProfiles: S === "plan" || S === "board" || S === "all",
+    lastContact: S === "plan",
+  };
+  // Favorites only matter to the board (candidates) and applicants (all) views.
+  const wantFavs = need.candidates || S === "all";
+
   const serviceDb = createServiceClient();
   const schoolId = profile.school_id ?? "";
+  const school = await getSchoolById(schoolId);
 
-  const { data: school } = await supabase
-    .from("schools")
-    .select("id, name, tier, color_primary, logo_url")
-    .eq("id", schoolId)
-    .maybeSingle();
+  // Resolve the tier's schools (satellite/bonus share one team + playbook).
+  // Shared, request-deduped loader — the layout's nav card resolves the same set.
+  const { ids: tierSchoolIds, tier } = await getTierSchoolIds(schoolId);
+  const groupName = tier === "satellite" ? "Satellite School" : tier === "bonus" ? "Bonus School" : null;
+  const playbookSchoolId = tierSchoolIds[0] ?? schoolId;
 
-  const tier = (school as any)?.tier ?? null;
-  const isTierGroup = tier === "satellite" || tier === "bonus";
-  let tierSchoolIds: string[] = [schoolId];
-  let groupName: string | null = null;
-  let playbookSchoolId = schoolId;
-  if (isTierGroup) {
-    const { data: tierSchools } = await serviceDb.from("schools").select("id, name").eq("tier", tier).order("name");
-    tierSchoolIds = (tierSchools ?? []).map((s: any) => s.id);
-    playbookSchoolId = (tierSchools ?? [])[0]?.id ?? schoolId;
-    groupName = tier === "satellite" ? "Satellite School" : "Bonus School";
-  }
+  // Standings only reads id/school_id/stage; every other view needs the full row.
+  const allCandSelect = S === "standings" ? CAND_COLS_STANDINGS : CAND_COLS_WORKSPACE;
 
-  const [{ data: candidates }, { data: favs }, { data: team }, { data: phases }] = await Promise.all([
-    serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested").in("school_id", tierSchoolIds).order("name"),
-    supabase.from("favorites").select("candidate_id").eq("user_id", profile.id),
-    serviceDb.from("profiles").select("id, full_name, role").in("school_id", tierSchoolIds),
-    serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").eq("school_id", playbookSchoolId).order("sort_order"),
+  // Parallel, section-scoped fetches. Reference tables come from the shared
+  // Data Cache (getSchoolsCached / getGoalsCached / getResourcesCached).
+  const [candidates, favs, team, phases, allCandidates, allProfiles, allSchools, allGoals, resources] = await Promise.all([
+    need.candidates ? serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested").in("school_id", tierSchoolIds).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    wantFavs ? serviceDb.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.team ? serviceDb.from("profiles").select("id, full_name, role").in("school_id", tierSchoolIds).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.phases ? serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").eq("school_id", playbookSchoolId).order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.allCandidates ? serviceDb.from("candidates").select(allCandSelect).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.allProfiles ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.allSchools ? getSchoolsCached() : Promise.resolve([] as any[]),
+    need.allGoals ? getGoalsCached() : Promise.resolve([] as any[]),
+    need.resources ? getResourcesCached() : Promise.resolve([] as any[]),
   ]);
 
+  // Playbook task enrichment (only if phases were fetched).
   const phasesWithReview = (phases ?? []) as any[];
-  const allTaskIds = phasesWithReview.flatMap((p) => (p.playbook_tasks ?? []).map((t: any) => t.id));
   for (const p of phasesWithReview) for (const t of (p.playbook_tasks ?? [])) { t.assignees = []; t.completions = []; }
+  const allTaskIds = phasesWithReview.flatMap((p) => (p.playbook_tasks ?? []).map((t: any) => t.id));
   if (allTaskIds.length) {
     const { data: prRows } = await serviceDb.from("playbook_tasks").select("id, pending_review").in("id", allTaskIds);
     if (prRows) {
@@ -68,9 +87,10 @@ export default async function WorkspaceSection({ params }: { params: { section: 
     for (const p of phasesWithReview) for (const t of (p.playbook_tasks ?? [])) { t.assignees = byTaskA.get(t.id) ?? []; t.completions = byTaskC.get(t.id) ?? []; }
   }
 
-  const candidateIds = (candidates ?? []).map((c) => c.id);
+  // Last-contact map drives the action queue (snapshot only).
+  const candidateIds = (candidates ?? []).map((c: any) => c.id);
   const lastContactByCand: Record<string, string> = {};
-  if (candidateIds.length) {
+  if (need.lastContact && candidateIds.length) {
     const { data: logs } = await serviceDb.from("outreach_log").select("candidate_id, created_at").in("candidate_id", candidateIds);
     for (const l of logs ?? []) {
       const prev = lastContactByCand[(l as any).candidate_id];
@@ -78,44 +98,37 @@ export default async function WorkspaceSection({ params }: { params: { section: 
     }
   }
 
-  const [{ data: allSchools }, { data: allCandidates }, { data: allGoals }, { data: resources }, { data: allProfiles }] = await Promise.all([
-    serviceDb.from("schools").select("id, name, tier, color_primary, logo_url").order("name"),
-    serviceDb.from("candidates").select("id, name, email, school_id, stage, gpa, area_of_study, jazz_id, linkedin, point_person_id, not_interested, resume_link").order("name"),
-    serviceDb.from("school_goals").select("school_id, goal_sourced, goal_contacted, goal_applied"),
-    serviceDb.from("resources").select("id, name, description, link, created_by, created_at").order("created_at", { ascending: false }),
-    serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name"),
-  ]);
-
-  const eventSchoolIds = tierSchoolIds.filter(Boolean);
-  const orFilter = `school_id.is.null${eventSchoolIds.length ? `,school_id.in.(${eventSchoolIds.join(",")})` : ""}`;
-  const { data: eventRows } = await serviceDb.from("events").select("id, title, description, event_date, event_type, school_id, created_by").or(orFilter).order("event_date");
-  const eventIds = (eventRows ?? []).map((e: any) => e.id);
-  const rsvpByEvent: Record<string, { going: string[]; not_going: string[] }> = {};
-  const myRsvp: Record<string, string> = {};
-  if (eventIds.length) {
-    const { data: rsvps } = await serviceDb.from("event_rsvps").select("event_id, profile_id, status").in("event_id", eventIds);
-    for (const r of rsvps ?? []) {
-      const e = (r as any).event_id;
-      (rsvpByEvent[e] ??= { going: [], not_going: [] });
-      if ((r as any).status === "going") rsvpByEvent[e].going.push((r as any).profile_id);
-      else rsvpByEvent[e].not_going.push((r as any).profile_id);
-      if ((r as any).profile_id === profile.id) myRsvp[e] = (r as any).status;
+  // Calendar (snapshot only).
+  let events: any[] = [];
+  if (need.events) {
+    const eventSchoolIds = tierSchoolIds.filter(Boolean);
+    const orFilter = `school_id.is.null${eventSchoolIds.length ? `,school_id.in.(${eventSchoolIds.join(",")})` : ""}`;
+    const { data: eventRows } = await serviceDb.from("events").select("id, title, description, event_date, event_type, school_id, created_by").or(orFilter).order("event_date");
+    const eventIds = (eventRows ?? []).map((e: any) => e.id);
+    const rsvpByEvent: Record<string, { going: string[]; not_going: string[] }> = {};
+    const myRsvp: Record<string, string> = {};
+    if (eventIds.length) {
+      const { data: rsvps } = await serviceDb.from("event_rsvps").select("event_id, profile_id, status").in("event_id", eventIds);
+      for (const r of rsvps ?? []) {
+        const e = (r as any).event_id;
+        (rsvpByEvent[e] ??= { going: [], not_going: [] });
+        if ((r as any).status === "going") rsvpByEvent[e].going.push((r as any).profile_id);
+        else rsvpByEvent[e].not_going.push((r as any).profile_id);
+        if ((r as any).profile_id === profile.id) myRsvp[e] = (r as any).status;
+      }
     }
+    events = (eventRows ?? []).map((e: any) => ({ ...e, going: rsvpByEvent[e.id]?.going ?? [], not_going: rsvpByEvent[e.id]?.not_going ?? [], my_status: (myRsvp[e.id] as "going" | "not_going" | undefined) ?? null }));
   }
-  const events = (eventRows ?? []).map((e: any) => ({
-    ...e, going: rsvpByEvent[e.id]?.going ?? [], not_going: rsvpByEvent[e.id]?.not_going ?? [],
-    my_status: (myRsvp[e.id] as "going" | "not_going" | undefined) ?? null,
-  }));
 
-  const favSet = new Set((favs ?? []).map((f) => f.candidate_id));
-  const enriched = (candidates ?? []).map((c) => ({ ...c, is_favorite: favSet.has(c.id) }));
-  const allEnriched = (allCandidates ?? []).map((c) => ({ ...c, is_favorite: favSet.has(c.id) }));
+  const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
+  const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
+  const allEnriched = (allCandidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
 
   return (
     <WorkspaceClient
       profile={profile}
-      initialSection={initialSection}
-      school={school ? { id: school.id, name: school.name, color_primary: (school as any).color_primary, logo_url: (school as any).logo_url } : null}
+      initialSection={S}
+      school={school ? { id: school.id, name: school.name, color_primary: school.color_primary, logo_url: school.logo_url } : null}
       candidates={enriched}
       team={team ?? []}
       phases={phasesWithReview}

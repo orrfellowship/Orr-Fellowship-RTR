@@ -1,22 +1,11 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus, isSuper, type Profile } from "@/lib/types";
 import { evaluateCandidate } from "@/lib/triggers";
+import { getTierSchoolIds } from "@/lib/queries";
 import type { BadgeKey } from "@/lib/nav/config";
 
 export interface ThisWeek { queueCount: number; tasksDone: number; tasksTotal: number; }
 export interface NavData { badges: Partial<Record<BadgeKey, number>>; thisWeek: ThisWeek | null; }
-
-// Resolve the school_ids a fellow/lead's data spans (satellite/bonus tiers are one team).
-async function tierSchoolIds(db: ReturnType<typeof createServiceClient>, schoolId: string | null): Promise<string[]> {
-  if (!schoolId) return [];
-  const { data: school } = await db.from("schools").select("id, tier").eq("id", schoolId).maybeSingle();
-  const tier = (school as any)?.tier;
-  if (tier === "satellite" || tier === "bonus") {
-    const { data: rows } = await db.from("schools").select("id").eq("tier", tier);
-    return (rows ?? []).map((r: any) => r.id);
-  }
-  return [schoolId];
-}
 
 // Sidebar badges + the fellow/lead "This Week" card. Returns empty/null pieces
 // rather than guessed values when something can't be computed.
@@ -36,7 +25,7 @@ export async function loadNavData(profile: Profile): Promise<NavData> {
   }
 
   // ---- fellow / team_lead ----
-  const schoolIds = await tierSchoolIds(db, profile.school_id);
+  const { ids: schoolIds } = await getTierSchoolIds(profile.school_id);
   if (schoolIds.length === 0) return { badges, thisWeek: { queueCount: 0, tasksDone: 0, tasksTotal: 0 } };
 
   const { data: cands } = await db
