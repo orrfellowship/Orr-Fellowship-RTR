@@ -12,12 +12,13 @@ import {
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
+import BudgetPanel, { type BudgetEntry } from "@/components/BudgetPanel";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
-import { phaseOf } from "@/lib/stages";
+import { phaseOf, resolveCandidateSchool } from "@/lib/stages";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -91,15 +92,15 @@ function fmtPct(actual: number, goal: number) {
 
 export default function ConsoleClient({
   profile, initialSection, schools, candidates, team, goals, ai, phases, users, reviews, resources,
-  events = [], people = [],
+  events = [], people = [], budgetEntries = [],
 }: {
   profile: Profile; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
-  events?: CalEvent[]; people?: { id: string; full_name: string }[];
+  events?: CalEvent[]; people?: { id: string; full_name: string }[]; budgetEntries?: BudgetEntry[];
 }) {
   const isMobile = useIsMobile();
-  const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "calendar" | "users" | "sync" | "resources" | "review">(initialSection as any);
+  const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "calendar" | "budget" | "users" | "sync" | "resources" | "review">(initialSection as any);
   const [scope, setScope] = useState<string>("Org-wide");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
   const [pbAssignee, setPbAssignee] = useState<string>("all");
@@ -287,7 +288,7 @@ export default function ConsoleClient({
               })}
             </div>
             <p style={{ fontSize: 12.5, color: C.grayMute, marginTop: 12, fontStyle: "italic" }}>
-              {superUser ? "AI résumé scores are visible to you on the Applicants tab." : "AI résumé scores are Super-Admin only."}
+              {superUser ? "AI résumé scores are visible to you on the Candidates tab." : "AI résumé scores are Super-Admin only."}
             </p>
             <h2 style={{ fontFamily: HEAD, fontSize: 20, color: C.navy, margin: "32px 0 12px" }}>By school</h2>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
@@ -367,7 +368,7 @@ export default function ConsoleClient({
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
-                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Applicants</h1>
+                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Candidates</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
                   {visible.length} candidates{superUser ? " · AI scores visible" : ""}
                   {unroutedCount > 0 && !showUnrouted && <span style={{ color: C.orange }}> · {unroutedCount} unrouted</span>}
@@ -434,7 +435,7 @@ export default function ConsoleClient({
 
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16, ...(isMobile ? { overflowX: "auto" } : {}) }}>
               <div style={{ display: "grid", gridTemplateColumns: `1.7fr 1fr 1fr 0.6fr 1fr${superUser ? " 0.8fr" : ""} 40px`, minWidth: isMobile ? 640 : undefined, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                <SortHead k="name" label="Applicant" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" />{superUser && <SortHead k="ai" label="AI" />}<div></div>
+                <SortHead k="name" label="Candidate" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" />{superUser && <SortHead k="ai" label="AI" />}<div></div>
               </div>
               {visible.map((c) => {
                   const aiRec = aiMap.get(c.id);
@@ -474,7 +475,7 @@ export default function ConsoleClient({
                   );
                 })}
               {visible.length === 0 && (
-                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{filtersActive ? "No applicants match these filters." : showUnrouted ? "No unrouted candidates — routing is complete!" : "No applicants yet — run a sync."}</div>
+                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{filtersActive ? "No candidates match these filters." : showUnrouted ? "No unrouted candidates — routing is complete!" : "No candidates yet — run a sync."}</div>
               )}
             </div>
           </>
@@ -506,6 +507,17 @@ export default function ConsoleClient({
               schools={schools}
               scopePicker
             />
+          </>
+        )}
+
+        {/* ---- BUDGET ---- */}
+        {tab === "budget" && (
+          <>
+            <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Budget</h1>
+            <p style={{ color: C.grayMute, margin: "4px 0 20px" }}>
+              Track allocations and expenses, organization-wide or per school. Team leads can view their school&apos;s budget.
+            </p>
+            <BudgetPanel entries={budgetEntries} schools={schools} canEdit={adminPlus} scopePicker />
           </>
         )}
 
@@ -756,7 +768,7 @@ export default function ConsoleClient({
         })()}
 
         {/* ---- USERS ---- */}
-        {tab === "users" && superUser && (
+        {tab === "users" && adminPlus && (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
@@ -1175,7 +1187,7 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
 }
 
 // ---- Add Candidate Modal ----
-const EMPTY_FORM = { name: "", email: "", school_id: "", stage: "", gpa: "", area_of_study: "" };
+const EMPTY_FORM = { name: "", email: "", school: "", stage: "", gpa: "", area_of_study: "" };
 function AddCandidateModal({ schools, existingEmails, onClose, startTransition }: {
   schools: School[]; existingEmails: Set<string>;
   onClose: () => void; startTransition: (cb: () => void) => void;
@@ -1190,11 +1202,13 @@ function AddCandidateModal({ schools, existingEmails, onClose, startTransition }
   const submit = () => {
     if (!form.name.trim()) { setError("Name is required."); return; }
     setError(null);
+    const { school_id, university_raw } = resolveCandidateSchool(form.school, schools);
     startTransition(() => {
       addCandidate({
         name: form.name.trim(),
         email: form.email.trim() || null,
-        school_id: form.school_id || null,
+        school_id,
+        university_raw,
         // Stage / GPA / major are filled in later from JazzHR — not part of sourcing.
         stage: null,
         gpa: null,
@@ -1228,11 +1242,15 @@ function AddCandidateModal({ schools, existingEmails, onClose, startTransition }
         </div>
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>School</label>
-          <select value={form.school_id} onChange={(e) => set("school_id", e.target.value)}
-            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff" }}>
-            <option value="">— Unassigned —</option>
-            {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          <input list="addcand-schools" value={form.school} onChange={(e) => set("school", e.target.value)}
+            placeholder="Pick a school or type any (e.g. University of Kentucky)"
+            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" }} />
+          <datalist id="addcand-schools">
+            {schools.map((s) => <option key={s.id} value={s.name} />)}
+          </datalist>
+          <div style={{ fontSize: 12, color: C.grayMute, marginTop: 5 }}>
+            Core and Satellite schools route to themselves; anything else (including schools not listed) goes to the <b>Bonus</b> group.
+          </div>
         </div>
         <div style={{ background: "#EEF1F7", borderRadius: 9, padding: "9px 12px", marginBottom: 14, fontSize: 12, color: C.grayMute }}>
           Stage, GPA, and major are added automatically once the candidate applies through JazzHR.

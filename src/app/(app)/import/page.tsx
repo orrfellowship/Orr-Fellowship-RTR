@@ -4,7 +4,7 @@ import ImportClient from "./ImportClient";
 export default async function ImportPage() {
   const db = createServiceClient();
   const [{ data: schools }, { data: candidates }] = await Promise.all([
-    db.from("schools").select("id, name").order("name"),
+    db.from("schools").select("id, name, tier").order("name"),
     db.from("candidates").select("email").not("email", "is", null),
   ]);
 

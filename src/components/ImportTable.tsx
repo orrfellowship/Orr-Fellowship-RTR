@@ -3,7 +3,7 @@
 import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { bulkImportCandidates } from "@/app/(app)/console/actions";
-import { routeToSchoolName } from "@/lib/stages";
+import { resolveCandidateSchool } from "@/lib/stages";
 
 // The canonical bulk-import UI: a spreadsheet-style grid you can type into or
 // paste CSV/Excel cells into. Used both by the /import page and the
@@ -48,7 +48,7 @@ function parseRows(text: string): Row[] {
 // onClose: when provided (modal usage), a Cancel/Done button is shown alongside
 // Import. The page usage omits it and simply shows the result inline.
 export default function ImportTable({ schools, existingEmails, onClose }: {
-  schools: { id: string; name: string }[];
+  schools: { id: string; name: string; tier?: string | null }[];
   existingEmails: Set<string>;
   onClose?: () => void;
 }) {
@@ -58,14 +58,6 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const schoolByName = new Map(schools.map((s) => [s.name.toLowerCase(), s.id]));
-  const resolveSchoolId = (raw: string): string | null => {
-    const exact = schoolByName.get(raw.toLowerCase());
-    if (exact) return exact;
-    const routed = routeToSchoolName(raw);
-    return routed ? (schoolByName.get(routed.toLowerCase()) ?? null) : null;
-  };
 
   const update = (i: number, patch: Partial<Row>) =>
     setRows((prev) => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
@@ -110,14 +102,18 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
 
   const validRows = rows.filter((r) => r.name.trim());
   const dupeCount = validRows.filter((r) => r.email && existingEmails.has(r.email.toLowerCase())).length;
-  const resolved = validRows.map((r) => ({
-    name: r.name.trim(),
-    email: r.email.trim() || null,
-    school_id: resolveSchoolId(r.school),
-    stage: null,
-    gpa: null,
-    area_of_study: null,
-  }));
+  const resolved = validRows.map((r) => {
+    const { school_id, university_raw } = resolveCandidateSchool(r.school, schools);
+    return {
+      name: r.name.trim(),
+      email: r.email.trim() || null,
+      school_id,
+      university_raw,
+      stage: null,
+      gpa: null,
+      area_of_study: null,
+    };
+  });
 
   const doImport = () => {
     if (resolved.length === 0) { setError("No valid rows to import."); return; }
@@ -135,10 +131,12 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
 
   const cell: React.CSSProperties = { borderRight: `1px solid ${C.line}`, padding: 0 };
   const inp: React.CSSProperties = { width: "100%", border: "none", outline: "none", fontSize: 13, padding: "8px 10px", background: "transparent", color: C.gray, fontFamily: "inherit", boxSizing: "border-box" };
-  const sel: React.CSSProperties = { ...inp, cursor: "pointer", appearance: "none" as any };
 
   return (
     <>
+      {/* School suggestions for the per-row inputs (you can also type any school). */}
+      <datalist id="import-schools">{schools.map((s) => <option key={s.id} value={s.name} />)}</datalist>
+
       {/* Upload / hint toolbar */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 7, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13, padding: "8px 14px", borderRadius: 9, cursor: "pointer" }}>
@@ -180,11 +178,9 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
                       style={{ ...inp, color: isDupe ? C.orange : row.email ? C.gray : C.grayMute }} />
                   </td>
                   <td style={cell}>
-                    <select value={row.school} onChange={(e) => update(i, { school: e.target.value })}
-                      style={{ ...sel, color: row.school ? C.gray : C.grayMute }}>
-                      <option value="">— School</option>
-                      {schools.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
-                    </select>
+                    <input list="import-schools" value={row.school} onChange={(e) => update(i, { school: e.target.value })}
+                      placeholder="School (or type any)"
+                      style={{ ...inp, color: row.school ? C.gray : C.grayMute }} />
                   </td>
                   <td style={{ padding: "0 6px", textAlign: "center" }}>
                     <button onClick={() => delRow(i)} title="Remove row"

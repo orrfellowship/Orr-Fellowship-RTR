@@ -140,3 +140,32 @@ export function routeToSchoolName(university: string | null): string | null {
   }
   return null;
 }
+
+export type SchoolLite = { id: string; name: string; tier?: string | null };
+
+// Resolve a typed/selected school name to a school_id for candidate entry.
+// Core/Satellite matches map to that school; everything else — other tiers, or a
+// school not in our list at all (e.g. an out-of-state university like Kentucky) —
+// is binned into the Bonus group, keeping the raw text in university_raw.
+export function resolveCandidateSchool(
+  typed: string,
+  schools: SchoolLite[],
+): { school_id: string | null; university_raw: string | null } {
+  const t = (typed ?? "").trim();
+  if (!t) return { school_id: null, university_raw: null };
+  const lc = t.toLowerCase();
+  const isCoreOrSat = (s: SchoolLite) => s.tier === "core" || s.tier === "satellite";
+
+  const exact = schools.find((s) => s.name.toLowerCase() === lc);
+  if (exact && isCoreOrSat(exact)) return { school_id: exact.id, university_raw: null };
+  if (!exact) {
+    const routed = routeToSchoolName(t);
+    if (routed) {
+      const rs = schools.find((s) => s.name.toLowerCase() === routed.toLowerCase());
+      if (rs && isCoreOrSat(rs)) return { school_id: rs.id, university_raw: null };
+    }
+  }
+  // Not Core/Satellite (or unknown) → Bonus group; keep what they typed.
+  const bonus = schools.filter((s) => s.tier === "bonus").sort((a, b) => a.name.localeCompare(b.name))[0];
+  return { school_id: bonus?.id ?? null, university_raw: t };
+}

@@ -12,7 +12,7 @@ import WorkspaceClient from "../WorkspaceClient";
 // slug (URL) → internal tab key used by WorkspaceClient
 const TAB: Record<string, string> = {
   snapshot: "plan", "my-school": "board", standings: "standings",
-  applicants: "all", playbook: "playbook", resources: "resources",
+  applicants: "all", playbook: "playbook", resources: "resources", budget: "budget",
 };
 
 // Each route renders exactly ONE section, so we only fetch what that section
@@ -35,6 +35,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
     resources: S === "resources",
     allProfiles: S === "plan" || S === "board" || S === "all",
     lastContact: S === "plan",
+    budget: S === "budget",
   };
   // Favorites only matter to the board (candidates) and applicants (all) views.
   const wantFavs = need.candidates || S === "all";
@@ -120,6 +121,15 @@ export default async function WorkspaceSection({ params }: { params: { section: 
     events = (eventRows ?? []).map((e: any) => ({ ...e, going: rsvpByEvent[e.id]?.going ?? [], not_going: rsvpByEvent[e.id]?.not_going ?? [], my_status: (myRsvp[e.id] as "going" | "not_going" | undefined) ?? null }));
   }
 
+  // Budget (team-lead only): their tier's entries, read-only.
+  let budgetEntries: any[] = [];
+  if (need.budget) {
+    const { data } = await serviceDb.from("budget_entries")
+      .select("id, school_id, kind, label, amount, category, entry_date, notes, created_by")
+      .in("school_id", tierSchoolIds).order("entry_date", { ascending: false });
+    budgetEntries = data ?? [];
+  }
+
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
   const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
   const allEnriched = (allCandidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
@@ -140,6 +150,8 @@ export default async function WorkspaceSection({ params }: { params: { section: 
       resources={resources ?? []}
       events={events}
       allProfiles={allProfiles ?? []}
+      budgetEntries={budgetEntries}
+      budgetSchoolId={playbookSchoolId}
     />
   );
 }

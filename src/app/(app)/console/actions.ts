@@ -114,6 +114,7 @@ export async function deleteTask(taskId: string) {
 export async function addCandidate(data: {
   name: string; email: string | null; school_id: string | null;
   stage: string | null; gpa: string | null; area_of_study: string | null;
+  university_raw?: string | null;
 }) {
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may add
@@ -126,7 +127,7 @@ export async function addCandidate(data: {
 }
 
 export async function bulkImportCandidates(
-  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null }[]
+  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null }[]
 ) {
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may import
@@ -167,11 +168,26 @@ export async function upsertGroupGoal(schoolIds: string[], goal_sourced: number,
   return { ok: true };
 }
 
+// Admins may manage users, but only super admins can grant, alter, or remove
+// super-admin accounts. Returns an error string if the actor isn't allowed to
+// touch the given target, else null.
+async function guardSuperTarget(
+  db: ReturnType<typeof createServiceClient>, actorRole: string, targetUserId: string,
+): Promise<string | null> {
+  if (isSuper(actorRole as any)) return null;
+  const { data: target } = await db.from("profiles").select("role").eq("id", targetUserId).maybeSingle();
+  if ((target as any)?.role === "super_admin") return "Only a super admin can modify a super admin.";
+  return null;
+}
+
 export async function updateUser(user_id: string, role: string, school_id: string | null) {
   const profile = await getCurrentProfile();
-  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
-  const supabase = createServerSupabase();
-  const { error } = await supabase.from("profiles").update({ role, school_id }).eq("id", user_id);
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  if (!isSuper(profile.role) && role === "super_admin") return { error: "Only a super admin can grant super-admin access." };
+  const guard = await guardSuperTarget(db, profile.role, user_id);
+  if (guard) return { error: guard };
+  const { error } = await db.from("profiles").update({ role, school_id }).eq("id", user_id);
   if (error) return { error: error.message };
   revalidatePath("/console");
   return { ok: true };
@@ -179,9 +195,11 @@ export async function updateUser(user_id: string, role: string, school_id: strin
 
 export async function updateUserName(user_id: string, full_name: string) {
   const profile = await getCurrentProfile();
-  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
-  const supabase = createServerSupabase();
-  const { error } = await supabase.from("profiles").update({ full_name }).eq("id", user_id);
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const guard = await guardSuperTarget(db, profile.role, user_id);
+  if (guard) return { error: guard };
+  const { error } = await db.from("profiles").update({ full_name }).eq("id", user_id);
   if (error) return { error: error.message };
   revalidatePath("/console");
   return { ok: true };
@@ -189,9 +207,11 @@ export async function updateUserName(user_id: string, full_name: string) {
 
 export async function removeUser(userId: string) {
   const profile = await getCurrentProfile();
-  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   if (userId === profile.id) return { error: "Cannot remove yourself" };
   const db = createServiceClient();
+  const guard = await guardSuperTarget(db, profile.role, userId);
+  if (guard) return { error: guard };
   await db.from("profiles").delete().eq("id", userId);
   try { await db.auth.admin.deleteUser(userId); } catch {}
   revalidatePath("/console");
@@ -356,7 +376,8 @@ async function sendInvite(
 
 export async function inviteUser(email: string, full_name: string, role: string, school_id: string | null) {
   const profile = await getCurrentProfile();
-  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!isSuper(profile.role) && role === "super_admin") return { error: "Only a super admin can invite a super admin." };
   const serviceDb = createServiceClient();
   const res = await sendInvite(serviceDb, email.trim(), full_name, role, school_id);
   if ("error" in res) return { error: res.error };
@@ -368,7 +389,8 @@ export async function bulkInviteUsers(
   rows: { email: string; full_name: string; role: string; school_id: string | null }[]
 ) {
   const profile = await getCurrentProfile();
-  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const canSuper = isSuper(profile.role);
   const serviceDb = createServiceClient();
 
   let invited = 0;
@@ -376,6 +398,7 @@ export async function bulkInviteUsers(
   for (const r of rows) {
     const email = r.email.trim();
     if (!email) continue;
+    if (!canSuper && r.role === "super_admin") { failures.push({ email, error: "Only a super admin can invite a super admin." }); continue; }
     const res = await sendInvite(serviceDb, email, r.full_name, r.role, r.school_id);
     if ("error" in res) { failures.push({ email, error: res.error }); continue; }
     invited++;
@@ -520,5 +543,39 @@ export async function seedPlaybook(schoolId: string, force = false) {
 
   revalidatePath("/console");
   revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// ---- BUDGETS (admin+ manage; team leads view their school) -----------------
+export async function addBudgetEntry(e: {
+  school_id: string | null; kind: "allocation" | "expense"; label: string;
+  amount: number; category: string | null; entry_date: string | null; notes: string | null;
+}) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!e.label.trim()) return { error: "A label is required." };
+  const db = createServiceClient();
+  const { error } = await db.from("budget_entries").insert({
+    school_id: e.school_id,
+    kind: e.kind,
+    label: e.label.trim(),
+    amount: Number.isFinite(e.amount) ? e.amount : 0,
+    category: e.category?.trim() || null,
+    entry_date: e.entry_date || null,
+    notes: e.notes?.trim() || null,
+    created_by: profile.id,
+  });
+  if (error) return { error: error.message };
+  bustCache([], ["/console", "/workspace"]);
+  return { ok: true };
+}
+
+export async function deleteBudgetEntry(id: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { error } = await db.from("budget_entries").delete().eq("id", id);
+  if (error) return { error: error.message };
+  bustCache([], ["/console", "/workspace"]);
   return { ok: true };
 }

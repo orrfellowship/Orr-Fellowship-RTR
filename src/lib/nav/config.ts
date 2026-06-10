@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard, UserSearch, Trophy, GraduationCap, Users, RefreshCw,
-  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck, Upload,
+  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck, Upload, Wallet,
 } from "lucide-react";
 import type { AppRole } from "@/lib/types";
 import { isAdminPlus, isSuper } from "@/lib/types";
@@ -35,17 +35,18 @@ export function accentFor(role: Role, school?: string): string {
 }
 
 // ---- access (single source of truth for sidebar + route guards) ------------
-export const WORKSPACE_SECTIONS = ["snapshot", "my-school", "standings", "applicants", "playbook", "resources"] as const;
-export const CONSOLE_SECTIONS = ["overview", "applicants", "standings", "schools", "calendar", "users", "sync", "review", "playbook", "resources"] as const;
+export const WORKSPACE_SECTIONS = ["snapshot", "my-school", "standings", "applicants", "playbook", "resources", "budget"] as const;
+export const CONSOLE_SECTIONS = ["overview", "applicants", "standings", "schools", "calendar", "budget", "users", "sync", "review", "playbook", "resources"] as const;
 
 export function canAccessWorkspaceSection(role: Role, section: string): boolean {
   if (isAdminPlus(role)) return false; // admins/super use the console
+  if (section === "budget") return role === "team_lead"; // budget is lead-only in the workspace
   return (WORKSPACE_SECTIONS as readonly string[]).includes(section);
 }
 export function canAccessConsoleSection(role: Role, section: string): boolean {
   if (!isAdminPlus(role)) return false; // fellows/leads use the workspace
-  if (section === "users" || section === "sync") return isSuper(role);
-  // overview, applicants, standings, schools, review, playbook, resources → admin+
+  if (section === "sync") return isSuper(role); // JazzHR sync is super-only
+  // users, overview, applicants, standings, schools, calendar, review, playbook, resources → admin+
   return (CONSOLE_SECTIONS as readonly string[]).includes(section);
 }
 
@@ -53,22 +54,23 @@ export function canAccessConsoleSection(role: Role, section: string): boolean {
 const HOW_TO: NavItem = { id: "howto", label: "How-To", href: "/how-to", icon: LifeBuoy, hint: "Guides & support" };
 
 function consoleNav(role: Role): NavGroup[] {
-  const operations: NavItem[] = isSuper(role)
-    ? [
-        { id: "users", label: "Users", href: "/console/users", icon: Users, hint: "Roles & access", badgeKey: "users" },
-        { id: "sync", label: "Sync", href: "/console/sync", icon: RefreshCw, hint: "JazzHR integration" },
-      ]
-    : [
-        { id: "review", label: "Review Sync", href: "/console/review", icon: ClipboardCheck, hint: "Match JazzHR ↔ sourced" },
-      ];
+  // Users management is open to all admins; Sync (JazzHR) stays super-only, and
+  // non-super admins get Review Sync in its place.
+  const operations: NavItem[] = [
+    { id: "budget", label: "Budget", href: "/console/budget", icon: Wallet, hint: "Allocations & expenses" },
+    { id: "users", label: "Users", href: "/console/users", icon: Users, hint: "Roles & access", badgeKey: "users" },
+    ...(isSuper(role)
+      ? [{ id: "sync", label: "Sync", href: "/console/sync", icon: RefreshCw, hint: "JazzHR integration" }]
+      : [{ id: "review", label: "Review Sync", href: "/console/review", icon: ClipboardCheck, hint: "Match JazzHR ↔ sourced" }]),
+  ];
   return [
     { group: null, items: [{ id: "overview", label: "Overview", href: "/console/overview", icon: LayoutDashboard, hint: "Dashboard & KPIs" }] },
     { group: "Recruiting", items: [
-      { id: "applicants", label: "Applicants", href: "/console/applicants", icon: UserSearch, hint: "Candidate pipeline", badgeKey: "applicants" },
+      { id: "applicants", label: "Candidates", href: "/console/applicants", icon: UserSearch, hint: "Candidate pipeline", badgeKey: "applicants" },
       { id: "standings", label: "Standings", href: "/console/standings", icon: Trophy, hint: "School leaderboard" },
       { id: "schools", label: "Schools", href: "/console/schools", icon: GraduationCap, hint: "Programs & targets" },
       { id: "calendar", label: "Calendar", href: "/console/calendar", icon: CalendarCheck, hint: "Org-wide & school events" },
-      { id: "import", label: "Import", href: "/import", icon: Upload, hint: "Bulk import applicants" },
+      { id: "import", label: "Import", href: "/import", icon: Upload, hint: "Bulk import candidates" },
     ] },
     { group: "Operations", items: operations },
     { group: "Knowledge", items: [
@@ -79,25 +81,29 @@ function consoleNav(role: Role): NavGroup[] {
   ];
 }
 
-function workspaceNav(): NavGroup[] {
+function workspaceNav(role: Role): NavGroup[] {
+  const playbookItems: NavItem[] = [
+    { id: "playbook", label: "Playbook", href: "/workspace/playbook", icon: BookMarked, hint: "Strategy & process" },
+    { id: "resources", label: "Resources", href: "/workspace/resources", icon: Library, hint: "Docs & assets" },
+  ];
+  // Team leads see their school's budget; fellows do not.
+  if (role === "team_lead") playbookItems.push({ id: "budget", label: "Budget", href: "/workspace/budget", icon: Wallet, hint: "Your school's budget" });
+  playbookItems.push(HOW_TO);
+
   return [
     { group: null, items: [{ id: "snapshot", label: "Weekly Snapshot", href: "/workspace/snapshot", icon: CalendarCheck, hint: "Your week at a glance" }] },
     { group: "Recruiting", items: [
       { id: "my-school", label: "My School", href: "/workspace/my-school", icon: School, hint: "Your school dashboard" },
       { id: "standings", label: "Standings", href: "/workspace/standings", icon: Trophy, hint: "How schools rank" },
-      { id: "applicants", label: "Applicants", href: "/workspace/applicants", icon: UserSearch, hint: "Your candidate pipeline", badgeKey: "applicants" },
-      { id: "import", label: "Import", href: "/import", icon: Upload, hint: "Bulk import applicants" },
+      { id: "applicants", label: "Candidates", href: "/workspace/applicants", icon: UserSearch, hint: "Your candidate pipeline", badgeKey: "applicants" },
+      { id: "import", label: "Import", href: "/import", icon: Upload, hint: "Bulk import candidates" },
     ] },
-    { group: "Playbook", items: [
-      { id: "playbook", label: "Playbook", href: "/workspace/playbook", icon: BookMarked, hint: "Strategy & process" },
-      { id: "resources", label: "Resources", href: "/workspace/resources", icon: Library, hint: "Docs & assets" },
-      HOW_TO,
-    ] },
+    { group: "Playbook", items: playbookItems },
   ];
 }
 
 export function navForRole(role: Role): NavGroup[] {
-  return isAdminPlus(role) ? consoleNav(role) : workspaceNav();
+  return isAdminPlus(role) ? consoleNav(role) : workspaceNav(role);
 }
 
 // Flattened items (palette + breadcrumb helpers).

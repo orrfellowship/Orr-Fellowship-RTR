@@ -17,6 +17,7 @@ import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
+import BudgetPanel, { type BudgetEntry } from "@/components/BudgetPanel";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -85,14 +86,16 @@ const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
   profile, initialSection, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
+  budgetEntries = [], budgetSchoolId = null,
 }: {
   profile: Profile; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
   lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[];
   allProfiles: { id: string; full_name: string }[];
+  budgetEntries?: BudgetEntry[]; budgetSchoolId?: string | null;
 }) {
   const isMobile = useIsMobile();
-  const [tab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources">(initialSection as any);
+  const [tab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources" | "budget">(initialSection as any);
   const [breakdownScope, setBreakdownScope] = useState<"team" | "org">("team");
   const [allFilter, setAllFilter] = useState<string>("All schools");
   const [allSearch, setAllSearch] = useState("");
@@ -529,7 +532,7 @@ export default function WorkspaceClient({
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
                 <div>
-                  <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Applicants</h1>
+                  <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Candidates</h1>
                   <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates · click a row to view details</p>
                 </div>
                 <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
@@ -610,6 +613,15 @@ export default function WorkspaceClient({
         {/* ---- RESOURCES ---- */}
         {tab === "resources" && (
           <ResourcesPanel resources={resources} canManage={canManageResources(profile.role)} accent={accent} />
+        )}
+
+        {/* ---- BUDGET (team lead, read-only) ---- */}
+        {tab === "budget" && (
+          <>
+            <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Budget</h1>
+            <p style={{ color: C.grayMute, margin: "4px 0 20px" }}>Your school&apos;s allocations and expenses. Admins manage the entries.</p>
+            <BudgetPanel entries={budgetEntries} canEdit={false} schoolId={budgetSchoolId} accent={accent} />
+          </>
         )}
       </div>
 

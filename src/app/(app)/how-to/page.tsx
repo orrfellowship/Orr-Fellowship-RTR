@@ -51,7 +51,7 @@ export default async function HowToPage() {
             {admin ? (
               <>
                 <Step><b>Overview</b> — program-wide pipeline snapshot.</Step>
-                <Step><b>Applicants</b> — every candidate, with filtering, sorting, résumés, and school routing.</Step>
+                <Step><b>Candidates</b> — every candidate, with filtering, sorting, résumés, and school routing.</Step>
                 <Step><b>Standings</b> — how schools stack up across goals, funnel, and yield.</Step>
                 <Step><b>Schools</b> — schools, tiers, and goals.</Step>
                 <Step><b>Calendar</b> — recruiting events, organization-wide or per school (see below).</Step>
@@ -72,7 +72,7 @@ export default async function HowToPage() {
                 <Step><b>Weekly Snapshot</b> — your pipeline numbers, the tasks assigned to you, and the recruiting calendar.</Step>
                 <Step><b>My School</b> — your school's candidate board.</Step>
                 <Step><b>Standings</b> — how schools stack up across the program.</Step>
-                <Step><b>Applicants</b> — browse candidates and open résumés.</Step>
+                <Step><b>Candidates</b> — browse candidates and open résumés.</Step>
                 <Step><b>Import</b> — bulk-add candidates from a spreadsheet.</Step>
                 <Step><b>Playbook</b> — your team's recruitment plan and tasks.</Step>
                 <Step><b>Resources</b> — shared docs and links for the team.</Step>
@@ -81,18 +81,18 @@ export default async function HowToPage() {
           </ul>
         </Section>
 
-        <Section title="Applicants — finding candidates">
+        <Section title="Candidates — finding candidates">
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             <Step><b>Search</b> by name, email, or major in the filter bar.</Step>
             <Step><b>Filter</b> by school, major, stage, minimum GPA, or Favorites only. Hit <b>Clear</b> to reset.</Step>
-            <Step><b>Sort</b> by clicking a column header (Applicant, School, Major, GPA, Stage). Click again to reverse.</Step>
+            <Step><b>Sort</b> by clicking a column header (Candidate, School, Major, GPA, Stage). Click again to reverse.</Step>
             <Step>Open a candidate to view details and their <b>résumé</b> inline.</Step>
             {admin && <Step>Set or fix a candidate's <b>school</b> right from the row. Satellite and Bonus schools are grouped into single options.</Step>}
           </ul>
         </Section>
 
         <Section title="Importing candidates">
-          <p style={{ marginTop: 0 }}>Anyone can bulk-import. Use the <b>Import</b> tab (or the <b>Bulk import</b> button on Applicants). You can add candidates three ways:</p>
+          <p style={{ marginTop: 0 }}>Anyone can bulk-import. Use the <b>Import</b> tab (or the <b>Bulk import</b> button on Candidates). You can add candidates three ways:</p>
           <ul style={{ margin: "0 0 12px", paddingLeft: 20 }}>
             <Step><b>Upload</b> a <b>.csv</b> or <b>.xlsx</b> file.</Step>
             <Step><b>Paste</b> rows copied straight from Excel or Google Sheets into any cell.</Step>
@@ -107,7 +107,7 @@ Jane Doe,jane@example.com,Purdue`}
         </Section>
 
         <Section title="Working a candidate — outreach, warm intros & résumé">
-          <p style={{ marginTop: 0 }}>Click any candidate on the Applicants page to open their detail panel:</p>
+          <p style={{ marginTop: 0 }}>Click any candidate on the Candidates page to open their detail panel:</p>
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             <Step><b>Outreach log</b> — record every touchpoint (calls, emails, meetings, follow-ups). Use the quick buttons or write your own note so the whole team can see the history.</Step>
             <Step><b>Warm intros</b> — log who on the team has a connection to this candidate and how they know them, so the best person can make the ask.</Step>
