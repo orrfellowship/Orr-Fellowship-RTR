@@ -137,6 +137,9 @@ export default function ConsoleClient({
   const [pending, startTransition] = useTransition();
   const superUser = isSuper(profile.role);
   const adminPlus = isAdminPlus(profile.role);
+  // School picker options shown everywhere EXCEPT the Candidates page: core
+  // schools individually + one "Satellite School" + one "Bonus School" group.
+  const schoolPickOptions = useMemo(() => schoolSelectOptions(schools).map((o) => ({ id: o.value, name: o.label })), [schools]);
 
   const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a as AI])), [ai]);
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
@@ -504,7 +507,7 @@ export default function ConsoleClient({
               profileId={profile.id}
               schoolId={null}
               team={people}
-              schools={schools}
+              schools={schoolPickOptions}
               scopePicker
             />
           </>
@@ -517,7 +520,7 @@ export default function ConsoleClient({
             <p style={{ color: C.grayMute, margin: "4px 0 20px" }}>
               Track allocations and expenses, organization-wide or per school. Team leads can view their school&apos;s budget.
             </p>
-            <BudgetPanel entries={budgetEntries} schools={schools} canEdit={adminPlus} scopePicker />
+            <BudgetPanel entries={budgetEntries} schools={schoolPickOptions} canEdit={adminPlus} scopePicker />
           </>
         )}
 

@@ -26,7 +26,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
     resources: S === "resources",
     reviews: ["applicants", "sync", "review"].includes(S),
     ai: S === "applicants" && sup,
-    users: S === "users",
+    users: S === "users" || S === "schools", // schools tab needs profiles for per-school teammate counts
     favs: S === "applicants",
     calendar: S === "calendar",
     budget: S === "budget",
