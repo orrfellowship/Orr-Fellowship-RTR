@@ -36,7 +36,7 @@ export function accentFor(role: Role, school?: string): string {
 
 // ---- access (single source of truth for sidebar + route guards) ------------
 export const WORKSPACE_SECTIONS = ["snapshot", "my-school", "standings", "applicants", "playbook", "resources"] as const;
-export const CONSOLE_SECTIONS = ["overview", "applicants", "standings", "schools", "users", "sync", "review", "playbook", "resources"] as const;
+export const CONSOLE_SECTIONS = ["overview", "applicants", "standings", "schools", "calendar", "users", "sync", "review", "playbook", "resources"] as const;
 
 export function canAccessWorkspaceSection(role: Role, section: string): boolean {
   if (isAdminPlus(role)) return false; // admins/super use the console
@@ -67,6 +67,7 @@ function consoleNav(role: Role): NavGroup[] {
       { id: "applicants", label: "Applicants", href: "/console/applicants", icon: UserSearch, hint: "Candidate pipeline", badgeKey: "applicants" },
       { id: "standings", label: "Standings", href: "/console/standings", icon: Trophy, hint: "School leaderboard" },
       { id: "schools", label: "Schools", href: "/console/schools", icon: GraduationCap, hint: "Programs & targets" },
+      { id: "calendar", label: "Calendar", href: "/console/calendar", icon: CalendarCheck, hint: "Org-wide & school events" },
       { id: "import", label: "Import", href: "/import", icon: Upload, hint: "Bulk import applicants" },
     ] },
     { group: "Operations", items: operations },

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
-import { canEditPlaybook, canEditEvents } from "@/lib/types";
+import { canEditPlaybook, canEditEvents, isAdminPlus } from "@/lib/types";
 import { queueNotification, supersedePending } from "@/lib/notify";
 
 const CLAIM_DELAY_MS = 30 * 60 * 1000;
@@ -362,25 +362,30 @@ export async function markNotificationsRead(ids: string[]) {
 
 // ---- RECRUITING CALENDAR EVENTS (team_lead+ create/edit; everyone RSVPs) ----
 export async function addEvent(e: {
-  title: string; description: string | null; event_date: string;
+  title: string; description: string | null; address?: string | null; event_date: string;
   event_type: "attend" | "info"; school_id: string | null;
 }) {
   const profile = await getCurrentProfile();
   if (!profile || !canEditEvents(profile.role)) return { error: "Only team leads or admins can add events." };
   if (!e.title.trim() || !e.event_date) return { error: "Title and date are required." };
+  // Only admins may target org-wide (no school); team leads are scoped to a school.
+  if (e.school_id === null && !isAdminPlus(profile.role)) return { error: "Only admins can create organization-wide events." };
   const db = createServiceClient();
   const { error } = await db.from("events").insert({
     title: e.title.trim(), description: e.description?.trim() || null,
+    address: e.address?.trim() || null,
     event_date: e.event_date, event_type: e.event_type,
     school_id: e.school_id, created_by: profile.id,
   });
   if (error) return { error: error.message };
   revalidatePath("/workspace");
+  revalidatePath("/console");
   return { ok: true };
 }
 
 export async function updateEvent(id: string, patch: {
-  title?: string; description?: string | null; event_date?: string; event_type?: "attend" | "info";
+  title?: string; description?: string | null; address?: string | null;
+  event_date?: string; event_type?: "attend" | "info";
 }) {
   const profile = await getCurrentProfile();
   if (!profile || !canEditEvents(profile.role)) return { error: "Forbidden" };
@@ -388,11 +393,13 @@ export async function updateEvent(id: string, patch: {
   const clean: Record<string, any> = {};
   if (patch.title !== undefined) clean.title = patch.title.trim();
   if (patch.description !== undefined) clean.description = patch.description?.trim() || null;
+  if (patch.address !== undefined) clean.address = patch.address?.trim() || null;
   if (patch.event_date !== undefined) clean.event_date = patch.event_date;
   if (patch.event_type !== undefined) clean.event_type = patch.event_type;
   const { error } = await db.from("events").update(clean).eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/workspace");
+  revalidatePath("/console");
   return { ok: true };
 }
 
@@ -403,6 +410,7 @@ export async function deleteEvent(id: string) {
   const { error } = await db.from("events").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/workspace");
+  revalidatePath("/console");
   return { ok: true };
 }
 
@@ -418,5 +426,6 @@ export async function setRsvp(eventId: string, status: "going" | "not_going" | n
     await db.from("event_rsvps").upsert({ event_id: eventId, profile_id: user.id, status });
   }
   revalidatePath("/workspace");
+  revalidatePath("/console");
   return { ok: true };
 }

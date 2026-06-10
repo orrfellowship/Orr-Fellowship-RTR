@@ -13,7 +13,7 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export type CalEvent = {
-  id: string; title: string; description: string | null; event_date: string;
+  id: string; title: string; description: string | null; address: string | null; event_date: string;
   event_type: "attend" | "info"; school_id: string | null; created_by: string | null;
   going: string[]; not_going: string[]; my_status: "going" | "not_going" | null;
 };
@@ -21,9 +21,12 @@ export type CalEvent = {
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const parseYmd = (s: string) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 
-export default function RecruitingCalendar({ events, canEdit, profileId, schoolId, team, accent = C.orange }: {
+export default function RecruitingCalendar({ events, canEdit, profileId, schoolId, team, accent = C.orange, schools, scopePicker = false }: {
   events: CalEvent[]; canEdit: boolean; profileId: string; schoolId: string | null;
   team: { id: string; full_name: string }[]; accent?: string;
+  // When scopePicker is set (admin calendar), the add form lets the user choose
+  // org-wide vs. a specific school from `schools`. Otherwise events use schoolId.
+  schools?: { id: string; name: string }[]; scopePicker?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -118,6 +121,7 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
       )}
       {addFor && (
         <AddEventModal date={addFor} schoolId={schoolId} accent={accent}
+          schools={schools ?? []} scopePicker={scopePicker}
           onClose={() => setAddFor(null)}
           onSaved={() => { setAddFor(null); router.refresh(); }} startTransition={startTransition} />
       )}
@@ -141,7 +145,13 @@ function EventModal({ e, canEdit, accent, nameOf, onClose, onRsvp, onDelete }: {
         </span>
       </div>
       <h3 style={{ fontFamily: HEAD, fontSize: 20, color: C.navy, margin: "0 0 4px" }}>{e.title}</h3>
-      <div style={{ fontSize: 13, color: C.grayMute, marginBottom: 12 }}>{dateLabel}</div>
+      <div style={{ fontSize: 13, color: C.grayMute, marginBottom: e.address ? 6 : 12 }}>{dateLabel}</div>
+      {e.address && (
+        <a href={`https://maps.google.com/?q=${encodeURIComponent(e.address)}`} target="_blank" rel="noreferrer"
+          style={{ display: "inline-flex", alignItems: "flex-start", gap: 6, fontSize: 13, color: C.navy2, textDecoration: "none", marginBottom: 12 }}>
+          <span aria-hidden style={{ flexShrink: 0 }}>📍</span><span>{e.address}</span>
+        </a>
+      )}
       {e.description && <p style={{ fontSize: 13.5, color: C.gray, lineHeight: 1.5, marginTop: 0 }}>{e.description}</p>}
 
       {attend && (
@@ -166,21 +176,26 @@ function EventModal({ e, canEdit, accent, nameOf, onClose, onRsvp, onDelete }: {
   );
 }
 
-function AddEventModal({ date, schoolId, accent, onClose, onSaved, startTransition }: {
+function AddEventModal({ date, schoolId, accent, schools, scopePicker, onClose, onSaved, startTransition }: {
   date: string; schoolId: string | null; accent: string;
+  schools: { id: string; name: string }[]; scopePicker: boolean;
   onClose: () => void; onSaved: () => void; startTransition: (cb: () => void) => void;
 }) {
   const [title, setTitle] = useState("");
   const [eventDate, setEventDate] = useState(date);
   const [type, setType] = useState<"attend" | "info">("attend");
   const [description, setDescription] = useState("");
+  const [address, setAddress] = useState("");
+  // "" = org-wide; otherwise a school id. Non-picker callers always use schoolId.
+  const [scope, setScope] = useState<string>(schoolId ?? "");
   const [error, setError] = useState<string | null>(null);
   const input = { width: "100%", padding: "10px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" as const, marginBottom: 12 };
 
   const save = () => {
     if (!title.trim()) { setError("Title is required."); return; }
+    const targetSchool = scopePicker ? (scope || null) : schoolId;
     startTransition(() => {
-      addEvent({ title, description: description || null, event_date: eventDate, event_type: type, school_id: schoolId }).then((r: any) => {
+      addEvent({ title, description: description || null, address: address || null, event_date: eventDate, event_type: type, school_id: targetSchool }).then((r: any) => {
         if (r?.error) setError(r.error); else onSaved();
       });
     });
@@ -191,11 +206,18 @@ function AddEventModal({ date, schoolId, accent, onClose, onSaved, startTransiti
       <h3 style={{ fontFamily: HEAD, fontSize: 20, color: C.navy, margin: "0 0 16px" }}>Add event</h3>
       <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Event title" style={input} autoFocus />
       <input type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} style={input} />
+      {scopePicker && (
+        <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ ...input, cursor: "pointer" }}>
+          <option value="">🌐 Organization-wide (everyone)</option>
+          {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      )}
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         {([["attend", "Show-up event"], ["info", "Info / deadline"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setType(k)} style={{ flex: 1, border: `1px solid ${type === k ? accent : C.line}`, background: type === k ? `${accent}12` : "#fff", color: type === k ? accent : C.gray, fontWeight: 700, padding: "9px", borderRadius: 9, cursor: "pointer", fontSize: 12.5 }}>{label}</button>
         ))}
       </div>
+      <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Address / location (optional)" style={input} />
       <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description (optional)" rows={3} style={{ ...input, resize: "vertical", fontFamily: "inherit" }} />
       {type === "attend" && <div style={{ fontSize: 12, color: C.grayMute, marginBottom: 12 }}>Fellows will be asked to RSVP for show-up events.</div>}
       {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "9px 12px", fontSize: 13, color: "#8A3A1E", marginBottom: 12 }}>{error}</div>}

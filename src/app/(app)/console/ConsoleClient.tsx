@@ -11,6 +11,7 @@ import {
   unlinkJazzCandidate,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
+import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
@@ -90,13 +91,15 @@ function fmtPct(actual: number, goal: number) {
 
 export default function ConsoleClient({
   profile, initialSection, schools, candidates, team, goals, ai, phases, users, reviews, resources,
+  events = [], people = [],
 }: {
   profile: Profile; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
+  events?: CalEvent[]; people?: { id: string; full_name: string }[];
 }) {
   const isMobile = useIsMobile();
-  const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "users" | "sync" | "resources" | "review">(initialSection as any);
+  const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "calendar" | "users" | "sync" | "resources" | "review">(initialSection as any);
   const [scope, setScope] = useState<string>("Org-wide");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
   const [pbAssignee, setPbAssignee] = useState<string>("all");
@@ -483,6 +486,25 @@ export default function ConsoleClient({
             goals={goals}
             mySchoolId={null}
           />
+        )}
+
+        {/* ---- CALENDAR ---- */}
+        {tab === "calendar" && (
+          <>
+            <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Recruiting Calendar</h1>
+            <p style={{ color: C.grayMute, margin: "4px 0 20px" }}>
+              Organization-wide events show on everyone&apos;s Weekly Snapshot; school events show on that school&apos;s.
+            </p>
+            <RecruitingCalendar
+              events={events}
+              canEdit={adminPlus}
+              profileId={profile.id}
+              schoolId={null}
+              team={people}
+              schools={schools}
+              scopePicker
+            />
+          </>
         )}
 
         {/* ---- PLAYBOOK ---- */}

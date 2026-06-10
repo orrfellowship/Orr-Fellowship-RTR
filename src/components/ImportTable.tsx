@@ -15,10 +15,11 @@ const C = {
   orange: "#E8743B", good: "#2E9E6B",
 };
 const HEAD = "'Cabin', sans-serif";
-const STAGES = ["new", "contacted", "applied", "bmi", "finalist", "fellow"];
 
-type Row = { name: string; email: string; school: string; stage: string; gpa: string; major: string };
-const emptyRow = (): Row => ({ name: "", email: "", school: "", stage: "", gpa: "", major: "" });
+// Stage, GPA and major are intentionally NOT imported here — those flow in from
+// JazzHR. We only seed the candidate's name, email, and school.
+type Row = { name: string; email: string; school: string };
+const emptyRow = (): Row => ({ name: "", email: "", school: "" });
 
 function parseRows(text: string): Row[] {
   const lines = text.trim().split(/\r?\n/).filter((l) => l.trim());
@@ -35,18 +36,12 @@ function parseRows(text: string): Row[] {
   const iName = idx(["name"], 0);
   const iEmail = idx(["email"], 1);
   const iSchool = idx(["school"], 2);
-  const iStage = idx(["stage"], 3);
-  const iGpa = idx(["gpa"], 4);
-  const iMajor = idx(["major", "area_of_study"], 5);
   return data
     .filter((r) => (r[iName] ?? "").trim())
     .map((r) => ({
       name: r[iName] ?? "",
       email: r[iEmail] ?? "",
       school: r[iSchool] ?? "",
-      stage: r[iStage] ?? "",
-      gpa: r[iGpa] ?? "",
-      major: r[iMajor] ?? "",
     }));
 }
 
@@ -91,15 +86,37 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
     setResult(null);
   };
 
+  // Read an uploaded CSV/Excel file into the grid. Excel is parsed with SheetJS
+  // (loaded on demand) by converting the first sheet to CSV, then reusing parseRows.
+  const onFile = async (file: File) => {
+    setError(null); setResult(null);
+    try {
+      let csv: string;
+      if (/\.(xlsx|xls)$/i.test(file.name)) {
+        const XLSX = await import("xlsx");
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);
+      } else {
+        csv = await file.text();
+      }
+      const parsed = parseRows(csv);
+      if (parsed.length === 0) { setError("No rows found in that file."); return; }
+      setRows(parsed.length < 3 ? [...parsed, ...Array(3 - parsed.length).fill(null).map(emptyRow)] : parsed);
+    } catch {
+      setError("Couldn't read that file — please upload a .csv or .xlsx.");
+    }
+  };
+
   const validRows = rows.filter((r) => r.name.trim());
   const dupeCount = validRows.filter((r) => r.email && existingEmails.has(r.email.toLowerCase())).length;
   const resolved = validRows.map((r) => ({
     name: r.name.trim(),
     email: r.email.trim() || null,
     school_id: resolveSchoolId(r.school),
-    stage: r.stage || null,
-    gpa: r.gpa || null,
-    area_of_study: r.major || null,
+    stage: null,
+    gpa: null,
+    area_of_study: null,
   }));
 
   const doImport = () => {
@@ -122,21 +139,27 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
 
   return (
     <>
+      {/* Upload / hint toolbar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 7, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13, padding: "8px 14px", borderRadius: 9, cursor: "pointer" }}>
+          ⬆ Upload CSV / Excel
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} style={{ display: "none" }} />
+        </label>
+        <span style={{ fontSize: 12.5, color: C.grayMute }}>or type / paste rows below. Stage, GPA and major sync from JazzHR.</span>
+      </div>
+
       {/* Table */}
       <div ref={containerRef} onPaste={onPaste} style={{ overflowY: "auto", border: `1px solid ${C.line}`, borderRadius: 10, flex: 1 }}>
         <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
           <colgroup>
-            <col style={{ width: "19%" }} />
-            <col style={{ width: "20%" }} />
-            <col style={{ width: "16%" }} />
-            <col style={{ width: "11%" }} />
-            <col style={{ width: "8%" }} />
-            <col style={{ width: "22%" }} />
-            <col style={{ width: "4%" }} />
+            <col style={{ width: "34%" }} />
+            <col style={{ width: "34%" }} />
+            <col style={{ width: "27%" }} />
+            <col style={{ width: "5%" }} />
           </colgroup>
           <thead>
             <tr style={{ background: C.canvas, borderBottom: `2px solid ${C.line}` }}>
-              {(["Name *", "Email", "School", "Stage", "GPA", "Major"] as const).map((h) => (
+              {(["Name *", "Email", "School"] as const).map((h) => (
                 <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.6, borderRight: `1px solid ${C.line}` }}>{h}</th>
               ))}
               <th />
@@ -162,21 +185,6 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
                       <option value="">— School</option>
                       {schools.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
                     </select>
-                  </td>
-                  <td style={cell}>
-                    <select value={row.stage} onChange={(e) => update(i, { stage: e.target.value })}
-                      style={{ ...sel, color: row.stage ? C.gray : C.grayMute }}>
-                      <option value="">— Stage</option>
-                      {STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </td>
-                  <td style={cell}>
-                    <input value={row.gpa} onChange={(e) => update(i, { gpa: e.target.value })} placeholder="3.8"
-                      style={{ ...inp, color: row.gpa ? C.gray : C.grayMute }} />
-                  </td>
-                  <td style={cell}>
-                    <input value={row.major} onChange={(e) => update(i, { major: e.target.value })} placeholder="Major"
-                      style={{ ...inp, color: row.major ? C.gray : C.grayMute }} />
                   </td>
                   <td style={{ padding: "0 6px", textAlign: "center" }}>
                     <button onClick={() => delRow(i)} title="Remove row"

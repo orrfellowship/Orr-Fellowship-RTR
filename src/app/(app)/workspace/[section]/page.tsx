@@ -103,7 +103,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
   if (need.events) {
     const eventSchoolIds = tierSchoolIds.filter(Boolean);
     const orFilter = `school_id.is.null${eventSchoolIds.length ? `,school_id.in.(${eventSchoolIds.join(",")})` : ""}`;
-    const { data: eventRows } = await serviceDb.from("events").select("id, title, description, event_date, event_type, school_id, created_by").or(orFilter).order("event_date");
+    const { data: eventRows } = await serviceDb.from("events").select("id, title, description, address, event_date, event_type, school_id, created_by").or(orFilter).order("event_date");
     const eventIds = (eventRows ?? []).map((e: any) => e.id);
     const rsvpByEvent: Record<string, { going: string[]; not_going: string[] }> = {};
     const myRsvp: Record<string, string> = {};
