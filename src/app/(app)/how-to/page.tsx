@@ -53,18 +53,29 @@ export default async function HowToPage() {
                 <Step><b>Overview</b> — program-wide pipeline snapshot.</Step>
                 <Step><b>Applicants</b> — every candidate, with filtering, sorting, résumés, and school routing.</Step>
                 <Step><b>Standings</b> — how schools stack up across goals, funnel, and yield.</Step>
-                <Step><b>Playbook</b> — the recruitment plan and tasks per school (or group).</Step>
                 <Step><b>Schools</b> — schools, tiers, and goals.</Step>
-                <Step><b>Users</b> — invite people and set roles/schools.</Step>
-                {sup && <Step><b>Sync</b> — pull candidates from JazzHR and run maintenance jobs.</Step>}
+                <Step><b>Calendar</b> — recruiting events, organization-wide or per school (see below).</Step>
+                <Step><b>Import</b> — bulk-add candidates from a spreadsheet.</Step>
+                <Step><b>Playbook</b> — the recruitment plan and tasks per school (or group).</Step>
+                <Step><b>Resources</b> — shared docs, links, and assets for the team.</Step>
+                {sup ? (
+                  <>
+                    <Step><b>Users</b> — invite people and set roles/schools.</Step>
+                    <Step><b>Sync</b> — pull candidates from JazzHR and run maintenance jobs.</Step>
+                  </>
+                ) : (
+                  <Step><b>Review Sync</b> — match incoming JazzHR candidates to sourced ones.</Step>
+                )}
               </>
             ) : (
               <>
-                <Step><b>Weekly Snapshot</b> — your pipeline numbers and the tasks assigned to you.</Step>
+                <Step><b>Weekly Snapshot</b> — your pipeline numbers, the tasks assigned to you, and the recruiting calendar.</Step>
                 <Step><b>My School</b> — your school's candidate board.</Step>
-                <Step><b>Playbook</b> — your team's recruitment plan and tasks.</Step>
                 <Step><b>Standings</b> — how schools stack up across the program.</Step>
                 <Step><b>Applicants</b> — browse candidates and open résumés.</Step>
+                <Step><b>Import</b> — bulk-add candidates from a spreadsheet.</Step>
+                <Step><b>Playbook</b> — your team's recruitment plan and tasks.</Step>
+                <Step><b>Resources</b> — shared docs and links for the team.</Step>
               </>
             )}
           </ul>
@@ -81,10 +92,16 @@ export default async function HowToPage() {
         </Section>
 
         <Section title="Importing candidates">
-          <p style={{ marginTop: 0 }}>Anyone can bulk-import. Click <b>Bulk import</b> on the Applicants page and paste a CSV:</p>
+          <p style={{ marginTop: 0 }}>Anyone can bulk-import. Use the <b>Import</b> tab (or the <b>Bulk import</b> button on Applicants). You can add candidates three ways:</p>
+          <ul style={{ margin: "0 0 12px", paddingLeft: 20 }}>
+            <Step><b>Upload</b> a <b>.csv</b> or <b>.xlsx</b> file.</Step>
+            <Step><b>Paste</b> rows copied straight from Excel or Google Sheets into any cell.</Step>
+            <Step><b>Type</b> directly into the grid, adding rows as needed.</Step>
+          </ul>
+          <p style={{ margin: 0 }}>You only provide <b>Name, Email, and School</b> — stage, GPA, and major flow in automatically from JazzHR:</p>
           <pre style={{ background: C.canvas, border: `1px solid ${C.line}`, borderRadius: 8, padding: "12px 14px", fontSize: 12.5, overflowX: "auto", margin: "8px 0 0" }}>
-{`Name,Email,School,Stage,GPA,Major
-Jane Doe,jane@example.com,Purdue,new,3.7,Computer Science`}
+{`Name,Email,School
+Jane Doe,jane@example.com,Purdue`}
           </pre>
           <p style={{ marginBottom: 0 }}>The header row is auto-detected and schools are matched by name. Possible duplicates (same email) are flagged before you import.</p>
         </Section>
@@ -109,6 +126,27 @@ Jane Doe,jane@example.com,Purdue,new,3.7,Computer Science`}
             <Step>Tasks assigned to the whole team or left unassigned are managed by team leads and admins in the Playbook tab.</Step>
             <Step>Satellite and Bonus schools share <b>one</b> playbook for the whole group.</Step>
           </ul>
+        </Section>
+
+        <Section title="Recruiting calendar & events">
+          <p style={{ marginTop: 0 }}>Your <b>Weekly Snapshot</b> shows a calendar of your school's events plus any organization-wide events. There are two kinds:</p>
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            <Step><b>Show-up events</b> — things to attend. You'll be asked to <b>RSVP</b> (Going / Can't make it).</Step>
+            <Step><b>Info / deadlines</b> — dates to know about; no RSVP.</Step>
+          </ul>
+          <p style={{ marginBottom: 0, marginTop: 12 }}>Click any event to see its <b>date, address</b> (with a map link), <b>description</b>, and who's going.</p>
+          {(admin || profile.role === "team_lead") && (
+            <ul style={{ margin: "12px 0 0", paddingLeft: 20 }}>
+              {admin ? (
+                <>
+                  <Step>In the <b>Calendar</b> tab, click <b>+ Add event</b> (or any day) and pick a <b>scope</b>: <b>Organization-wide</b> (shows on everyone's snapshot) or a <b>specific school</b>.</Step>
+                  <Step>Add a title, date, type, address, and description so it's more than a dot on the calendar.</Step>
+                </>
+              ) : (
+                <Step>As a team lead you can <b>add events</b> for your school right from the snapshot calendar — click <b>+ Add event</b> or any day, then add a title, date, type, address, and description.</Step>
+              )}
+            </ul>
+          )}
         </Section>
 
         {admin && (
