@@ -229,9 +229,11 @@ export default function ConsoleClient({
   // goal draft state: school_id → {sourced, contacted, applied}
   const [goalDrafts, setGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
   const [goalSaved, setGoalSaved] = useState<Record<string, "saved" | "error">>({});
+  const [goalErr, setGoalErr] = useState<Record<string, string>>({});
   // group goal draft state: tier → {sourced, contacted, applied}
   const [groupGoalDrafts, setGroupGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
   const [groupGoalSaved, setGroupGoalSaved] = useState<Record<string, "saved" | "error">>({});
+  const [groupGoalErr, setGroupGoalErr] = useState<Record<string, string>>({});
   const goalDraft = (sid: string) => {
     if (goalDrafts[sid]) return goalDrafts[sid];
     const g = goals.find((g) => g.school_id === sid);
@@ -661,14 +663,18 @@ export default function ConsoleClient({
                           style={{ width: 60, padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.line}`, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center" }} />
                       </label>
                     ))}
-                    <button onClick={async () => {
+                    <button title={goalErr[s.id] || undefined} onClick={async () => {
                       const result = await upsertGoal(s.id, Number(draft.sourced) || 0, Number(draft.contacted) || 0, Number(draft.applied) || 0);
                       const status = result.error ? "error" : "saved";
                       setGoalSaved((prev) => ({ ...prev, [s.id]: status }));
-                      setTimeout(() => setGoalSaved((prev) => { const n = { ...prev }; delete n[s.id]; return n; }), 2500);
+                      setGoalErr((prev) => ({ ...prev, [s.id]: result.error ?? "" }));
+                      if (!result.error) setTimeout(() => setGoalSaved((prev) => { const n = { ...prev }; delete n[s.id]; return n; }), 2500);
                     }} style={{ border: "none", background: goalSaved[s.id] === "saved" ? C.good : goalSaved[s.id] === "error" ? C.orange : C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, transition: "background .2s", minWidth: 90 }}>
                       {goalSaved[s.id] === "saved" ? "Saved ✓" : goalSaved[s.id] === "error" ? "Error ✕" : "Save goals"}
                     </button>
+                    {goalSaved[s.id] === "error" && goalErr[s.id] && (
+                      <span style={{ fontSize: 12, color: C.orange, maxWidth: 320 }}>{goalErr[s.id]}</span>
+                    )}
                   </div>
                 )}
               </div>
@@ -723,14 +729,18 @@ export default function ConsoleClient({
                                 style={{ width: 60, padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.line}`, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center" }} />
                             </label>
                           ))}
-                          <button onClick={async () => {
+                          <button title={groupGoalErr[tier] || undefined} onClick={async () => {
                             const result = await upsertGroupGoal(tierSchoolIds, Number(gDraft.sourced) || 0, Number(gDraft.contacted) || 0, Number(gDraft.applied) || 0);
                             const status = result.error ? "error" : "saved";
                             setGroupGoalSaved((prev) => ({ ...prev, [tier]: status }));
-                            setTimeout(() => setGroupGoalSaved((prev) => { const n = { ...prev }; delete n[tier]; return n; }), 2500);
+                            setGroupGoalErr((prev) => ({ ...prev, [tier]: result.error ?? "" }));
+                            if (!result.error) setTimeout(() => setGroupGoalSaved((prev) => { const n = { ...prev }; delete n[tier]; return n; }), 2500);
                           }} style={{ border: "none", background: groupGoalSaved[tier] === "saved" ? C.good : groupGoalSaved[tier] === "error" ? C.orange : C.navy, color: "#fff", fontWeight: 700, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, transition: "background .2s", minWidth: 90 }}>
                             {groupGoalSaved[tier] === "saved" ? "Saved ✓" : groupGoalSaved[tier] === "error" ? "Error ✕" : "Save goals"}
                           </button>
+                          {groupGoalSaved[tier] === "error" && groupGoalErr[tier] && (
+                            <span style={{ fontSize: 12, color: C.orange, maxWidth: 320 }}>{groupGoalErr[tier]}</span>
+                          )}
                         </div>
                       </div>
                     ) : (
