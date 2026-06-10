@@ -78,24 +78,26 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
         {DOW.map((d) => <div key={d} style={{ padding: "7px 0", textAlign: "center", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: C.grayMute }}>{d}</div>)}
       </div>
 
-      {/* grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)" }}>
+      {/* grid — every day is a fixed-height cell; extra events scroll inside it
+          so adding events never resizes the row. */}
+      <style>{`.orr-cal-events::-webkit-scrollbar { width: 4px; } .orr-cal-events::-webkit-scrollbar-thumb { background: #d8dce5; border-radius: 4px; }`}</style>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gridAutoRows: "96px" }}>
         {cells.map((day, i) => {
-          if (day === null) return <div key={i} style={{ minHeight: 84, borderRight: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}`, background: "#FCFCFE" }} />;
+          if (day === null) return <div key={i} style={{ borderRight: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}`, background: "#FCFCFE" }} />;
           const ds = ymd(new Date(year, month, day));
           const isToday = ds === ymd(today);
           const dayEvents = byDay.get(ds) ?? [];
           return (
-            <div key={i} onClick={() => canEdit && setAddFor(ds)} style={{ minHeight: 84, padding: 5, borderRight: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}`, cursor: canEdit ? "pointer" : "default", position: "relative" }}>
-              <div style={{ width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", fontSize: 12, fontWeight: 700, color: isToday ? "#fff" : C.gray, background: isToday ? accent : "transparent", marginBottom: 3 }}>{day}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <div key={i} onClick={() => canEdit && setAddFor(ds)} style={{ padding: 5, borderRight: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}`, cursor: canEdit ? "pointer" : "default", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+              <div style={{ width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", fontSize: 12, fontWeight: 700, color: isToday ? "#fff" : C.gray, background: isToday ? accent : "transparent", marginBottom: 3, flexShrink: 0 }}>{day}</div>
+              <div className="orr-cal-events" style={{ display: "flex", flexDirection: "column", gap: 3, overflowY: "auto", flex: 1, minHeight: 0 }}>
                 {dayEvents.map((e) => {
                   const attend = e.event_type === "attend";
                   const tone = attend ? accent : C.navy2;
                   return (
                     <button key={e.id} onClick={(ev) => { ev.stopPropagation(); setSelected(e); }}
                       title={e.title}
-                      style={{ display: "flex", alignItems: "center", gap: 4, border: "none", textAlign: "left", width: "100%",
+                      style={{ display: "flex", alignItems: "center", gap: 4, border: "none", textAlign: "left", width: "100%", flexShrink: 0,
                         background: attend ? `${tone}1a` : "#fff", borderLeft: `3px solid ${tone}`, color: C.gray,
                         fontSize: 10.5, fontWeight: 600, padding: "2px 5px", borderRadius: 4, cursor: "pointer", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
                       {attend && <span style={{ fontSize: 9, color: e.my_status === "going" ? C.good : e.my_status === "not_going" ? C.grayMute : tone }}>{e.my_status === "going" ? "✓" : "●"}</span>}

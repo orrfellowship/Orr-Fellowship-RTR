@@ -4,11 +4,13 @@ import { createServerSupabase, createServiceClient } from "@/lib/supabase/server
 
 async function checkProfileAllowed(email: string) {
   const service = createServiceClient();
+  // Case-insensitive, trimmed match — auth stores emails lowercased, so a
+  // mixed-case entry on the login/reset form must still resolve to the profile.
   const { data } = await service
     .from("profiles")
     .select("id, is_active")
-    .eq("email", email)
-    .single();
+    .ilike("email", email.trim())
+    .maybeSingle();
   if (!data) return "This email is not invited. Contact an admin to be added.";
   if (!data.is_active) return "Your account is inactive. Contact an admin.";
   return null;
