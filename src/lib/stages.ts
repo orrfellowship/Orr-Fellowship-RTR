@@ -109,7 +109,7 @@ export const SCHOOL_MATCH: SchoolMatch[] = [
   { school_name: "Taylor", match: ["taylor university", "taylor"] },
   { school_name: "Rose-Hulman", match: ["rose-hulman institute", "rose-hulman", "rose hulman"] },
   { school_name: "Valparaiso", match: ["valparaiso university", "valparaiso", "valpo"] },
-  { school_name: "Notre Dame", match: ["university of notre dame", "notre dame"] },
+  { school_name: "Notre Dame & Saint Marys", match: ["university of notre dame", "notre dame", "saint mary"] },
   { school_name: "Miami of Ohio", match: ["miami university ohio", "miami university", "miami oh", "miami (ohio)"] },
   { school_name: "Trine", match: ["trine university", "trine"] },
   { school_name: "Denison", match: ["denison university", "denison"] },
