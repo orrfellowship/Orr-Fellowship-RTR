@@ -1,6 +1,16 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
+
+// Cache busting must never fail a successful write. revalidateTag can throw an
+// internal invariant inside a server action on some Next 14.2.x builds; swallow
+// it — the data is already saved and tagged caches also expire on their own TTL.
+function bustCache(tags: string[], paths: string[]) {
+  try {
+    for (const t of tags) revalidateTag(t);
+    for (const p of paths) revalidatePath(p);
+  } catch { /* revalidation is best-effort */ }
+}
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
@@ -137,9 +147,7 @@ export async function upsertGoal(school_id: string, goal_sourced: number, goal_c
   await db.from("school_goals").delete().eq("school_id", school_id);
   const { error } = await db.from("school_goals").insert({ school_id, goal_sourced, goal_contacted, goal_applied });
   if (error) return { error: error.message };
-  revalidateTag("goals");
-  revalidatePath("/console");
-  revalidatePath("/workspace");
+  bustCache(["goals"], ["/console", "/workspace"]);
   return { ok: true };
 }
 
@@ -155,9 +163,7 @@ export async function upsertGroupGoal(schoolIds: string[], goal_sourced: number,
     schoolIds.map((school_id) => ({ school_id, goal_sourced, goal_contacted, goal_applied }))
   );
   if (error) return { error: error.message };
-  revalidateTag("goals");
-  revalidatePath("/console");
-  revalidatePath("/workspace");
+  bustCache(["goals"], ["/console", "/workspace"]);
   return { ok: true };
 }
 
@@ -451,9 +457,7 @@ export async function addResource(name: string, description: string | null, link
     name: name.trim(), description: description?.trim() || null, link: link?.trim() || null, created_by: profile.id,
   });
   if (error) return { error: error.message };
-  revalidateTag("resources");
-  revalidatePath("/console");
-  revalidatePath("/workspace");
+  bustCache(["resources"], ["/console", "/workspace"]);
   return { ok: true };
 }
 
@@ -466,9 +470,7 @@ export async function updateResource(id: string, name: string, description: stri
     name: name.trim(), description: description?.trim() || null, link: link?.trim() || null,
   }).eq("id", id);
   if (error) return { error: error.message };
-  revalidateTag("resources");
-  revalidatePath("/console");
-  revalidatePath("/workspace");
+  bustCache(["resources"], ["/console", "/workspace"]);
   return { ok: true };
 }
 
@@ -478,9 +480,7 @@ export async function deleteResource(id: string) {
   const db = createServiceClient();
   const { error } = await db.from("resources").delete().eq("id", id);
   if (error) return { error: error.message };
-  revalidateTag("resources");
-  revalidatePath("/console");
-  revalidatePath("/workspace");
+  bustCache(["resources"], ["/console", "/workspace"]);
   return { ok: true };
 }
 
