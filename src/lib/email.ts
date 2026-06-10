@@ -20,6 +20,14 @@ function transporter(): nodemailer.Transporter | null {
     port,
     secure: port === 465, // 465 = implicit TLS; 587 = STARTTLS
     auth: { user, pass },
+    // Pool one authenticated connection and reuse it across messages. Without
+    // this, nodemailer logs in fresh for EVERY send — a bulk invite then trips
+    // Gmail's "454 Too many login attempts". Throttle to a few msgs/sec too.
+    pool: true,
+    maxConnections: 1,
+    maxMessages: 100,
+    rateDelta: 1000,
+    rateLimit: 3,
   });
   return cached;
 }

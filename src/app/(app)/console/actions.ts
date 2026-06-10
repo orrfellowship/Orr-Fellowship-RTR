@@ -308,7 +308,10 @@ async function sendInvite(
   db: ReturnType<typeof createServiceClient>,
   email: string, full_name: string, role: string, school_id: string | null,
 ): Promise<{ ok: true } | { error: string }> {
-  const { data, error } = await db.auth.admin.generateLink({
+  // New invite. If the user already exists (e.g. a prior invite created them but
+  // the email failed), fall back to a recovery link so they can still set their
+  // password — re-running an invite is therefore idempotent.
+  let res = await db.auth.admin.generateLink({
     type: "invite",
     email,
     options: {
@@ -316,9 +319,16 @@ async function sendInvite(
       redirectTo: `${siteUrlForInvite()}/auth/invite-callback`,
     },
   });
-  if (error) return { error: error.message };
-  const link = data?.properties?.action_link;
-  const user = data?.user;
+  if (res.error && /regist|already|exist/i.test(res.error.message)) {
+    res = await db.auth.admin.generateLink({
+      type: "recovery",
+      email,
+      options: { redirectTo: `${siteUrlForInvite()}/auth/reset-callback` },
+    });
+  }
+  if (res.error) return { error: res.error.message };
+  const link = res.data?.properties?.action_link;
+  const user = res.data?.user;
   if (!link || !user) return { error: "Could not generate an invite link." };
 
   await db.from("profiles").upsert(
