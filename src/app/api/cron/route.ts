@@ -25,8 +25,22 @@ async function run(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const job = new URL(req.url).searchParams.get("job") ?? "flush";
+  const url = new URL(req.url);
+  const job = url.searchParams.get("job") ?? "flush";
   const db = createServiceClient();
+
+  // One-shot deliverability check: ?job=test&to=you@example.com sends a single
+  // email through the same SMTP path the digests/flush use.
+  if (job === "test") {
+    const to = url.searchParams.get("to");
+    if (!to) return NextResponse.json({ error: "Add ?to=your@email to send a test." }, { status: 400 });
+    const res = await sendEmail({
+      to,
+      subject: "Orr Recruiting — test email",
+      html: emailLayout({ heading: "It works ✓", bodyHtml: "<div>If you're reading this, the cron route and SMTP are wired up correctly.</div>" }),
+    });
+    return NextResponse.json({ ok: res.ok, emailConfigured: emailConfigured(), result: res });
+  }
 
   if (job === "digest") {
     const digest = await runDigests(db);
