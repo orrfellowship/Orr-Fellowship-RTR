@@ -6,6 +6,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolName } from "@/lib/stages";
+import { sendEmail, emailLayout } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
@@ -295,21 +296,54 @@ function siteUrlForInvite() {
     ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 }
 
+const ROLE_LABEL: Record<string, string> = {
+  fellow: "a Fellow", team_lead: "a Team Lead", admin: "an Admin", super_admin: "a Super Admin",
+};
+
+// Create the auth user + invite link WITHOUT triggering Supabase's own email,
+// then deliver the invite through our SMTP (email.ts → personal Gmail). This
+// sidesteps Supabase Auth's email rate limit; the limiting factor becomes our
+// own SMTP provider (Gmail caps ~500/day) instead.
+async function sendInvite(
+  db: ReturnType<typeof createServiceClient>,
+  email: string, full_name: string, role: string, school_id: string | null,
+): Promise<{ ok: true } | { error: string }> {
+  const { data, error } = await db.auth.admin.generateLink({
+    type: "invite",
+    email,
+    options: {
+      data: { full_name, role, school_id },
+      redirectTo: `${siteUrlForInvite()}/auth/invite-callback`,
+    },
+  });
+  if (error) return { error: error.message };
+  const link = data?.properties?.action_link;
+  const user = data?.user;
+  if (!link || !user) return { error: "Could not generate an invite link." };
+
+  await db.from("profiles").upsert(
+    { id: user.id, full_name, role, school_id, email: (user.email as string) ?? email },
+    { onConflict: "id" },
+  );
+
+  const html = emailLayout({
+    heading: "You're invited to Orr Recruiting",
+    intro: `${full_name ? full_name + ", you've" : "You've"} been added as ${ROLE_LABEL[role] ?? "a team member"}.`,
+    bodyHtml: "Click below to set your password and get started. This link is single-use and will expire.",
+    ctaLabel: "Set your password",
+    ctaUrl: link,
+  });
+  const sent = await sendEmail({ to: email, subject: "Your Orr Recruiting invite", html });
+  if (!sent.ok) return { error: `User created, but the invite email failed to send (${sent.error}).` };
+  return { ok: true };
+}
+
 export async function inviteUser(email: string, full_name: string, role: string, school_id: string | null) {
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const serviceDb = createServiceClient();
-  const { data, error } = await serviceDb.auth.admin.inviteUserByEmail(email, {
-    data: { full_name, role, school_id },
-    redirectTo: `${siteUrlForInvite()}/auth/invite-callback`,
-  });
-  if (error) return { error: error.message };
-  if (data?.user) {
-    await serviceDb.from("profiles").upsert(
-      { id: data.user.id, full_name, role, school_id, email: (data.user.email as string) ?? null },
-      { onConflict: "id" }
-    );
-  }
+  const res = await sendInvite(serviceDb, email.trim(), full_name, role, school_id);
+  if ("error" in res) return { error: res.error };
   revalidatePath("/console");
   return { ok: true };
 }
@@ -326,17 +360,8 @@ export async function bulkInviteUsers(
   for (const r of rows) {
     const email = r.email.trim();
     if (!email) continue;
-    const { data, error } = await serviceDb.auth.admin.inviteUserByEmail(email, {
-      data: { full_name: r.full_name, role: r.role, school_id: r.school_id },
-      redirectTo: `${siteUrlForInvite()}/auth/invite-callback`,
-    });
-    if (error) { failures.push({ email, error: error.message }); continue; }
-    if (data?.user) {
-      await serviceDb.from("profiles").upsert(
-        { id: data.user.id, full_name: r.full_name, role: r.role, school_id: r.school_id, email: (data.user.email as string) ?? email },
-        { onConflict: "id" }
-      );
-    }
+    const res = await sendInvite(serviceDb, email, r.full_name, r.role, r.school_id);
+    if ("error" in res) { failures.push({ email, error: res.error }); continue; }
     invited++;
   }
   revalidatePath("/console");
