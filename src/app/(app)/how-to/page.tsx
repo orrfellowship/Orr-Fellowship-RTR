@@ -55,7 +55,6 @@ export default async function HowToPage() {
                 <Step><b>Standings</b> — how schools stack up across goals, funnel, and yield.</Step>
                 <Step><b>Schools</b> — schools, tiers, and goals.</Step>
                 <Step><b>Calendar</b> — recruiting events, organization-wide or per school (see below).</Step>
-                <Step><b>Import</b> — bulk-add candidates from a spreadsheet.</Step>
                 <Step><b>Playbook</b> — the recruitment plan and tasks per school (or group).</Step>
                 <Step><b>Resources</b> — shared docs, links, and assets for the team.</Step>
                 {sup ? (
@@ -73,7 +72,6 @@ export default async function HowToPage() {
                 <Step><b>My School</b> — your school's candidate board.</Step>
                 <Step><b>Standings</b> — how schools stack up across the program.</Step>
                 <Step><b>Candidates</b> — browse candidates and open résumés.</Step>
-                <Step><b>Import</b> — bulk-add candidates from a spreadsheet.</Step>
                 <Step><b>Playbook</b> — your team's recruitment plan and tasks.</Step>
                 <Step><b>Resources</b> — shared docs and links for the team.</Step>
               </>
@@ -92,7 +90,7 @@ export default async function HowToPage() {
         </Section>
 
         <Section title="Importing candidates">
-          <p style={{ marginTop: 0 }}>Anyone can bulk-import. Use the <b>Import</b> tab (or the <b>Bulk import</b> button on Candidates). You can add candidates three ways:</p>
+          <p style={{ marginTop: 0 }}>Anyone can bulk-import. Use the <b>Bulk import</b> button on the Candidates tab. You can add candidates three ways:</p>
           <ul style={{ margin: "0 0 12px", paddingLeft: 20 }}>
             <Step><b>Upload</b> a <b>.csv</b> or <b>.xlsx</b> file.</Step>
             <Step><b>Paste</b> rows copied straight from Excel or Google Sheets into any cell.</Step>

@@ -47,11 +47,15 @@ function parseRows(text: string): Row[] {
 
 // onClose: when provided (modal usage), a Cancel/Done button is shown alongside
 // Import. The page usage omits it and simply shows the result inline.
-export default function ImportTable({ schools, existingEmails, onClose }: {
+export default function ImportTable({ schools, existingEmails, existingNames, onClose }: {
   schools: { id: string; name: string; tier?: string | null }[];
   existingEmails: Set<string>;
+  existingNames?: Set<string>;
   onClose?: () => void;
 }) {
+  const names = existingNames ?? new Set<string>();
+  const isDupeRow = (r: { name: string; email: string }) =>
+    (!!r.email && existingEmails.has(r.email.toLowerCase())) || (!!r.name && names.has(r.name.trim().toLowerCase()));
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [rows, setRows] = useState<Row[]>([emptyRow(), emptyRow(), emptyRow()]);
@@ -101,7 +105,7 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
   };
 
   const validRows = rows.filter((r) => r.name.trim());
-  const dupeCount = validRows.filter((r) => r.email && existingEmails.has(r.email.toLowerCase())).length;
+  const dupeCount = validRows.filter(isDupeRow).length;
   const resolved = validRows.map((r) => {
     const { school_id, university_raw } = resolveCandidateSchool(r.school, schools);
     return {
@@ -165,7 +169,7 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
           </thead>
           <tbody>
             {rows.map((row, i) => {
-              const isDupe = !!(row.email && existingEmails.has(row.email.toLowerCase()));
+              const isDupe = isDupeRow(row);
               const rowBg = isDupe ? "#FFF7F4" : i % 2 === 0 ? "#fff" : "#FAFBFE";
               return (
                 <tr key={i} style={{ borderBottom: `1px solid ${C.line}`, background: rowBg }}>
@@ -203,7 +207,7 @@ export default function ImportTable({ schools, existingEmails, onClose }: {
       {validRows.length > 0 && !result && (
         <div style={{ padding: "9px 14px", background: C.canvas, borderRadius: 9, fontSize: 13 }}>
           <b style={{ color: C.navy }}>{validRows.length}</b> row{validRows.length !== 1 ? "s" : ""} ready to import
-          {dupeCount > 0 && <span style={{ color: C.orange, marginLeft: 10 }}>⚠ {dupeCount} duplicate email{dupeCount !== 1 ? "s" : ""} — will still be imported</span>}
+          {dupeCount > 0 && <span style={{ color: C.orange, marginLeft: 10 }}>⚠ {dupeCount} possible duplicate{dupeCount !== 1 ? "s" : ""} (name or email match) — will still be imported</span>}
         </div>
       )}
       {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E" }}>{error}</div>}

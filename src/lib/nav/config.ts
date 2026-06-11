@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard, UserSearch, Trophy, GraduationCap, Users, RefreshCw,
-  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck, Upload, Wallet,
+  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck, Wallet,
 } from "lucide-react";
 import type { AppRole } from "@/lib/types";
 import { isAdminPlus, isSuper } from "@/lib/types";
@@ -58,7 +58,7 @@ function consoleNav(role: Role): NavGroup[] {
   // non-super admins get Review Sync in its place.
   const operations: NavItem[] = [
     { id: "budget", label: "Budget", href: "/console/budget", icon: Wallet, hint: "Allocations & expenses" },
-    { id: "users", label: "Users", href: "/console/users", icon: Users, hint: "Roles & access", badgeKey: "users" },
+    { id: "users", label: "User Management", href: "/console/users", icon: Users, hint: "Roles, access & activity", badgeKey: "users" },
     ...(isSuper(role)
       ? [{ id: "sync", label: "Sync", href: "/console/sync", icon: RefreshCw, hint: "JazzHR integration" }]
       : [{ id: "review", label: "Review Sync", href: "/console/review", icon: ClipboardCheck, hint: "Match JazzHR ↔ sourced" }]),
@@ -70,7 +70,6 @@ function consoleNav(role: Role): NavGroup[] {
       { id: "standings", label: "Standings", href: "/console/standings", icon: Trophy, hint: "School leaderboard" },
       { id: "schools", label: "Schools", href: "/console/schools", icon: GraduationCap, hint: "Programs & targets" },
       { id: "calendar", label: "Calendar", href: "/console/calendar", icon: CalendarCheck, hint: "Org-wide & school events" },
-      { id: "import", label: "Import", href: "/import", icon: Upload, hint: "Bulk import candidates" },
     ] },
     { group: "Operations", items: operations },
     { group: "Knowledge", items: [
@@ -96,7 +95,6 @@ function workspaceNav(role: Role): NavGroup[] {
       { id: "my-school", label: "My School", href: "/workspace/my-school", icon: School, hint: "Your school dashboard" },
       { id: "standings", label: "Standings", href: "/workspace/standings", icon: Trophy, hint: "How schools rank" },
       { id: "applicants", label: "Candidates", href: "/workspace/applicants", icon: UserSearch, hint: "Your candidate pipeline", badgeKey: "applicants" },
-      { id: "import", label: "Import", href: "/import", icon: Upload, hint: "Bulk import candidates" },
     ] },
     { group: "Playbook", items: playbookItems },
   ];

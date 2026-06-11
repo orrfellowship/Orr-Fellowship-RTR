@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useMemo, useTransition, useEffect } from "react";
+import { useState, useMemo, useTransition, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import type { Profile, Resource } from "@/lib/types";
 import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
-  upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, deleteOutreach, deleteConnection,
+  upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, deleteCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
   unlinkJazzCandidate,
 } from "./actions";
@@ -18,7 +19,7 @@ import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
-import { phaseOf, resolveCandidateSchool } from "@/lib/stages";
+import { phaseOf } from "@/lib/stages";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -948,10 +949,10 @@ export default function ConsoleClient({
         <CandidateDrawer c={open} profile={profile} team={team} onClose={() => setOpenId(null)} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
       )}
       {addOpen && (
-        <AddCandidateModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} onClose={() => setAddOpen(false)} startTransition={startTransition} />
+        <AddCandidateModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setAddOpen(false)} startTransition={startTransition} />
       )}
       {bulkOpen && (
-        <BulkImportModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} />
+        <BulkImportModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} />
       )}
       {inviteOpen && (
         <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />
@@ -972,11 +973,14 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
   onClose: () => void; startTransition: (cb: () => void) => void;
   aiData: AI | null; superUser: boolean;
 }) {
+  const router = useRouter();
   const [draft, setDraft] = useState("");
   const [log, setLog] = useState<{ id: string; body: string; created_at: string }[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
   const [relDraft, setRelDraft] = useState("");
   const [resumeOpen, setResumeOpen] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delText, setDelText] = useState("");
   const QUICK = ["Called — left voicemail", "Emailed", "Met in person", "Scheduled follow-up"];
 
   useEffect(() => {
@@ -1180,6 +1184,25 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
             ))}
             {(log ?? []).length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>No outreach logged yet.</div>}
           </div>
+
+          {/* Danger zone — delete candidate (type the name to confirm) */}
+          <div style={{ marginTop: 24, borderTop: `1px solid ${C.line}`, paddingTop: 16 }}>
+            {!delOpen ? (
+              <button onClick={() => setDelOpen(true)} style={{ border: `1px solid ${C.orange}`, background: "#fff", color: C.orange, fontWeight: 700, fontSize: 13, padding: "8px 14px", borderRadius: 9, cursor: "pointer" }}>Delete candidate</button>
+            ) : (
+              <div>
+                <div style={{ fontSize: 13, color: C.gray, marginBottom: 8 }}>This permanently deletes <b>{c.name}</b> and their outreach &amp; warm intros. Type the candidate&apos;s name to confirm:</div>
+                <input value={delText} onChange={(e) => setDelText(e.target.value)} placeholder={c.name}
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box", marginBottom: 8 }} />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => { setDelOpen(false); setDelText(""); }} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "8px 14px", borderRadius: 9, cursor: "pointer" }}>Cancel</button>
+                  <button disabled={delText.trim() !== c.name.trim()}
+                    onClick={() => startTransition(() => { deleteCandidate(c.id).then((r: any) => { if (r?.error) alert(r.error); else { onClose(); router.refresh(); } }); })}
+                    style={{ border: "none", background: delText.trim() === c.name.trim() ? C.orange : "#E6A892", color: "#fff", fontWeight: 700, padding: "8px 16px", borderRadius: 9, cursor: delText.trim() === c.name.trim() ? "pointer" : "not-allowed" }}>Delete permanently</button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       {resumeOpen && c.jazz_id && (
@@ -1189,33 +1212,73 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
   );
 }
 
+// ---- Searchable dropdown (single-select with a filter box) ----
+function SearchableSelect({ options, value, onChange, placeholder }: {
+  options: { value: string; label: string }[];
+  value: string; onChange: (value: string) => void; placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find((o) => o.value === value);
+  const filtered = q.trim() ? options.filter((o) => o.label.toLowerCase().includes(q.trim().toLowerCase())) : options;
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <input value={open ? q : (selected?.label ?? "")} onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onFocus={() => { setQ(""); setOpen(true); }} placeholder={placeholder}
+        style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box", cursor: "pointer" }} />
+      {open && (
+        <div style={{ position: "absolute", zIndex: 5, top: "calc(100% + 4px)", left: 0, right: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(17,18,62,.12)", maxHeight: 240, overflowY: "auto" }}>
+          {filtered.length === 0 && <div style={{ padding: "10px 13px", fontSize: 13, color: C.grayMute }}>No matches</div>}
+          {filtered.map((o) => (
+            <button key={o.value} onClick={() => { onChange(o.value); setOpen(false); setQ(""); }}
+              style={{ display: "block", width: "100%", textAlign: "left", border: "none", borderBottom: `1px solid ${C.line}`, background: o.value === value ? C.canvas : "#fff", padding: "10px 13px", fontSize: 14, color: C.gray, cursor: "pointer" }}>{o.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- Add Candidate Modal ----
-const EMPTY_FORM = { name: "", email: "", school: "", stage: "", gpa: "", area_of_study: "" };
-function AddCandidateModal({ schools, existingEmails, onClose, startTransition }: {
-  schools: School[]; existingEmails: Set<string>;
+function AddCandidateModal({ schools, existingEmails, existingNames, onClose, startTransition }: {
+  schools: School[]; existingEmails: Set<string>; existingNames: Set<string>;
   onClose: () => void; startTransition: (cb: () => void) => void;
 }) {
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [schoolValue, setSchoolValue] = useState("");
+  const [specificSchool, setSpecificSchool] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const dupeEmail = form.email && existingEmails.has(form.email.toLowerCase());
 
-  const set = (k: keyof typeof EMPTY_FORM, v: string) => setForm((p) => ({ ...p, [k]: v }));
+  const options = schoolSelectOptions(schools);
+  const selectedSchool = schools.find((s) => s.id === schoolValue) ?? null;
+  const isGroup = selectedSchool?.tier === "satellite" || selectedSchool?.tier === "bonus";
+
+  const dupeEmail = !!email.trim() && existingEmails.has(email.trim().toLowerCase());
+  const dupeName = !!name.trim() && existingNames.has(name.trim().toLowerCase());
 
   const submit = () => {
-    if (!form.name.trim()) { setError("Name is required."); return; }
+    if (!name.trim()) { setError("Name is required."); return; }
     setError(null);
-    const { school_id, university_raw } = resolveCandidateSchool(form.school, schools);
+    // Satellite/Bonus pick the tier group; the specific school they typed is kept
+    // in university_raw (shown on the Candidates page) while the candidate counts
+    // toward that group everywhere else.
+    const university_raw = isGroup ? (specificSchool.trim() || null) : null;
     startTransition(() => {
       addCandidate({
-        name: form.name.trim(),
-        email: form.email.trim() || null,
-        school_id,
+        name: name.trim(),
+        email: email.trim() || null,
+        school_id: schoolValue || null,
         university_raw,
         // Stage / GPA / major are filled in later from JazzHR — not part of sourcing.
-        stage: null,
-        gpa: null,
-        area_of_study: null,
+        stage: null, gpa: null, area_of_study: null,
       }).then((r) => {
         if ("error" in r && r.error) setError(r.error);
         else { setSaved(true); setTimeout(onClose, 800); }
@@ -1223,37 +1286,33 @@ function AddCandidateModal({ schools, existingEmails, onClose, startTransition }
     });
   };
 
-  const field = (label: string, k: keyof typeof EMPTY_FORM, placeholder?: string) => (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>{label}</label>
-      <input value={form[k]} onChange={(e) => set(k, e.target.value)} placeholder={placeholder}
-        style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" }} />
-    </div>
-  );
+  const inputStyle: React.CSSProperties = { width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" };
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.45)" }} />
       <div style={{ position: "relative", background: "#fff", borderRadius: 16, padding: 28, width: 440, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto" }}>
         <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 20px" }}>Add Candidate</h2>
-        {field("Name *", "name")}
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Name *</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} style={{ ...inputStyle, borderColor: dupeName ? C.orange : C.line }} />
+          {dupeName && <div style={{ fontSize: 12, color: C.orange, marginTop: 4 }}>⚠ A candidate with this name already exists — a duplicate will be created if you continue.</div>}
+        </div>
+
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Email</label>
-          <input value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="email@example.com"
-            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${dupeEmail ? C.orange : C.line}`, fontSize: 14, boxSizing: "border-box" }} />
-          {dupeEmail && <div style={{ fontSize: 12, color: C.orange, marginTop: 4 }}>⚠ A candidate with this email already exists — duplicate will be created if you continue.</div>}
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" style={{ ...inputStyle, borderColor: dupeEmail ? C.orange : C.line }} />
+          {dupeEmail && <div style={{ fontSize: 12, color: C.orange, marginTop: 4 }}>⚠ A candidate with this email already exists — a duplicate will be created if you continue.</div>}
         </div>
+
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>School</label>
-          <input list="addcand-schools" value={form.school} onChange={(e) => set("school", e.target.value)}
-            placeholder="Pick a school or type any (e.g. University of Kentucky)"
-            style={{ width: "100%", padding: "10px 13px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" }} />
-          <datalist id="addcand-schools">
-            {schools.map((s) => <option key={s.id} value={s.name} />)}
-          </datalist>
-          <div style={{ fontSize: 12, color: C.grayMute, marginTop: 5 }}>
-            Core and Satellite schools route to themselves; anything else (including schools not listed) goes to the <b>Bonus</b> group.
-          </div>
+          <SearchableSelect options={options} value={schoolValue} onChange={(v) => { setSchoolValue(v); setSpecificSchool(""); }} placeholder="Search schools…" />
+          {isGroup && (
+            <input value={specificSchool} onChange={(e) => setSpecificSchool(e.target.value)} placeholder="Which school? (e.g. University of Kentucky)"
+              style={{ ...inputStyle, marginTop: 8 }} />
+          )}
         </div>
         <div style={{ background: "#EEF1F7", borderRadius: 9, padding: "9px 12px", marginBottom: 14, fontSize: 12, color: C.grayMute }}>
           Stage, GPA, and major are added automatically once the candidate applies through JazzHR.

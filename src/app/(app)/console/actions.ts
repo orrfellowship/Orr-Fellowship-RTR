@@ -128,6 +128,17 @@ export async function addCandidate(data: {
   return { ok: true };
 }
 
+export async function deleteCandidate(id: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { error } = await db.from("candidates").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
 export async function bulkImportCandidates(
   rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null }[]
 ) {

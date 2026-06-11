@@ -635,6 +635,7 @@ export default function WorkspaceClient({
         <BulkImportModal
           schools={allSchools}
           existingEmails={new Set(allCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
+          existingNames={new Set(allCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
           onClose={() => setBulkOpen(false)}
         />
       )}
@@ -1166,14 +1167,16 @@ function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, star
             ) : conns.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
                 {conns.map((cn) => {
-                  const holder = cn.tagged_profile_id ? profileName(cn.tagged_profile_id) : cn.name;
-                  const taggedByOther = cn.tagged_profile_id && cn.tagged_profile_id !== cn.fellow_id;
+                  const creator = cn.fellow_id === profile.id ? "You" : (cn.name || profileName(cn.fellow_id));
+                  const tagged = cn.tagged_profile_id ? profileName(cn.tagged_profile_id) : null;
                   return (
-                    <div key={cn.id} style={{ fontSize: 13, color: C.gray, display: "flex", gap: 6, alignItems: "center" }}>
-                      <span style={{ fontSize: 16, color: cn.tagged_profile_id ? C.gold : C.gray }}>●</span>
+                    <div key={cn.id} style={{ fontSize: 13, color: C.gray, display: "flex", gap: 6, alignItems: "flex-start" }}>
+                      <span style={{ fontSize: 16, color: tagged ? C.gold : C.gray, lineHeight: 1.3 }}>●</span>
                       <span style={{ flex: 1 }}>
-                        <b>{holder}</b> — <span style={{ color: C.grayMute }}>{cn.relationship}</span>
-                        {taggedByOther && <span style={{ color: C.navy3, fontSize: 11.5 }}> · tagged by {cn.name}</span>}
+                        {tagged
+                          ? <><b>{creator}</b> tagged <b>{tagged}</b> to reach out</>
+                          : <><b>{creator}</b> knows this candidate</>}
+                        {cn.relationship && <span style={{ color: C.grayMute }}> · {cn.relationship}</span>}
                       </span>
                       {(cn.fellow_id === profile.id || canEdit) && <button onClick={() => doDelConn(cn.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px" }}>×</button>}
                     </div>
