@@ -36,6 +36,7 @@ type Cand = {
   stage: string | null; gpa: string | null; area_of_study: string | null; university_raw: string | null;
   linkedin: string | null; resume_link: string | null; grad_date: string | null;
   point_person_id: string | null; not_interested: boolean; is_favorite: boolean;
+  source: string | null; created_by: string | null;
 };
 type TeamMember = { id: string; full_name: string };
 type Goal = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
@@ -131,6 +132,7 @@ export default function ConsoleClient({
   const [appStage, setAppStage] = useState("All stages");
   const [appMinGpa, setAppMinGpa] = useState("");
   const [appFavOnly, setAppFavOnly] = useState(false);
+  const [appCreator, setAppCreator] = useState("anyone"); // anyone | jazzhr | <profile_id>
   const [appSort, setAppSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage" | "ai"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [reviewOpen, setReviewOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -354,6 +356,8 @@ export default function ConsoleClient({
             if (appMajor !== "All majors" && c.area_of_study !== appMajor) return false;
             if (appStage !== "All stages" && c.stage !== appStage) return false;
             if (appFavOnly && !c.is_favorite) return false;
+            if (appCreator === "jazzhr" && c.source !== "jazzhr") return false;
+            if (appCreator !== "anyone" && appCreator !== "jazzhr" && c.created_by !== appCreator) return false;
             if (!isNaN(minGpa)) { const g = parseFloat(c.gpa ?? ""); if (isNaN(g) || g < minGpa) return false; }
             return true;
           });
@@ -380,7 +384,7 @@ export default function ConsoleClient({
           const SortHead = ({ k, label }: { k: typeof appSort.key; label: string }) => (
             <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: appSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
           );
-          const filtersActive = q || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all";
+          const filtersActive = q || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all" || appCreator !== "anyone";
 
           return (
           <>
@@ -430,6 +434,11 @@ export default function ConsoleClient({
                 <option>All stages</option>
                 {distinctStages.map((s) => <option key={s}>{s}</option>)}
               </select>
+              <select value={appCreator} onChange={(e) => setAppCreator(e.target.value)} title="Added by" style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600, maxWidth: 180 }}>
+                <option value="anyone">Added by: anyone</option>
+                <option value="jazzhr">JazzHR sync</option>
+                {team.map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+              </select>
               <input value={appMinGpa} onChange={(e) => setAppMinGpa(e.target.value)} type="number" step="0.1" min="0" max="4" placeholder="Min GPA"
                 style={{ width: 96, padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
               <button onClick={() => setAppFavOnly((v) => !v)}
@@ -441,7 +450,7 @@ export default function ConsoleClient({
                 {showUnrouted ? "✕ Unrouted only" : `Unrouted (${unroutedCount})`}
               </button>
               {(filtersActive || showUnrouted) && (
-                <button onClick={() => { setAppSearch(""); setAppMajor("All majors"); setAppStage("All stages"); setAppMinGpa(""); setAppFavOnly(false); setShowUnrouted(false); setAppSchool("all"); }}
+                <button onClick={() => { setAppSearch(""); setAppMajor("All majors"); setAppStage("All stages"); setAppMinGpa(""); setAppFavOnly(false); setShowUnrouted(false); setAppSchool("all"); setAppCreator("anyone"); }}
                   style={{ padding: "9px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
                   Clear
                 </button>
@@ -1127,7 +1136,7 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
             </button>
           </div>
 
-          {([["Email", c.email], ["GPA", c.gpa], ["Grad Date", c.grad_date], ["University", c.university_raw]] as [string, string | null][]).map(([k, v]) => (
+          {([["Email", c.email], ["GPA", c.gpa], ["Grad Date", c.grad_date], ["University", c.university_raw], ["Added by", c.created_by ? (team.find((t) => t.id === c.created_by)?.full_name ?? "Team member") : (c.source === "jazzhr" ? "JazzHR sync" : "—")]] as [string, string | null][]).map(([k, v]) => (
             <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
               <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span>
               <span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>

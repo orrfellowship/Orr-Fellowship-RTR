@@ -33,6 +33,7 @@ type Cand = {
   gpa: string | null; area_of_study: string | null; linkedin: string | null;
   resume_link: string | null; point_person_id: string | null;
   not_interested: boolean; is_favorite: boolean;
+  source: string | null; created_by: string | null;
 };
 type School      = { id: string; name: string; color_primary: string | null; logo_url: string | null };
 type AllSchool   = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
@@ -1128,6 +1129,7 @@ function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, star
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
           <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px" }}>{c.name}</h2>
           <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.72)" }}>{c.area_of_study}</div>
+          <div style={{ fontSize: 11.5, color: "rgba(255,255,255,.6)", marginTop: 3 }}>Added by {c.created_by ? profileName(c.created_by) : (c.source === "jazzhr" ? "JazzHR sync" : "—")}</div>
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>
         </div>
         <div style={{ padding: 24 }}>

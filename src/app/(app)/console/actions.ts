@@ -123,7 +123,7 @@ export async function addCandidate(data: {
   const db = createServiceClient();
   // Manually-entered candidates start in the "sourced" phase (stage key "new");
   // JazzHR advances them from there. Respect an explicit stage if one is given.
-  const { error } = await db.from("candidates").insert({ ...data, stage: data.stage || "new", source: "user_created", not_interested: false });
+  const { error } = await db.from("candidates").insert({ ...data, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
   if (error) return { error: error.message };
   revalidatePath("/console");
   revalidatePath("/workspace");
@@ -148,7 +148,7 @@ export async function bulkImportCandidates(
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may import
   const db = createServiceClient();
   const { error } = await db.from("candidates").insert(
-    rows.map((r) => ({ ...r, stage: r.stage || "new", source: "user_created", not_interested: false }))
+    rows.map((r) => ({ ...r, stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id }))
   );
   if (error) return { error: error.message };
   revalidatePath("/console");

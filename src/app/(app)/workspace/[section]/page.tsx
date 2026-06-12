@@ -56,7 +56,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
   // Parallel, section-scoped fetches. Reference tables come from the shared
   // Data Cache (getSchoolsCached / getGoalsCached / getResourcesCached).
   const [candidates, favs, team, phases, allCandidates, allProfiles, allSchools, allGoals, resources] = await Promise.all([
-    need.candidates ? serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested").in("school_id", tierSchoolIds).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.candidates ? serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, source, created_by").in("school_id", tierSchoolIds).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     wantFavs ? serviceDb.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.team ? serviceDb.from("profiles").select("id, full_name, role").in("school_id", tierSchoolIds).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.phases ? serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").eq("school_id", playbookSchoolId).order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
