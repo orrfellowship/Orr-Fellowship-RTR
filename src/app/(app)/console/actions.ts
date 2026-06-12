@@ -18,6 +18,8 @@ import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolName } from "@/lib/stages";
 import { sendEmail, emailLayout } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
+import { evaluateCandidate } from "@/lib/triggers";
+import { getTierSchoolIds } from "@/lib/queries";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -625,6 +627,54 @@ export async function deleteBudgetEntry(id: string) {
   if (error) return { error: error.message };
   bustCache([], ["/console", "/workspace"]);
   return { ok: true };
+}
+
+// Read-only Weekly Snapshot summary for a user (admin viewing User Management):
+// their action queue + personal task progress, computed the same way the snapshot does.
+export async function getUserSnapshot(userId: string) {
+  const me = await getCurrentProfile();
+  if (!me || !isAdminPlus(me.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { data: target } = await db.from("profiles").select("id, full_name, role, school_id").eq("id", userId).maybeSingle();
+  if (!target) return { error: "User not found." };
+  const t = target as any;
+  if (t.role === "admin" || t.role === "super_admin") return { ok: true as const, name: t.full_name, isAdmin: true, queue: [], tasksDone: 0, tasksTotal: 0 };
+
+  const { ids: schoolIds } = await getTierSchoolIds(t.school_id);
+  const queue: { name: string; why: string }[] = [];
+  if (schoolIds.length) {
+    const { data: cands } = await db.from("candidates").select("id, name, stage, point_person_id, not_interested").in("school_id", schoolIds);
+    const list = (cands ?? []) as any[];
+    const ids = list.map((c) => c.id);
+    const lastContact: Record<string, string> = {};
+    if (ids.length) {
+      const { data: logs } = await db.from("outreach_log").select("candidate_id, created_at").in("candidate_id", ids);
+      for (const l of logs ?? []) { const cid = (l as any).candidate_id, ts = (l as any).created_at; if (!lastContact[cid] || ts > lastContact[cid]) lastContact[cid] = ts; }
+    }
+    const now = Date.now();
+    const lead = t.role === "team_lead";
+    for (const c of list) {
+      const ctxId = lead ? c.point_person_id : t.id;
+      const tr = evaluateCandidate(c as any, { profileId: ctxId, lastContactISO: lastContact[c.id], now });
+      if (tr) queue.push({ name: c.name, why: tr.why });
+    }
+  }
+
+  let tasksTotal = 0, tasksDone = 0;
+  try {
+    const [{ data: aRows }, { data: legacy }] = await Promise.all([
+      db.from("playbook_task_assignees").select("task_id").eq("profile_id", t.id),
+      db.from("playbook_tasks").select("id").eq("assignee_id", t.id),
+    ]);
+    const taskIds = Array.from(new Set([...(aRows ?? []).map((r: any) => r.task_id), ...(legacy ?? []).map((r: any) => r.id)]));
+    tasksTotal = taskIds.length;
+    if (taskIds.length) {
+      const { data: comps } = await db.from("playbook_task_completions").select("task_id").eq("profile_id", t.id).eq("state", "confirmed").in("task_id", taskIds);
+      tasksDone = (comps ?? []).length;
+    }
+  } catch { /* pre-migration tables */ }
+
+  return { ok: true as const, name: t.full_name, isAdmin: false, queue, tasksDone, tasksTotal };
 }
 
 // Admin's recommended spending split by category (org-wide guidance).

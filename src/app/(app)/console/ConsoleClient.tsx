@@ -9,7 +9,7 @@ import {
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, deleteCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
-  unlinkJazzCandidate,
+  unlinkJazzCandidate, getUserSnapshot,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
@@ -43,7 +43,7 @@ type AIFlag = { text: string; kind: "standout" | "concern" | "info" };
 type AI = { candidate_id: string; resume_score: number | null; summary: string | null; flags: AIFlag[]; analyzed_at: string | null };
 type Task = { id: string; text: string; assignee_id: string | null; assignee_label: string | null; month_label: string | null; notes: string | null; due_date: string | null; done: boolean };
 type Phase = { id: string; label: string; title: string; sort_order: number; school_id: string; playbook_tasks: Task[] };
-type UserProfile = { id: string; full_name: string; email: string; role: string; school_id: string | null; is_active: boolean };
+type UserProfile = { id: string; full_name: string; email: string; role: string; school_id: string | null; is_active: boolean; last_sign_in_at?: string | null };
 type JazzReview = { id: string; jazz_snapshot: any; candidate_id: string | null; reason: string | null };
 
 const ALL_ROLES = ["super_admin", "admin", "team_lead", "fellow"] as const;
@@ -106,6 +106,7 @@ export default function ConsoleClient({
   const [appSchool, setAppSchool] = useState<string>("all");
   const [obExpand, setObExpand] = useState<Record<string, boolean>>({}); // overview "By school" tier expand
   const [budgetView, setBudgetView] = useState<"manage" | "analysis">("manage");
+  const [snapshotUser, setSnapshotUser] = useState<UserProfile | null>(null);
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
   const [pbAssignee, setPbAssignee] = useState<string>("all");
   const [pbFrom, setPbFrom] = useState<string>("");
@@ -267,7 +268,7 @@ export default function ConsoleClient({
               <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Where the program stands</h1>
               <SchoolFilter schools={schools} value={scope} onChange={setScope} />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginTop: 22 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 340px))", justifyContent: "center", gap: 16, marginTop: 22 }}>
               {board.map((b) => {
                 const p = b.goal > 0 ? (b.actual / b.goal) * 100 : 0;
                 const tone = p >= 100 ? C.good : p >= 70 ? C.gold : C.orange;
@@ -795,7 +796,7 @@ export default function ConsoleClient({
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
-                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Users</h1>
+                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>User Management</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{users.length} user{users.length !== 1 ? "s" : ""} · Role and school changes take effect immediately.</p>
               </div>
               <div style={{ display: "flex", gap: 10 }}>
@@ -804,18 +805,19 @@ export default function ConsoleClient({
               </div>
             </div>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                <div>Name</div><div>Email</div><div>Role</div><div>School</div><div></div><div></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1.5fr 1fr 1.2fr 1fr 70px 28px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+                <div>Name</div><div>Email</div><div>Role</div><div>School</div><div>Last sign-in</div><div></div><div></div>
               </div>
               {users.map((u) => (
-                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.6fr 1.6fr 1.2fr 1.4fr 36px 36px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
+                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.5fr 1.5fr 1fr 1.2fr 1fr 70px 28px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 99, background: u.is_active ? C.good : C.line, flexShrink: 0 }} title={u.is_active ? "Active" : "Inactive"} />
                     <input defaultValue={u.full_name}
                       onBlur={(e) => { const n = e.target.value.trim(); if (n && n !== u.full_name) startTransition(() => { updateUserName(u.id, n); }); }}
                       style={{ fontWeight: 700, fontSize: 13.5, color: C.gray, border: "none", background: "transparent", outline: "none", borderBottom: `1px solid ${C.line}`, flex: 1, padding: "2px 0", minWidth: 0 }} />
                     {u.id === profile.id && <span style={{ fontSize: 11, color: C.navy2, background: `${C.navy2}22`, padding: "1px 6px", borderRadius: 99, flexShrink: 0 }}>you</span>}
                   </div>
-                  <div style={{ fontSize: 13, color: C.grayMute }}>{u.email}</div>
+                  <div style={{ fontSize: 13, color: C.grayMute, overflow: "hidden", textOverflow: "ellipsis" }}>{u.email}</div>
                   <select defaultValue={u.role}
                     onChange={(e) => startTransition(() => { updateUser(u.id, e.target.value, u.school_id); })}
                     disabled={u.id === profile.id}
@@ -828,7 +830,13 @@ export default function ConsoleClient({
                     <option value="">— No school —</option>
                     {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
-                  <div style={{ width: 10, height: 10, borderRadius: 99, background: u.is_active ? C.good : C.line, margin: "0 auto" }} title={u.is_active ? "Active" : "Inactive"} />
+                  <div style={{ fontSize: 12, color: u.last_sign_in_at ? C.grayMute : C.line }}>
+                    {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Never"}
+                  </div>
+                  {u.role === "fellow" || u.role === "team_lead"
+                    ? <button onClick={() => setSnapshotUser(u)} title="View their Weekly Snapshot"
+                        style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy2, fontWeight: 600, fontSize: 11.5, padding: "5px 8px", borderRadius: 7, cursor: "pointer" }}>Snapshot</button>
+                    : <div />}
                   <button
                     disabled={u.id === profile.id}
                     onClick={() => { if (confirm(`Remove ${u.full_name}? This cannot be undone.`)) startTransition(() => { removeUser(u.id); }); }}
@@ -979,7 +987,61 @@ export default function ConsoleClient({
       {bulkInviteOpen && (
         <BulkInviteModal schools={schools} onClose={() => setBulkInviteOpen(false)} />
       )}
+      {snapshotUser && (
+        <UserSnapshotModal user={snapshotUser} onClose={() => setSnapshotUser(null)} />
+      )}
     </>
+  );
+}
+
+// ---- User Weekly Snapshot (read-only, for User Management) ----
+function UserSnapshotModal({ user, onClose }: { user: UserProfile; onClose: () => void }) {
+  const [data, setData] = useState<{ name: string; isAdmin: boolean; queue: { name: string; why: string }[]; tasksDone: number; tasksTotal: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    getUserSnapshot(user.id).then((r) => { if (!active) return; if ("ok" in r && r.ok) setData(r as any); else setError(("error" in r ? r.error : null) ?? "Could not load snapshot."); });
+    return () => { active = false; };
+  }, [user.id]);
+  const taskPct = data && data.tasksTotal > 0 ? Math.round((data.tasksDone / data.tasksTotal) * 100) : 0;
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.45)" }} />
+      <div style={{ position: "relative", background: "#fff", borderRadius: 16, padding: 26, width: 480, maxWidth: "95vw", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <h2 style={{ fontFamily: HEAD, fontSize: 20, color: C.navy, margin: 0 }}>{user.full_name}'s Weekly Snapshot</h2>
+          <button onClick={onClose} style={{ border: "none", background: "none", fontSize: 22, color: C.grayMute, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ fontSize: 12.5, color: C.grayMute, textTransform: "capitalize", marginBottom: 16 }}>{user.role.replace("_", " ")}</div>
+        {error && <div style={{ fontSize: 13, color: C.orange }}>{error}</div>}
+        {!error && !data && <div style={{ fontSize: 13, color: C.grayMute }}>Loading…</div>}
+        {data && data.isAdmin && <div style={{ fontSize: 13.5, color: C.grayMute, fontStyle: "italic" }}>Admins don't have a Weekly Snapshot.</div>}
+        {data && !data.isAdmin && (
+          <>
+            <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+              <div style={{ flex: 1, background: C.canvas, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute }}>Action queue</div>
+                <div style={{ fontFamily: HEAD, fontSize: 24, fontWeight: 700, color: C.navy }}>{data.queue.length}</div>
+              </div>
+              <div style={{ flex: 1, background: C.canvas, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute }}>Tasks done</div>
+                <div style={{ fontFamily: HEAD, fontSize: 24, fontWeight: 700, color: C.navy }}>{data.tasksDone}/{data.tasksTotal} <span style={{ fontSize: 13, color: C.grayMute }}>· {taskPct}%</span></div>
+              </div>
+            </div>
+            <div style={{ fontFamily: HEAD, fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 8 }}>Needs their attention</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {data.queue.map((q, i) => (
+                <div key={i} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: C.gray }}>{q.name}</div>
+                  <div style={{ fontSize: 12, color: C.grayMute }}>{q.why}</div>
+                </div>
+              ))}
+              {data.queue.length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>All clear — nothing queued.</div>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

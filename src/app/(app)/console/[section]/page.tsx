@@ -58,6 +58,16 @@ export default async function ConsoleSection({ params }: { params: { section: st
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
   const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
 
+  // User Management: attach each user's last sign-in from Supabase Auth.
+  let usersWithAuth = (usersData ?? []) as any[];
+  if (need.users && usersWithAuth.length) {
+    try {
+      const { data: authList } = await serviceDb.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      const lastById = new Map((authList?.users ?? []).map((u: any) => [u.id, u.last_sign_in_at ?? null]));
+      usersWithAuth = usersWithAuth.map((u) => ({ ...u, last_sign_in_at: lastById.get(u.id) ?? null }));
+    } catch { /* auth admin unavailable — show users without sign-in data */ }
+  }
+
   // Admin calendar: every event (org-wide + all schools) enriched with RSVPs.
   let events: any[] = [];
   if (need.calendar) {
@@ -91,7 +101,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
       goals={goals ?? []}
       ai={aiData ?? []}
       phases={phases ?? []}
-      users={usersData ?? []}
+      users={usersWithAuth}
       reviews={reviewData ?? []}
       resources={resources ?? []}
       events={events}
