@@ -14,6 +14,7 @@ import {
 import StandingsClient from "@/components/StandingsClient";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
 import BudgetPanel, { type BudgetEntry } from "@/components/BudgetPanel";
+import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
@@ -101,7 +102,8 @@ export default function ConsoleClient({
 }) {
   const isMobile = useIsMobile();
   const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "calendar" | "budget" | "users" | "sync" | "resources" | "review">(initialSection as any);
-  const [scope, setScope] = useState<string>("Org-wide");
+  const [scope, setScope] = useState<string>("all"); // SchoolFilter value: all | id | tier:satellite | tier:bonus
+  const [appSchool, setAppSchool] = useState<string>("all");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
   const [pbAssignee, setPbAssignee] = useState<string>("all");
   const [pbFrom, setPbFrom] = useState<string>("");
@@ -214,9 +216,8 @@ export default function ConsoleClient({
 
   // scoreboard totals
   const board = useMemo(() => {
-    const inScope = (c: Cand) => scope === "Org-wide" || schools.find((s) => s.id === c.school_id)?.name === scope;
-    const cands = candidates.filter(inScope);
-    const scopeGoals = goals.filter((g) => scope === "Org-wide" || schools.find((s) => s.id === g.school_id)?.name === scope);
+    const cands = candidates.filter((c) => matchesSchoolFilter(scope, c.school_id, schools));
+    const scopeGoals = goals.filter((g) => matchesSchoolFilter(scope, g.school_id, schools));
     return [
       { label: "Sourced", actual: cands.filter((c) => c.stage && SOURCED.has(c.stage)).length, goal: scopeGoals.reduce((a, g) => a + g.goal_sourced, 0) },
       { label: "Applied", actual: cands.filter((c) => c.stage && APPLIED.has(c.stage)).length, goal: scopeGoals.reduce((a, g) => a + g.goal_applied, 0) },
@@ -262,10 +263,7 @@ export default function ConsoleClient({
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Where the program stands</h1>
-              <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                <option>Org-wide</option>
-                {schools.map((s) => <option key={s.id}>{s.name}</option>)}
-              </select>
+              <SchoolFilter schools={schools} value={scope} onChange={setScope} />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginTop: 22 }}>
               {board.map((b) => {
@@ -326,7 +324,7 @@ export default function ConsoleClient({
           const distinctMajors = Array.from(new Set(candidates.map((c) => c.area_of_study).filter((m): m is string => !!m))).sort((a, b) => a.localeCompare(b));
           const distinctStages = Array.from(new Set(candidates.map((c) => c.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
 
-          const scopeFiltered = candidates.filter((c) => scope === "Org-wide" || schoolNameOf(c) === scope);
+          const scopeFiltered = candidates.filter((c) => matchesSchoolFilter(appSchool, c.school_id, schools));
           const unroutedCount = scopeFiltered.filter((c) => !c.school_id).length;
 
           const q = appSearch.trim().toLowerCase();
@@ -363,7 +361,7 @@ export default function ConsoleClient({
           const SortHead = ({ k, label }: { k: typeof appSort.key; label: string }) => (
             <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: appSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
           );
-          const filtersActive = q || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "";
+          const filtersActive = q || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all";
 
           return (
           <>
@@ -404,10 +402,7 @@ export default function ConsoleClient({
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px" }}>
               <input value={appSearch} onChange={(e) => setAppSearch(e.target.value)} placeholder="Search name, email, major…"
                 style={{ flex: "1 1 200px", minWidth: 160, padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
-              <select value={scope} onChange={(e) => { setScope(e.target.value); setShowUnrouted(false); }} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                <option>Org-wide</option>
-                {schools.map((s) => <option key={s.id}>{s.name}</option>)}
-              </select>
+              <SchoolFilter schools={schools} value={appSchool} onChange={(v) => { setAppSchool(v); setShowUnrouted(false); }} />
               <select value={appMajor} onChange={(e) => setAppMajor(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600, maxWidth: 200 }}>
                 <option>All majors</option>
                 {distinctMajors.map((m) => <option key={m}>{m}</option>)}
@@ -427,7 +422,7 @@ export default function ConsoleClient({
                 {showUnrouted ? "✕ Unrouted only" : `Unrouted (${unroutedCount})`}
               </button>
               {(filtersActive || showUnrouted) && (
-                <button onClick={() => { setAppSearch(""); setAppMajor("All majors"); setAppStage("All stages"); setAppMinGpa(""); setAppFavOnly(false); setShowUnrouted(false); }}
+                <button onClick={() => { setAppSearch(""); setAppMajor("All majors"); setAppStage("All stages"); setAppMinGpa(""); setAppFavOnly(false); setShowUnrouted(false); setAppSchool("all"); }}
                   style={{ padding: "9px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
                   Clear
                 </button>

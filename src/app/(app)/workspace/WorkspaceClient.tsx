@@ -18,6 +18,7 @@ import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
 import BudgetPanel, { type BudgetEntry } from "@/components/BudgetPanel";
+import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -97,7 +98,7 @@ export default function WorkspaceClient({
   const isMobile = useIsMobile();
   const [tab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources" | "budget">(initialSection as any);
   const [breakdownScope, setBreakdownScope] = useState<"team" | "org">("team");
-  const [allFilter, setAllFilter] = useState<string>("All schools");
+  const [allSchool, setAllSchool] = useState<string>("all"); // SchoolFilter value
   const [allSearch, setAllSearch] = useState("");
   const [allMajor, setAllMajor] = useState("All majors");
   const [allStage, setAllStage] = useState("All stages");
@@ -495,7 +496,7 @@ export default function WorkspaceClient({
           const q = allSearch.trim().toLowerCase();
           const minGpa = parseFloat(allMinGpa);
           let visible = allCandidates.filter((c) => {
-            if (allFilter !== "All schools" && schoolNameOf(c) !== allFilter) return false;
+            if (!matchesSchoolFilter(allSchool, c.school_id, allSchools)) return false;
             if (q && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(q))) return false;
             if (allMajor !== "All majors" && c.area_of_study !== allMajor) return false;
             if (allStage !== "All stages" && c.stage !== allStage) return false;
@@ -526,7 +527,7 @@ export default function WorkspaceClient({
           const SortHead = ({ k, label }: { k: typeof allSort.key; label: string }) => (
             <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: allSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
           );
-          const filtersActive = q || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMineOnly || allMinGpa.trim() !== "";
+          const filtersActive = q || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMineOnly || allMinGpa.trim() !== "" || allSchool !== "all";
 
           return (
             <>
@@ -542,10 +543,7 @@ export default function WorkspaceClient({
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px" }}>
                 <input value={allSearch} onChange={(e) => setAllSearch(e.target.value)} placeholder="Search name, email, major…"
                   style={{ flex: "1 1 200px", minWidth: 160, padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
-                <select value={allFilter} onChange={(e) => setAllFilter(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                  <option>All schools</option>
-                  {allSchools.map((s) => <option key={s.id}>{s.name}</option>)}
-                </select>
+                <SchoolFilter schools={allSchools} value={allSchool} onChange={setAllSchool} />
                 <select value={allMajor} onChange={(e) => setAllMajor(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600, maxWidth: 200 }}>
                   <option>All majors</option>
                   {distinctMajors.map((m) => <option key={m}>{m}</option>)}
@@ -565,7 +563,7 @@ export default function WorkspaceClient({
                   Assigned to me
                 </button>
                 {filtersActive && (
-                  <button onClick={() => { setAllSearch(""); setAllMajor("All majors"); setAllStage("All stages"); setAllMinGpa(""); setAllFavOnly(false); setAllMineOnly(false); }}
+                  <button onClick={() => { setAllSearch(""); setAllMajor("All majors"); setAllStage("All stages"); setAllMinGpa(""); setAllFavOnly(false); setAllMineOnly(false); setAllSchool("all"); }}
                     style={{ padding: "9px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
                     Clear
                   </button>
