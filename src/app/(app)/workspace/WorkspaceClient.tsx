@@ -17,7 +17,7 @@ import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
-import BudgetPanel, { type BudgetEntry } from "@/components/BudgetPanel";
+import BudgetPanel, { type BudgetEntry, type Guidance } from "@/components/BudgetPanel";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import { useIsMobile } from "@/lib/useIsMobile";
 
@@ -87,13 +87,13 @@ const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
   profile, initialSection, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
-  budgetEntries = [], budgetSchoolId = null,
+  budgetEntries = [], budgetSchoolId = null, budgetGuidance = [],
 }: {
   profile: Profile; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
   lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[];
   allProfiles: { id: string; full_name: string }[];
-  budgetEntries?: BudgetEntry[]; budgetSchoolId?: string | null;
+  budgetEntries?: BudgetEntry[]; budgetSchoolId?: string | null; budgetGuidance?: Guidance[];
 }) {
   const isMobile = useIsMobile();
   const [tab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources" | "budget">(initialSection as any);
@@ -613,12 +613,12 @@ export default function WorkspaceClient({
           <ResourcesPanel resources={resources} canManage={canManageResources(profile.role)} accent={accent} />
         )}
 
-        {/* ---- BUDGET (team lead, read-only) ---- */}
+        {/* ---- BUDGET (team lead: view allocations, log expenses) ---- */}
         {tab === "budget" && (
           <>
             <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Budget</h1>
-            <p style={{ color: C.grayMute, margin: "4px 0 20px" }}>Your school&apos;s allocations and expenses. Admins manage the entries.</p>
-            <BudgetPanel entries={budgetEntries} canEdit={false} schoolId={budgetSchoolId} accent={accent} />
+            <p style={{ color: C.grayMute, margin: "4px 0 20px" }}>Your school&apos;s budget. Admins set allocations; you log expenses with a receipt.</p>
+            <BudgetPanel entries={budgetEntries} schoolId={budgetSchoolId} accent={accent} meId={profile.id} canExpense guidance={budgetGuidance} />
           </>
         )}
       </div>

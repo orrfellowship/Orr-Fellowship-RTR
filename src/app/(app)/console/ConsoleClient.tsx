@@ -13,7 +13,7 @@ import {
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
-import BudgetPanel, { type BudgetEntry } from "@/components/BudgetPanel";
+import BudgetPanel, { BudgetAnalysis, type BudgetEntry, type Guidance } from "@/components/BudgetPanel";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
@@ -93,18 +93,19 @@ function fmtPct(actual: number, goal: number) {
 
 export default function ConsoleClient({
   profile, initialSection, schools, candidates, team, goals, ai, phases, users, reviews, resources,
-  events = [], people = [], budgetEntries = [],
+  events = [], people = [], budgetEntries = [], budgetGuidance = [],
 }: {
   profile: Profile; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
-  events?: CalEvent[]; people?: { id: string; full_name: string }[]; budgetEntries?: BudgetEntry[];
+  events?: CalEvent[]; people?: { id: string; full_name: string }[]; budgetEntries?: BudgetEntry[]; budgetGuidance?: Guidance[];
 }) {
   const isMobile = useIsMobile();
   const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "calendar" | "budget" | "users" | "sync" | "resources" | "review">(initialSection as any);
   const [scope, setScope] = useState<string>("all"); // SchoolFilter value: all | id | tier:satellite | tier:bonus
   const [appSchool, setAppSchool] = useState<string>("all");
   const [obExpand, setObExpand] = useState<Record<string, boolean>>({}); // overview "By school" tier expand
+  const [budgetView, setBudgetView] = useState<"manage" | "analysis">("manage");
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
   const [pbAssignee, setPbAssignee] = useState<string>("all");
   const [pbFrom, setPbFrom] = useState<string>("");
@@ -527,11 +528,21 @@ export default function ConsoleClient({
         {/* ---- BUDGET ---- */}
         {tab === "budget" && (
           <>
-            <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Budget</h1>
-            <p style={{ color: C.grayMute, margin: "4px 0 20px" }}>
-              Track allocations and expenses, organization-wide or per school. Team leads can view their school&apos;s budget.
-            </p>
-            <BudgetPanel entries={budgetEntries} schools={schoolPickOptions} canEdit={adminPlus} scopePicker />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 20 }}>
+              <div>
+                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Budget</h1>
+                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>You set allocations; team leads log expenses with receipts.</p>
+              </div>
+              <div style={{ display: "flex", gap: 4, background: C.canvas, borderRadius: 10, padding: 4 }}>
+                {(["manage", "analysis"] as const).map((v) => (
+                  <button key={v} onClick={() => setBudgetView(v)}
+                    style={{ border: "none", background: budgetView === v ? "#fff" : "transparent", color: budgetView === v ? C.navy : C.grayMute, fontWeight: 700, fontSize: 13, padding: "7px 16px", borderRadius: 8, cursor: "pointer", boxShadow: budgetView === v ? "0 1px 4px rgba(17,18,62,.1)" : "none", textTransform: "capitalize" }}>{v}</button>
+                ))}
+              </div>
+            </div>
+            {budgetView === "manage"
+              ? <BudgetPanel entries={budgetEntries} schools={schoolPickOptions} meId={profile.id} scopePicker canAllocate={adminPlus} canManage={adminPlus} guidance={budgetGuidance} />
+              : <BudgetAnalysis entries={budgetEntries} schools={schoolPickOptions} />}
           </>
         )}
 

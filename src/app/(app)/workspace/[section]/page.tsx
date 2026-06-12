@@ -127,13 +127,16 @@ export default async function WorkspaceSection({ params }: { params: { section: 
     events = (eventRows ?? []).map((e: any) => ({ ...e, going: rsvpByEvent[e.id]?.going ?? [], not_going: rsvpByEvent[e.id]?.not_going ?? [], my_status: (myRsvp[e.id] as "going" | "not_going" | undefined) ?? null, notes: notesByEvent[e.id] ?? [] }));
   }
 
-  // Budget (team-lead only): their tier's entries, read-only.
+  // Budget (team-lead only): their tier's entries + the org allocation guidance.
   let budgetEntries: any[] = [];
+  let budgetGuidance: any[] = [];
   if (need.budget) {
-    const { data } = await serviceDb.from("budget_entries")
-      .select("id, school_id, kind, label, amount, category, entry_date, notes, created_by")
-      .in("school_id", tierSchoolIds).order("entry_date", { ascending: false });
-    budgetEntries = data ?? [];
+    const [{ data: be }, { data: bg }] = await Promise.all([
+      serviceDb.from("budget_entries").select("id, school_id, kind, label, amount, notes, receipt_url, created_by").in("school_id", tierSchoolIds).order("created_at", { ascending: false }),
+      serviceDb.from("budget_guidance").select("id, category, pct").order("sort_order"),
+    ]);
+    budgetEntries = be ?? [];
+    budgetGuidance = bg ?? [];
   }
 
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
@@ -158,6 +161,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
       allProfiles={allProfiles ?? []}
       budgetEntries={budgetEntries}
       budgetSchoolId={playbookSchoolId}
+      budgetGuidance={budgetGuidance}
     />
   );
 }

@@ -559,23 +559,26 @@ export async function seedPlaybook(schoolId: string, force = false) {
   return { ok: true };
 }
 
-// ---- BUDGETS (admin+ manage; team leads view their school) -----------------
+// ---- BUDGETS — admins add allocations; team leads add expenses (w/ receipt) --
 export async function addBudgetEntry(e: {
   school_id: string | null; kind: "allocation" | "expense"; label: string;
-  amount: number; category: string | null; entry_date: string | null; notes: string | null;
+  amount: number; notes: string | null; receipt_url?: string | null;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!profile) return { error: "Not authenticated" };
+  const leadPlus = profile.role === "team_lead" || isAdminPlus(profile.role);
+  if (e.kind === "allocation" && !isAdminPlus(profile.role)) return { error: "Only admins can add allocations." };
+  if (e.kind === "expense" && !leadPlus) return { error: "Only team leads or admins can add expenses." };
   if (!e.label.trim()) return { error: "A label is required." };
+  if (e.kind === "expense" && !e.receipt_url) return { error: "A receipt is required for expenses." };
   const db = createServiceClient();
   const { error } = await db.from("budget_entries").insert({
     school_id: e.school_id,
     kind: e.kind,
     label: e.label.trim(),
     amount: Number.isFinite(e.amount) ? e.amount : 0,
-    category: e.category?.trim() || null,
-    entry_date: e.entry_date || null,
     notes: e.notes?.trim() || null,
+    receipt_url: e.receipt_url || null,
     created_by: profile.id,
   });
   if (error) return { error: error.message };
@@ -583,12 +586,55 @@ export async function addBudgetEntry(e: {
   return { ok: true };
 }
 
+// Upload a receipt image to the private "receipts" bucket; returns the storage path.
+export async function uploadReceipt(formData: FormData): Promise<{ ok: true; path: string } | { error: string }> {
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated" };
+  const file = formData.get("file") as File | null;
+  if (!file || file.size === 0) return { error: "No file selected." };
+  if (file.size > 8 * 1024 * 1024) return { error: "Receipt is too large (max 8 MB)." };
+  const ext = (file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "") || "bin";
+  const path = `${profile.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const { error } = await createServiceClient().storage.from("receipts").upload(path, buf, {
+    contentType: file.type || "application/octet-stream", upsert: false,
+  });
+  if (error) return { error: error.message };
+  return { ok: true, path };
+}
+
+// Short-lived signed URL to view a private receipt.
+export async function signedReceiptUrl(path: string): Promise<{ ok: true; url: string } | { error: string }> {
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated" };
+  const { data, error } = await createServiceClient().storage.from("receipts").createSignedUrl(path, 3600);
+  if (error || !data) return { error: error?.message || "Could not open receipt." };
+  return { ok: true, url: data.signedUrl };
+}
+
 export async function deleteBudgetEntry(id: string) {
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated" };
+  const db = createServiceClient();
+  // Admins can remove anything; others only their own entries.
+  if (!isAdminPlus(profile.role)) {
+    const { data: row } = await db.from("budget_entries").select("created_by").eq("id", id).maybeSingle();
+    if ((row as any)?.created_by !== profile.id) return { error: "You can only remove your own entries." };
+  }
+  const { error } = await db.from("budget_entries").delete().eq("id", id);
+  if (error) return { error: error.message };
+  bustCache([], ["/console", "/workspace"]);
+  return { ok: true };
+}
+
+// Admin's recommended spending split by category (org-wide guidance).
+export async function setBudgetGuidance(items: { category: string; pct: number }[]) {
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
-  const { error } = await db.from("budget_entries").delete().eq("id", id);
-  if (error) return { error: error.message };
+  await db.from("budget_guidance").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+  const rows = items.filter((i) => i.category.trim()).map((i, idx) => ({ category: i.category.trim(), pct: Number(i.pct) || 0, sort_order: idx, created_by: profile.id }));
+  if (rows.length) { const { error } = await db.from("budget_guidance").insert(rows); if (error) return { error: error.message }; }
   bustCache([], ["/console", "/workspace"]);
   return { ok: true };
 }

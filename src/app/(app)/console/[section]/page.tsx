@@ -39,7 +39,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
   const candSelect = S === "standings" ? CAND_COLS_STANDINGS : CAND_COLS_CONSOLE;
 
   // Reference tables (schools/goals/resources) come from the shared Data Cache.
-  const [schools, candidates, favs, team, goals, phases, resources, reviewData, aiData, usersData, people, budgetEntries] = await Promise.all([
+  const [schools, candidates, favs, team, goals, phases, resources, reviewData, aiData, usersData, people, budgetEntries, budgetGuidance] = await Promise.all([
     getSchoolsCached(),
     need.candidates ? supabase.from("candidates").select(candSelect).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.favs ? supabase.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
@@ -51,7 +51,8 @@ export default async function ConsoleSection({ params }: { params: { section: st
     need.ai ? supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.users ? supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.calendar ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.budget ? serviceDb.from("budget_entries").select("id, school_id, kind, label, amount, category, entry_date, notes, created_by").order("entry_date", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.budget ? serviceDb.from("budget_entries").select("id, school_id, kind, label, amount, notes, receipt_url, created_by").order("created_at", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.budget ? serviceDb.from("budget_guidance").select("id, category, pct").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
   ]);
 
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
@@ -96,6 +97,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
       events={events}
       people={people ?? []}
       budgetEntries={budgetEntries ?? []}
+      budgetGuidance={budgetGuidance ?? []}
     />
   );
 }
