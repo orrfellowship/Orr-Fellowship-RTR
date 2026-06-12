@@ -507,6 +507,7 @@ export default function ConsoleClient({
               team={people}
               schools={schoolPickOptions}
               scopePicker
+              canManageNotes={adminPlus}
             />
           </>
         )}

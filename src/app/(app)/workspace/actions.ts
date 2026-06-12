@@ -414,6 +414,30 @@ export async function deleteEvent(id: string) {
   return { ok: true };
 }
 
+// Admin note on an event, targeted at one school's team lead (not org-wide).
+export async function addEventNote(eventId: string, schoolId: string, body: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Only admins can add event notes." };
+  if (!body.trim()) return { error: "Note can't be empty." };
+  if (!schoolId) return { error: "Pick a school for this note." };
+  const db = createServiceClient();
+  const { error } = await db.from("event_notes").insert({ event_id: eventId, school_id: schoolId, body: body.trim(), created_by: profile.id });
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function deleteEventNote(id: string) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const { error } = await createServiceClient().from("event_notes").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/workspace");
+  revalidatePath("/console");
+  return { ok: true };
+}
+
 // RSVP to an event. status null clears it.
 export async function setRsvp(eventId: string, status: "going" | "not_going" | null) {
   const supabase = createServerSupabase();

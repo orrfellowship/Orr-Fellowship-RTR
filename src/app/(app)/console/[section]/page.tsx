@@ -64,6 +64,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
     const eventIds = (eventRows ?? []).map((e: any) => e.id);
     const rsvpByEvent: Record<string, { going: string[]; not_going: string[] }> = {};
     const myRsvp: Record<string, string> = {};
+    const notesByEvent: Record<string, any[]> = {};
     if (eventIds.length) {
       const { data: rsvps } = await serviceDb.from("event_rsvps").select("event_id, profile_id, status").in("event_id", eventIds);
       for (const r of rsvps ?? []) {
@@ -73,8 +74,10 @@ export default async function ConsoleSection({ params }: { params: { section: st
         else rsvpByEvent[e].not_going.push((r as any).profile_id);
         if ((r as any).profile_id === profile.id) myRsvp[e] = (r as any).status;
       }
+      const { data: noteRows } = await serviceDb.from("event_notes").select("id, event_id, school_id, body, created_by").in("event_id", eventIds);
+      for (const n of noteRows ?? []) (notesByEvent[(n as any).event_id] ??= []).push(n);
     }
-    events = (eventRows ?? []).map((e: any) => ({ ...e, going: rsvpByEvent[e.id]?.going ?? [], not_going: rsvpByEvent[e.id]?.not_going ?? [], my_status: (myRsvp[e.id] as "going" | "not_going" | undefined) ?? null }));
+    events = (eventRows ?? []).map((e: any) => ({ ...e, going: rsvpByEvent[e.id]?.going ?? [], not_going: rsvpByEvent[e.id]?.not_going ?? [], my_status: (myRsvp[e.id] as "going" | "not_going" | undefined) ?? null, notes: notesByEvent[e.id] ?? [] }));
   }
 
   return (

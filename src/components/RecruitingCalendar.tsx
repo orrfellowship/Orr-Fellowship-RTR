@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { addEvent, updateEvent, deleteEvent, setRsvp } from "@/app/(app)/workspace/actions";
+import { addEvent, updateEvent, deleteEvent, setRsvp, addEventNote, deleteEventNote } from "@/app/(app)/workspace/actions";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD", orange: "#DD5434",
@@ -12,21 +12,25 @@ const HEAD = "'Cabin', sans-serif";
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+export type EventNote = { id: string; school_id: string; body: string; created_by: string | null };
 export type CalEvent = {
   id: string; title: string; description: string | null; address: string | null; event_date: string;
   event_type: "attend" | "info"; school_id: string | null; created_by: string | null;
   going: string[]; not_going: string[]; my_status: "going" | "not_going" | null;
+  notes?: EventNote[];
 };
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const parseYmd = (s: string) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 
-export default function RecruitingCalendar({ events, canEdit, profileId, schoolId, team, accent = C.orange, schools, scopePicker = false }: {
+export default function RecruitingCalendar({ events, canEdit, profileId, schoolId, team, accent = C.orange, schools, scopePicker = false, canManageNotes = false }: {
   events: CalEvent[]; canEdit: boolean; profileId: string; schoolId: string | null;
   team: { id: string; full_name: string }[]; accent?: string;
   // When scopePicker is set (admin calendar), the add form lets the user choose
   // org-wide vs. a specific school from `schools`. Otherwise events use schoolId.
   schools?: { id: string; name: string }[]; scopePicker?: boolean;
+  // Admins can attach per-school notes to an event (team leads only view theirs).
+  canManageNotes?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -60,6 +64,8 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
     setSelected(null);
   });
   const doDelete = (id: string) => { if (confirm("Delete this event?")) startTransition(() => { deleteEvent(id).then(() => router.refresh()); setSelected(null); }); };
+  const doAddNote = (eventId: string, schoolId: string, body: string) => startTransition(() => { addEventNote(eventId, schoolId, body).then(() => router.refresh()); });
+  const doDelNote = (id: string) => startTransition(() => { deleteEventNote(id).then(() => router.refresh()); });
 
   return (
     <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", opacity: pending ? 0.7 : 1 }}>
@@ -120,8 +126,10 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
 
       {selected && (
         <EventModal e={selected} canEdit={canEdit} accent={accent} nameOf={nameOf}
+          schools={schools ?? []} canManageNotes={canManageNotes}
           onClose={() => setSelected(null)} onRsvp={doRsvp} onDelete={doDelete}
-          onEdit={(ev) => { setSelected(null); setEditFor(ev); }} />
+          onEdit={(ev) => { setSelected(null); setEditFor(ev); }}
+          onAddNote={doAddNote} onDeleteNote={doDelNote} />
       )}
       {addFor && (
         <AddEventModal date={addFor} schoolId={schoolId} accent={accent}
@@ -141,12 +149,25 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
 
 const navBtn: React.CSSProperties = { width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, cursor: "pointer", fontSize: 16, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" };
 
-function EventModal({ e, canEdit, accent, nameOf, onClose, onRsvp, onDelete, onEdit }: {
+function EventModal({ e, canEdit, accent, nameOf, schools, canManageNotes, onClose, onRsvp, onDelete, onEdit, onAddNote, onDeleteNote }: {
   e: CalEvent; canEdit: boolean; accent: string; nameOf: (id: string) => string;
+  schools: { id: string; name: string }[]; canManageNotes: boolean;
   onClose: () => void; onRsvp: (e: CalEvent, s: "going" | "not_going") => void; onDelete: (id: string) => void; onEdit: (e: CalEvent) => void;
+  onAddNote: (eventId: string, schoolId: string, body: string) => void; onDeleteNote: (id: string) => void;
 }) {
   const attend = e.event_type === "attend";
   const dateLabel = parseYmd(e.event_date).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const [notes, setNotes] = useState<EventNote[]>(e.notes ?? []);
+  const [noteSchool, setNoteSchool] = useState<string>(e.school_id ?? (schools[0]?.id ?? ""));
+  const [noteBody, setNoteBody] = useState("");
+  const schoolName = (id: string) => schools.find((s) => s.id === id)?.name ?? "School";
+  const addNote = () => {
+    if (!noteBody.trim() || !noteSchool) return;
+    onAddNote(e.id, noteSchool, noteBody.trim());
+    setNotes((prev) => [...prev, { id: `tmp-${Math.random()}`, school_id: noteSchool, body: noteBody.trim(), created_by: null }]);
+    setNoteBody("");
+  };
+  const delNote = (id: string) => { onDeleteNote(id); setNotes((prev) => prev.filter((n) => n.id !== id)); };
   return (
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -174,6 +195,32 @@ function EventModal({ e, canEdit, accent, nameOf, onClose, onRsvp, onDelete, onE
             <b style={{ color: C.good }}>{e.going.length} going</b>{e.not_going.length > 0 && ` · ${e.not_going.length} can't`}
             {e.going.length > 0 && <div style={{ marginTop: 4, color: C.gray }}>{e.going.map(nameOf).join(", ")}</div>}
           </div>
+        </div>
+      )}
+
+      {(notes.length > 0 || canManageNotes) && (
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.line}` }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.grayMute, marginBottom: 8 }}>
+            {canManageNotes ? "School notes" : "Notes for your school"}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: canManageNotes ? 10 : 0 }}>
+            {notes.map((n) => (
+              <div key={n.id} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 13, color: C.gray, background: C.canvas, borderRadius: 8, padding: "8px 10px" }}>
+                <span style={{ flex: 1 }}>{canManageNotes && <b style={{ color: C.navy2 }}>{schoolName(n.school_id)}: </b>}{n.body}</span>
+                {canManageNotes && <button onClick={() => delNote(n.id)} title="Remove" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 15, lineHeight: 1, flexShrink: 0 }}>×</button>}
+              </div>
+            ))}
+            {notes.length === 0 && canManageNotes && <div style={{ fontSize: 12.5, color: C.grayMute, fontStyle: "italic" }}>No school notes yet — these go only to the chosen school's team lead.</div>}
+          </div>
+          {canManageNotes && (
+            <div style={{ display: "flex", gap: 6 }}>
+              <select value={noteSchool} onChange={(ev) => setNoteSchool(ev.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 13, background: "#fff", maxWidth: 150 }}>
+                {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <input value={noteBody} onChange={(ev) => setNoteBody(ev.target.value)} placeholder="Note for this school…" style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 13 }} />
+              <button onClick={addNote} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>Add</button>
+            </div>
+          )}
         </div>
       )}
 
