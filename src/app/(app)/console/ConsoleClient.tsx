@@ -840,12 +840,11 @@ export default function ConsoleClient({
             </div>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                <div>Name</div><div>Email</div><div>Role</div><div>School</div><div>Last sign-in</div><div></div><div></div>
+                <div>Name</div><div>Email</div><div>Role</div><div>School</div><div style={{ textAlign: "center" }}>Last sign-in</div><div></div><div></div>
               </div>
               {users.map((u) => (
                 <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 99, background: u.is_active ? C.good : C.line, flexShrink: 0 }} title={u.is_active ? "Active" : "Inactive"} />
                     <input defaultValue={u.full_name}
                       onBlur={(e) => { const n = e.target.value.trim(); if (n && n !== u.full_name) startTransition(() => { updateUserName(u.id, n); }); }}
                       style={{ fontWeight: 700, fontSize: 13.5, color: C.gray, border: "none", background: "transparent", outline: "none", borderBottom: `1px solid ${C.line}`, flex: 1, padding: "2px 0", minWidth: 0 }} />
@@ -864,7 +863,7 @@ export default function ConsoleClient({
                     <option value="">— No school —</option>
                     {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
-                  <div style={{ fontSize: 12, color: u.last_sign_in_at ? C.grayMute : C.line }}>
+                  <div style={{ fontSize: 12, textAlign: "center", color: u.last_sign_in_at ? "#000" : C.grayMute }}>
                     {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Never"}
                   </div>
                   {u.role === "fellow" || u.role === "team_lead"

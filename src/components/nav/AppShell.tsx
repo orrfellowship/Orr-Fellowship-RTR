@@ -81,7 +81,7 @@ export default function AppShell({
             <button onClick={() => exitViewAs()} style={{ border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "#fff", fontWeight: 700, fontSize: 12.5, padding: "5px 12px", borderRadius: 8, cursor: "pointer" }}>Exit preview</button>
           </div>
         )}
-        <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 28px", borderBottom: `1px solid ${C.cardLine}`, background: "rgba(255,255,255,0.72)", backdropFilter: "blur(8px)", flexShrink: 0 }}>
+        <header style={{ position: "relative", zIndex: 40, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 28px", borderBottom: `1px solid ${C.cardLine}`, background: "rgba(255,255,255,0.72)", backdropFilter: "blur(8px)", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13, color: C.inkLo, fontFamily: FM, minWidth: 0 }}>
             {activeItem && <><span style={{ whiteSpace: "nowrap" }}>{activeItem.group}</span><span style={{ color: C.cardLine }}>/</span><span style={{ color: C.ink, fontWeight: 500, whiteSpace: "nowrap" }}>{activeItem.label}</span></>}
           </div>
