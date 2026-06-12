@@ -39,6 +39,7 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
   const [cursor, setCursor] = useState(new Date(initial.getFullYear(), initial.getMonth(), 1));
   const [selected, setSelected] = useState<CalEvent | null>(null);
   const [addFor, setAddFor] = useState<string | null>(null); // date string for the add form
+  const [editFor, setEditFor] = useState<CalEvent | null>(null); // event being edited
 
   const nameOf = (id: string) => (id === profileId ? "You" : team.find((t) => t.id === id)?.full_name ?? "Someone");
 
@@ -119,7 +120,8 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
 
       {selected && (
         <EventModal e={selected} canEdit={canEdit} accent={accent} nameOf={nameOf}
-          onClose={() => setSelected(null)} onRsvp={doRsvp} onDelete={doDelete} />
+          onClose={() => setSelected(null)} onRsvp={doRsvp} onDelete={doDelete}
+          onEdit={(ev) => { setSelected(null); setEditFor(ev); }} />
       )}
       {addFor && (
         <AddEventModal date={addFor} schoolId={schoolId} accent={accent}
@@ -127,15 +129,21 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
           onClose={() => setAddFor(null)}
           onSaved={() => { setAddFor(null); router.refresh(); }} startTransition={startTransition} />
       )}
+      {editFor && (
+        <AddEventModal date={editFor.event_date} schoolId={schoolId} accent={accent}
+          schools={schools ?? []} scopePicker={scopePicker} editing={editFor}
+          onClose={() => setEditFor(null)}
+          onSaved={() => { setEditFor(null); router.refresh(); }} startTransition={startTransition} />
+      )}
     </div>
   );
 }
 
 const navBtn: React.CSSProperties = { width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, cursor: "pointer", fontSize: 16, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" };
 
-function EventModal({ e, canEdit, accent, nameOf, onClose, onRsvp, onDelete }: {
+function EventModal({ e, canEdit, accent, nameOf, onClose, onRsvp, onDelete, onEdit }: {
   e: CalEvent; canEdit: boolean; accent: string; nameOf: (id: string) => string;
-  onClose: () => void; onRsvp: (e: CalEvent, s: "going" | "not_going") => void; onDelete: (id: string) => void;
+  onClose: () => void; onRsvp: (e: CalEvent, s: "going" | "not_going") => void; onDelete: (id: string) => void; onEdit: (e: CalEvent) => void;
 }) {
   const attend = e.event_type === "attend";
   const dateLabel = parseYmd(e.event_date).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
@@ -170,7 +178,8 @@ function EventModal({ e, canEdit, accent, nameOf, onClose, onRsvp, onDelete }: {
       )}
 
       {canEdit && (
-        <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <button onClick={() => onEdit(e)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 12.5, padding: "7px 14px", borderRadius: 8, cursor: "pointer" }}>Edit event</button>
           <button onClick={() => onDelete(e.id)} style={{ border: "none", background: "none", color: C.orange, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Delete event</button>
         </div>
       )}
@@ -178,37 +187,40 @@ function EventModal({ e, canEdit, accent, nameOf, onClose, onRsvp, onDelete }: {
   );
 }
 
-function AddEventModal({ date, schoolId, accent, schools, scopePicker, onClose, onSaved, startTransition }: {
+function AddEventModal({ date, schoolId, accent, schools, scopePicker, editing, onClose, onSaved, startTransition }: {
   date: string; schoolId: string | null; accent: string;
-  schools: { id: string; name: string }[]; scopePicker: boolean;
+  schools: { id: string; name: string }[]; scopePicker: boolean; editing?: CalEvent | null;
   onClose: () => void; onSaved: () => void; startTransition: (cb: () => void) => void;
 }) {
-  const [title, setTitle] = useState("");
-  const [eventDate, setEventDate] = useState(date);
-  const [type, setType] = useState<"attend" | "info">("attend");
-  const [description, setDescription] = useState("");
-  const [address, setAddress] = useState("");
+  const [title, setTitle] = useState(editing?.title ?? "");
+  const [eventDate, setEventDate] = useState(editing?.event_date ?? date);
+  const [type, setType] = useState<"attend" | "info">(editing?.event_type ?? "attend");
+  const [description, setDescription] = useState(editing?.description ?? "");
+  const [address, setAddress] = useState(editing?.address ?? "");
   // "" = org-wide; otherwise a school id. Non-picker callers always use schoolId.
-  const [scope, setScope] = useState<string>(schoolId ?? "");
+  const [scope, setScope] = useState<string>(editing?.school_id ?? schoolId ?? "");
   const [error, setError] = useState<string | null>(null);
   const input = { width: "100%", padding: "10px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" as const, marginBottom: 12 };
 
   const save = () => {
     if (!title.trim()) { setError("Title is required."); return; }
-    const targetSchool = scopePicker ? (scope || null) : schoolId;
     startTransition(() => {
-      addEvent({ title, description: description || null, address: address || null, event_date: eventDate, event_type: type, school_id: targetSchool }).then((r: any) => {
-        if (r?.error) setError(r.error); else onSaved();
-      });
+      const done = (r: any) => { if (r?.error) setError(r.error); else onSaved(); };
+      if (editing) {
+        updateEvent(editing.id, { title, description: description || null, address: address || null, event_date: eventDate, event_type: type }).then(done);
+      } else {
+        const targetSchool = scopePicker ? (scope || null) : schoolId;
+        addEvent({ title, description: description || null, address: address || null, event_date: eventDate, event_type: type, school_id: targetSchool }).then(done);
+      }
     });
   };
 
   return (
     <Overlay onClose={onClose}>
-      <h3 style={{ fontFamily: HEAD, fontSize: 20, color: C.navy, margin: "0 0 16px" }}>Add event</h3>
+      <h3 style={{ fontFamily: HEAD, fontSize: 20, color: C.navy, margin: "0 0 16px" }}>{editing ? "Edit event" : "Add event"}</h3>
       <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Event title" style={input} autoFocus />
       <input type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} style={input} />
-      {scopePicker && (
+      {scopePicker && !editing && (
         <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ ...input, cursor: "pointer" }}>
           <option value="">🌐 Organization-wide (everyone)</option>
           {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -225,7 +237,7 @@ function AddEventModal({ date, schoolId, accent, schools, scopePicker, onClose, 
       {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "9px 12px", fontSize: 13, color: "#8A3A1E", marginBottom: 12 }}>{error}</div>}
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
         <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "10px 16px", borderRadius: 9, cursor: "pointer" }}>Cancel</button>
-        <button onClick={save} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "10px 18px", borderRadius: 9, cursor: "pointer" }}>Add event</button>
+        <button onClick={save} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "10px 18px", borderRadius: 9, cursor: "pointer" }}>{editing ? "Save changes" : "Add event"}</button>
       </div>
     </Overlay>
   );
