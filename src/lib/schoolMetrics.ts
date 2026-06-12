@@ -66,8 +66,9 @@ export function computeSchoolMetrics(
     const gS = g.goal_sourced   > 0 ? Math.min(sourced   / g.goal_sourced,   1) : 0;
     const gC = g.goal_contacted > 0 ? Math.min(contacted / g.goal_contacted, 1) : 0;
     const gA = g.goal_applied   > 0 ? Math.min(applied   / g.goal_applied,   1) : 0;
-    const denom = (g.goal_sourced > 0 ? 1 : 0) + (g.goal_contacted > 0 ? 1 : 0) + (g.goal_applied > 0 ? 1 : 0);
-    const goalAtt = denom > 0 ? (gS + gC + gA) / denom : 0;
+    // Contacted is no longer a goal — attainment is sourced + applied only.
+    const denom = (g.goal_sourced > 0 ? 1 : 0) + (g.goal_applied > 0 ? 1 : 0);
+    const goalAtt = denom > 0 ? (gS + gA) / denom : 0;
 
     const yieldRate = sourced > 0 ? Math.min(applied / sourced, 1) : 0;
 

@@ -82,7 +82,6 @@ function StagePill({ stage }: { stage: string | null }) {
 }
 
 const SOURCED = new Set(["new", "contacted", "applied", "bmi", "finalist", "fellow"]);
-const CONTACTED = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
 const APPLIED = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 function fmtPct(actual: number, goal: number) {
@@ -220,7 +219,6 @@ export default function ConsoleClient({
     const scopeGoals = goals.filter((g) => scope === "Org-wide" || schools.find((s) => s.id === g.school_id)?.name === scope);
     return [
       { label: "Sourced", actual: cands.filter((c) => c.stage && SOURCED.has(c.stage)).length, goal: scopeGoals.reduce((a, g) => a + g.goal_sourced, 0) },
-      { label: "Contacted", actual: cands.filter((c) => c.stage && CONTACTED.has(c.stage)).length, goal: scopeGoals.reduce((a, g) => a + g.goal_contacted, 0) },
       { label: "Applied", actual: cands.filter((c) => c.stage && APPLIED.has(c.stage)).length, goal: scopeGoals.reduce((a, g) => a + g.goal_applied, 0) },
     ];
   }, [scope, candidates, goals, schools]);
@@ -296,15 +294,15 @@ export default function ConsoleClient({
             </p>
             <h2 style={{ fontFamily: HEAD, fontSize: 20, color: C.navy, margin: "32px 0 12px" }}>By school</h2>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "10px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                <div>School</div><div>Sourced</div><div>Contacted</div><div>Applied</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", padding: "10px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+                <div>School</div><div>Sourced</div><div>Applied</div>
               </div>
               {schools.map((s) => {
                 const sc = candidates.filter((c) => c.school_id === s.id);
                 const accent = s.color_primary ?? C.navy2;
                 return (
                   <div key={s.id}
-                    style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", borderLeft: `4px solid ${accent}` }}>
+                    style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", borderLeft: `4px solid ${accent}` }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       {s.logo_url && <img src={s.logo_url} alt={s.name} style={{ height: 24, width: 24, objectFit: "contain", borderRadius: 4 }} />}
                       <div>
@@ -313,7 +311,6 @@ export default function ConsoleClient({
                       </div>
                     </div>
                     <div style={{ color: accent, fontWeight: 700 }}>{sc.filter((c) => c.stage && SOURCED.has(c.stage)).length}</div>
-                    <div style={{ color: accent, fontWeight: 700 }}>{sc.filter((c) => c.stage && CONTACTED.has(c.stage)).length}</div>
                     <div style={{ color: accent, fontWeight: 700 }}>{sc.filter((c) => c.stage && APPLIED.has(c.stage)).length}</div>
                   </div>
                 );
@@ -644,7 +641,6 @@ export default function ConsoleClient({
             const g = goals.find((g) => g.school_id === s.id);
             const draft = goalDraft(s.id);
             const sourced = sc.filter((c) => SOURCED.has(c.stage ?? "")).length;
-            const contacted = sc.filter((c) => CONTACTED.has(c.stage ?? "")).length;
             const applied = sc.filter((c) => APPLIED.has(c.stage ?? "")).length;
             return (
               <div key={s.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: "18px 22px" }}>
@@ -655,7 +651,7 @@ export default function ConsoleClient({
                     <div style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{s.tier} · {teamSize} teammate{teamSize !== 1 ? "s" : ""}</div>
                   </div>
                   <div style={{ display: "flex", gap: 16 }}>
-                    {([["Sourced", sourced, g?.goal_sourced], ["Contacted", contacted, g?.goal_contacted], ["Applied", applied, g?.goal_applied]] as [string, number, number | undefined][]).map(([lbl, act, goal]) => {
+                    {([["Sourced", sourced, g?.goal_sourced], ["Applied", applied, g?.goal_applied]] as [string, number, number | undefined][]).map(([lbl, act, goal]) => {
                       const hasGoal = (goal ?? 0) > 0;
                       const pct = hasGoal ? Math.round((act / (goal as number)) * 100) : 0;
                       const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
@@ -671,7 +667,7 @@ export default function ConsoleClient({
                 {showGoalForm && (
                   <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                     <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goals:</span>
-                    {(["sourced", "contacted", "applied"] as const).map((field) => (
+                    {(["sourced", "applied"] as const).map((field) => (
                       <label key={field} style={{ display: "flex", alignItems: "center", gap: 5 }}>
                         <span style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{field}</span>
                         <input type="number" min={0} value={draft[field]}
@@ -706,11 +702,10 @@ export default function ConsoleClient({
                 const tierSchoolIds = tierSchools.map((s) => s.id);
                 const groupCands = tierSchools.flatMap((s) => candidates.filter((c) => c.school_id === s.id));
                 const groupSourced = groupCands.filter((c) => SOURCED.has(c.stage ?? "")).length;
-                const groupContacted = groupCands.filter((c) => CONTACTED.has(c.stage ?? "")).length;
                 const groupApplied = groupCands.filter((c) => APPLIED.has(c.stage ?? "")).length;
                 // All schools in a group share the same goal value — read from any one
                 const repGoal = goals.find((g) => tierSchoolIds.includes(g.school_id));
-                const groupGoalActual = { sourced: repGoal?.goal_sourced ?? 0, contacted: repGoal?.goal_contacted ?? 0, applied: repGoal?.goal_applied ?? 0 };
+                const groupGoalActual = { sourced: repGoal?.goal_sourced ?? 0, applied: repGoal?.goal_applied ?? 0 };
                 const gDraft = isGrouped ? groupGoalDraft(tier, tierSchoolIds) : null;
 
                 return (
@@ -723,7 +718,7 @@ export default function ConsoleClient({
                         <div style={{ marginBottom: 14 }}>
                           <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: C.gray, marginBottom: 6 }}>{tier === "satellite" ? "Satellite School" : "Bonus School"} ({tierSchools.length} schools)</div>
                           <div style={{ display: "flex", gap: 16 }}>
-                            {([["Sourced", groupSourced, groupGoalActual.sourced], ["Contacted", groupContacted, groupGoalActual.contacted], ["Applied", groupApplied, groupGoalActual.applied]] as [string, number, number][]).map(([lbl, act, goal]) => {
+                            {([["Sourced", groupSourced, groupGoalActual.sourced], ["Applied", groupApplied, groupGoalActual.applied]] as [string, number, number][]).map(([lbl, act, goal]) => {
                               const hasGoal = goal > 0;
                               const pct = hasGoal ? Math.round((act / goal) * 100) : 0;
                               const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
@@ -737,7 +732,7 @@ export default function ConsoleClient({
                         </div>
                         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", paddingTop: 10, borderTop: `1px solid ${C.line}` }}>
                           <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goals:</span>
-                          {(["sourced", "contacted", "applied"] as const).map((field) => (
+                          {(["sourced", "applied"] as const).map((field) => (
                             <label key={field} style={{ display: "flex", alignItems: "center", gap: 5 }}>
                               <span style={{ fontSize: 12, color: C.grayMute, textTransform: "capitalize" }}>{field}</span>
                               <input type="number" min={0} value={gDraft[field]}

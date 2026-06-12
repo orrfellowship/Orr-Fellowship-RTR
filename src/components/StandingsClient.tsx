@@ -263,9 +263,9 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
   const logVal = (v: number) => v > 0 ? Math.log10(v + 1) : 0;
   const maxLog = useMemo(() => Math.max(...stats.map((m) => logVal(m.sourced)), 0.1), [stats]);
 
-  const bestYield   = useMemo(() => [...stats].sort((a, b) => b.yield - a.yield)[0] ?? null, [stats]);
-  const bestContact = useMemo(() => [...stats].filter((m) => m.sourced > 0).sort((a, b) => (b.contacted / b.sourced) - (a.contacted / a.sourced))[0] ?? null, [stats]);
-  const bestApply   = useMemo(() => [...stats].filter((m) => m.contacted > 0).sort((a, b) => (b.applied / b.contacted) - (a.applied / a.contacted))[0] ?? null, [stats]);
+  const bestYield    = useMemo(() => [...stats].sort((a, b) => b.yield - a.yield)[0] ?? null, [stats]);
+  const mostSourced  = useMemo(() => [...stats].sort((a, b) => b.sourced - a.sourced)[0] ?? null, [stats]);
+  const mostApplied  = useMemo(() => [...stats].sort((a, b) => b.applied - a.applied)[0] ?? null, [stats]);
 
   const METRIC_TIPS = {
     sourced:   "Sourced: Candidates identified or reached out to — the top of the funnel.",
@@ -392,7 +392,6 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
             <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 16, flexWrap: "wrap" }}>
               {([
                 { key: "sourced",   label: "Sourced",   bg: `${C.navy3}40` },
-                { key: "contacted", label: "Contacted", bg: C.blue },
                 { key: "applied",   label: "Applied",   bg: C.navy },
               ] as const).map(({ key, label, bg }) => (
                 <Tooltip key={key} text={METRIC_TIPS[key]}>
@@ -407,10 +406,9 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
             {/* Column headers */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, paddingLeft: 148 }}>
               <div style={{ flex: 1 }} />
-              <div style={{ display: "flex", gap: 8, width: 120, flexShrink: 0 }}>
+              <div style={{ display: "flex", gap: 8, width: 80, flexShrink: 0 }}>
                 {([
                   { label: "Src ⓘ",  tip: METRIC_TIPS.sourced,   color: C.navy3 },
-                  { label: "Con ⓘ",  tip: METRIC_TIPS.contacted, color: C.blue  },
                   { label: "App ⓘ",  tip: METRIC_TIPS.applied,   color: C.navy  },
                 ]).map(({ label, tip, color }) => (
                   <Tooltip key={label} text={tip}>
@@ -424,9 +422,7 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {stats.map((m) => {
                 const totalW       = maxLog > 0 ? (logVal(m.sourced) / maxLog) * 100 : 0;
-                const contactedW   = m.sourced > 0 ? (logVal(m.contacted) / logVal(m.sourced)) * 100 : 0;
                 const appliedW     = m.sourced > 0 ? (logVal(m.applied)   / logVal(m.sourced)) * 100 : 0;
-                const contactedBarW = (totalW * contactedW) / 100;
                 const appliedBarW   = (totalW * appliedW)   / 100;
                 const isMe = m.key === resolvedMyId;
                 return (
@@ -440,25 +436,17 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                       onClick={() => setDrillId(m.key)}>
                       {/* Sourced — faint background */}
                       <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${totalW}%`, background: m.color + "22", border: `1px solid ${m.color}33`, borderRadius: 99 }} />
-                      {/* Contacted — hatched */}
-                      <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${contactedBarW}%`, borderRadius: 99, background: `repeating-linear-gradient(45deg, ${m.color}66 0px, ${m.color}66 3px, transparent 3px, transparent 6px)` }} />
                       {/* Applied — solid */}
                       <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${appliedBarW}%`, borderRadius: 99, background: m.color + "DD" }} />
-                      {/* Hover-revealed counts */}
+                      {/* Hover-revealed count */}
                       {hoveredBar === m.key && appliedBarW > 8 && (
                         <div style={{ position: "absolute", top: "50%", left: `${appliedBarW / 2}%`, transform: "translate(-50%, -50%)", fontSize: 9, fontWeight: 700, color: "#fff", pointerEvents: "none" }}>
                           {m.applied}
                         </div>
                       )}
-                      {hoveredBar === m.key && contactedBarW > appliedBarW + 8 && (
-                        <div style={{ position: "absolute", top: "50%", left: `${appliedBarW + (contactedBarW - appliedBarW) / 2}%`, transform: "translate(-50%, -50%)", fontSize: 9, fontWeight: 700, color: "#fff", pointerEvents: "none" }}>
-                          {m.contacted}
-                        </div>
-                      )}
                     </div>
-                    <div style={{ display: "flex", gap: 8, width: 120, flexShrink: 0 }}>
+                    <div style={{ display: "flex", gap: 8, width: 80, flexShrink: 0 }}>
                       <span style={{ fontSize: 10, color: C.grayMute, fontFamily: BODY, width: 32, textAlign: "center" }}>{m.sourced}</span>
-                      <span style={{ fontSize: 10, color: C.blue,     fontFamily: BODY, width: 32, textAlign: "center" }}>{m.contacted}</span>
                       <span style={{ fontSize: 10, fontWeight: 700, color: C.navy, fontFamily: HEAD, width: 32, textAlign: "center" }}>{m.applied}</span>
                     </div>
                   </div>
@@ -470,7 +458,6 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
             {/* Reading guide */}
             <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.line}`, fontSize: 10, fontFamily: BODY, color: C.grayMute, display: "flex", flexWrap: "wrap", gap: "4px 20px" }}>
               <span><strong style={{ color: C.gray }}>Solid bar</strong> = Applied candidates</span>
-              <span><strong style={{ color: C.gray }}>Hatched bar</strong> = Contacted (includes applied)</span>
               <span><strong style={{ color: C.gray }}>Faint bar</strong> = Total sourced pipeline</span>
             </div>
           </div>
@@ -481,16 +468,16 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
               {([
                 {
-                  label: "Best Sourced → Contacted",
-                  tip: "Which school converts the highest % of sourced candidates to contacted?",
-                  champ: bestContact,
-                  stat: bestContact ? `${Math.round((bestContact.contacted / bestContact.sourced) * 100)}%` : "—",
+                  label: "Most Sourced",
+                  tip: "Which school has sourced the most candidates?",
+                  champ: mostSourced,
+                  stat: mostSourced ? `${mostSourced.sourced}` : "—",
                 },
                 {
-                  label: "Best Contacted → Applied",
-                  tip: "Which school converts the highest % of contacted candidates to applicants?",
-                  champ: bestApply,
-                  stat: bestApply ? `${Math.round((bestApply.applied / bestApply.contacted) * 100)}%` : "—",
+                  label: "Most Applied",
+                  tip: "Which school has the most applied candidates?",
+                  champ: mostApplied,
+                  stat: mostApplied ? `${mostApplied.applied}` : "—",
                 },
                 {
                   label: "Best Overall Yield",
