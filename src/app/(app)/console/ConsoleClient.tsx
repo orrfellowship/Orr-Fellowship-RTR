@@ -104,6 +104,7 @@ export default function ConsoleClient({
   const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "calendar" | "budget" | "users" | "sync" | "resources" | "review">(initialSection as any);
   const [scope, setScope] = useState<string>("all"); // SchoolFilter value: all | id | tier:satellite | tier:bonus
   const [appSchool, setAppSchool] = useState<string>("all");
+  const [obExpand, setObExpand] = useState<Record<string, boolean>>({}); // overview "By school" tier expand
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
   const [pbAssignee, setPbAssignee] = useState<string>("all");
   const [pbFrom, setPbFrom] = useState<string>("");
@@ -295,24 +296,40 @@ export default function ConsoleClient({
               <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", padding: "10px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                 <div>School</div><div>Sourced</div><div>Applied</div>
               </div>
-              {schools.map((s) => {
-                const sc = candidates.filter((c) => c.school_id === s.id);
-                const accent = s.color_primary ?? C.navy2;
-                return (
-                  <div key={s.id}
-                    style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", borderLeft: `4px solid ${accent}` }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {s.logo_url && <img src={s.logo_url} alt={s.name} style={{ height: 24, width: 24, objectFit: "contain", borderRadius: 4 }} />}
-                      <div>
-                        <div style={{ fontWeight: 700, color: C.gray }}>{s.name}</div>
-                        <div style={{ fontSize: 11, color: C.grayMute, textTransform: "capitalize" }}>{s.tier}</div>
+              {(() => {
+                const cnt = (ids: string[]) => {
+                  const sc = candidates.filter((c) => c.school_id && ids.includes(c.school_id));
+                  return { sourced: sc.filter((c) => c.stage && SOURCED.has(c.stage)).length, applied: sc.filter((c) => c.stage && APPLIED.has(c.stage)).length };
+                };
+                const row = (key: string, name: string, sub: string, ids: string[], accent: string, opts: { logo?: string | null; indent?: boolean; expandKey?: string } = {}) => {
+                  const c2 = cnt(ids);
+                  const exp = opts.expandKey ? !!obExpand[opts.expandKey] : false;
+                  return (
+                    <div key={key} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", padding: "12px 18px", paddingLeft: opts.indent ? 40 : 18, borderBottom: `1px solid ${C.line}`, alignItems: "center", borderLeft: `4px solid ${accent}`, background: opts.indent ? "#FBFBFE" : "#fff" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {opts.expandKey && <button onClick={() => setObExpand((p) => ({ ...p, [opts.expandKey!]: !p[opts.expandKey!] }))} style={{ border: "none", background: "none", cursor: "pointer", color: C.grayMute, fontSize: 11, padding: 0 }}>{exp ? "▾" : "▸"}</button>}
+                        {opts.logo && <img src={opts.logo} alt="" style={{ height: 24, width: 24, objectFit: "contain", borderRadius: 4 }} />}
+                        <div><div style={{ fontWeight: 700, color: C.gray }}>{name}</div><div style={{ fontSize: 11, color: C.grayMute, textTransform: "capitalize" }}>{sub}</div></div>
                       </div>
+                      <div style={{ color: accent, fontWeight: 700 }}>{c2.sourced}</div>
+                      <div style={{ color: accent, fontWeight: 700 }}>{c2.applied}</div>
                     </div>
-                    <div style={{ color: accent, fontWeight: 700 }}>{sc.filter((c) => c.stage && SOURCED.has(c.stage)).length}</div>
-                    <div style={{ color: accent, fontWeight: 700 }}>{sc.filter((c) => c.stage && APPLIED.has(c.stage)).length}</div>
-                  </div>
+                  );
+                };
+                const byName = (a: School, b: School) => a.name.localeCompare(b.name);
+                const core = schools.filter((s) => s.tier === "core").sort(byName);
+                const sat = schools.filter((s) => s.tier === "satellite").sort(byName);
+                const bon = schools.filter((s) => s.tier === "bonus").sort(byName);
+                return (
+                  <>
+                    {core.map((s) => row(s.id, s.name, "core", [s.id], s.color_primary ?? C.navy2, { logo: s.logo_url }))}
+                    {sat.length > 0 && row("g-sat", "Satellite School", `${sat.length} schools`, sat.map((s) => s.id), C.navy2, { expandKey: "satellite" })}
+                    {obExpand.satellite && sat.map((s) => row(s.id, s.name, "satellite", [s.id], s.color_primary ?? C.navy2, { logo: s.logo_url, indent: true }))}
+                    {bon.length > 0 && row("g-bon", "Bonus School", `${bon.length} schools`, bon.map((s) => s.id), C.navy2, { expandKey: "bonus" })}
+                    {obExpand.bonus && bon.map((s) => row(s.id, s.name, "bonus", [s.id], s.color_primary ?? C.navy2, { logo: s.logo_url, indent: true }))}
+                  </>
                 );
-              })}
+              })()}
             </div>
           </>
         )}
