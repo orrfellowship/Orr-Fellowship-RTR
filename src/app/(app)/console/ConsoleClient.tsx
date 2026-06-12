@@ -20,6 +20,7 @@ import BulkImportModal from "@/components/BulkImportModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
+import DuplicateReview, { findDuplicateGroups } from "@/components/DuplicateReview";
 import { phaseOf } from "@/lib/stages";
 import { useIsMobile } from "@/lib/useIsMobile";
 
@@ -135,6 +136,7 @@ export default function ConsoleClient({
   const [appCreator, setAppCreator] = useState("anyone"); // anyone | jazzhr | <profile_id>
   const [appSort, setAppSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage" | "ai"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [dupOpen, setDupOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
@@ -420,6 +422,29 @@ export default function ConsoleClient({
                 )}
               </div>
             )}
+
+            {/* Duplicate candidates — any source (manual, import, JazzHR) */}
+            {adminPlus && (() => {
+              const dupCount = findDuplicateGroups(candidates).length;
+              if (dupCount === 0) return null;
+              return (
+                <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
+                  <button onClick={() => setDupOpen((v) => !v)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: C.canvas, cursor: "pointer", textAlign: "left" }}>
+                    <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
+                      Potential duplicates · <span style={{ color: C.orange }}>{dupCount} group{dupCount === 1 ? "" : "s"}</span>
+                    </span>
+                    <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>Same name or email · any source</span>
+                    <span style={{ color: C.grayMute, fontSize: 15 }}>{dupOpen ? "▲" : "▼"}</span>
+                  </button>
+                  {dupOpen && (
+                    <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
+                      <DuplicateReview candidates={candidates} schools={schools} />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Filter bar */}
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px" }}>
