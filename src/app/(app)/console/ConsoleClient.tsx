@@ -814,11 +814,11 @@ export default function ConsoleClient({
               </div>
             </div>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1.5fr 1fr 1.2fr 1fr 70px 28px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                 <div>Name</div><div>Email</div><div>Role</div><div>School</div><div>Last sign-in</div><div></div><div></div>
               </div>
               {users.map((u) => (
-                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.5fr 1.5fr 1fr 1.2fr 1fr 70px 28px", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
+                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 99, background: u.is_active ? C.good : C.line, flexShrink: 0 }} title={u.is_active ? "Active" : "Inactive"} />
                     <input defaultValue={u.full_name}
@@ -830,12 +830,12 @@ export default function ConsoleClient({
                   <select defaultValue={u.role}
                     onChange={(e) => startTransition(() => { updateUser(u.id, e.target.value, u.school_id); })}
                     disabled={u.id === profile.id}
-                    style={{ fontSize: 12.5, fontWeight: 600, color: C.navy, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff" }}>
+                    style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box", fontSize: 12.5, fontWeight: 600, color: C.navy, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff" }}>
                     {ALL_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
                   <select value={schoolOptionValue(schools, u.school_id)}
                     onChange={(e) => startTransition(() => { updateUser(u.id, u.role, e.target.value || null); })}
-                    style={{ fontSize: 12.5, fontWeight: 600, color: u.school_id ? C.navy : C.grayMute, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff" }}>
+                    style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box", fontSize: 12.5, fontWeight: 600, color: u.school_id ? C.navy : C.grayMute, border: `1px solid ${C.line}`, borderRadius: 7, padding: "5px 7px", background: "#fff" }}>
                     <option value="">— No school —</option>
                     {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
