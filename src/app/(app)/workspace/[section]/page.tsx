@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentProfile, getSchoolById } from "@/lib/auth";
+import { resolveViewer, getSchoolById } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus } from "@/lib/types";
 import { canAccessWorkspaceSection } from "@/lib/nav/config";
@@ -18,7 +18,7 @@ const TAB: Record<string, string> = {
 // Each route renders exactly ONE section, so we only fetch what that section
 // reads. Everything else is passed empty — the other tabs' code never runs.
 export default async function WorkspaceSection({ params }: { params: { section: string } }) {
-  const profile = await getCurrentProfile();
+  const { profile } = await resolveViewer();
   if (!profile) redirect("/login");
   if (isAdminPlus(profile.role)) redirect("/console/overview");
   if (!canAccessWorkspaceSection(profile.role, params.section)) redirect("/workspace/snapshot");

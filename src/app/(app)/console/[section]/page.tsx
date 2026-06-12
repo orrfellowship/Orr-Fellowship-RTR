@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentProfile } from "@/lib/auth";
+import { resolveViewer } from "@/lib/auth";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { isSuper, isAdminPlus } from "@/lib/types";
 import { canAccessConsoleSection } from "@/lib/nav/config";
@@ -11,7 +11,7 @@ import ConsoleClient from "../ConsoleClient";
 
 // Each route renders one section → only fetch what that section reads.
 export default async function ConsoleSection({ params }: { params: { section: string } }) {
-  const profile = await getCurrentProfile();
+  const { profile } = await resolveViewer();
   if (!profile) redirect("/login");
   if (!isAdminPlus(profile.role)) redirect("/workspace/snapshot");
   if (!canAccessConsoleSection(profile.role, params.section)) redirect("/console/overview");

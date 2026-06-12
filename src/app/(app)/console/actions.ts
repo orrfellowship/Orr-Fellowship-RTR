@@ -11,8 +11,9 @@ function bustCache(tags: string[], paths: string[]) {
     for (const p of paths) revalidatePath(p);
   } catch { /* revalidation is best-effort */ }
 }
+import { cookies } from "next/headers";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
-import { getCurrentProfile } from "@/lib/auth";
+import { getCurrentProfile, isPreviewing, VIEW_AS_COOKIE } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolName } from "@/lib/stages";
@@ -43,6 +44,7 @@ export async function setNotInterested(candidateId: string, value: boolean) {
 }
 
 export async function reassignSchool(candidateId: string, schoolId: string | null) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -53,6 +55,7 @@ export async function reassignSchool(candidateId: string, schoolId: string | nul
 }
 
 export async function reassignPointPerson(candidateId: string, ownerId: string | null) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase.from("candidates").update({ point_person_id: ownerId }).eq("id", candidateId);
   if (error) return { error: error.message };
@@ -63,6 +66,7 @@ export async function reassignPointPerson(candidateId: string, ownerId: string |
 }
 
 export async function logOutreach(candidateId: string, body: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
@@ -84,6 +88,7 @@ export async function getOutreach(candidateId: string) {
 }
 
 export async function addPhase(schoolId: string, label: string, title: string, sortOrder: number) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase
     .from("playbook_phases")
@@ -98,6 +103,7 @@ export async function upsertTask(t: {
   assignee_label: string | null; month_label: string | null; notes: string | null;
   due_date: string | null; done: boolean;
 }) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase.from("playbook_tasks").upsert(t.id ? t : { ...t, id: undefined });
   if (error) return { error: error.message };
@@ -106,6 +112,7 @@ export async function upsertTask(t: {
 }
 
 export async function deleteTask(taskId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase.from("playbook_tasks").delete().eq("id", taskId);
   if (error) return { error: error.message };
@@ -118,6 +125,7 @@ export async function addCandidate(data: {
   stage: string | null; gpa: string | null; area_of_study: string | null;
   university_raw?: string | null;
 }) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may add
   const db = createServiceClient();
@@ -131,6 +139,7 @@ export async function addCandidate(data: {
 }
 
 export async function deleteCandidate(id: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -144,6 +153,7 @@ export async function deleteCandidate(id: string) {
 export async function bulkImportCandidates(
   rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null }[]
 ) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may import
   const db = createServiceClient();
@@ -157,6 +167,7 @@ export async function bulkImportCandidates(
 }
 
 export async function upsertGoal(school_id: string, goal_sourced: number, goal_contacted: number, goal_applied: number) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -168,6 +179,7 @@ export async function upsertGoal(school_id: string, goal_sourced: number, goal_c
 }
 
 export async function upsertGroupGoal(schoolIds: string[], goal_sourced: number, goal_contacted: number, goal_applied: number) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   if (!schoolIds.length) return { ok: true };
@@ -196,6 +208,7 @@ async function guardSuperTarget(
 }
 
 export async function updateUser(user_id: string, role: string, school_id: string | null) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -209,6 +222,7 @@ export async function updateUser(user_id: string, role: string, school_id: strin
 }
 
 export async function updateUserName(user_id: string, full_name: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -221,6 +235,7 @@ export async function updateUserName(user_id: string, full_name: string) {
 }
 
 export async function removeUser(userId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   if (userId === profile.id) return { error: "Cannot remove yourself" };
@@ -234,6 +249,7 @@ export async function removeUser(userId: string) {
 }
 
 export async function addConnection(candidateId: string, relationship: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
@@ -262,6 +278,7 @@ export async function getConnections(candidateId: string) {
 }
 
 export async function deleteOutreach(logId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase.from("outreach_log").delete().eq("id", logId);
   if (error) return { error: error.message };
@@ -270,6 +287,7 @@ export async function deleteOutreach(logId: string) {
 }
 
 export async function deleteConnection(connectionId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase.from("connections").delete().eq("id", connectionId);
   if (error) return { error: error.message };
@@ -294,6 +312,7 @@ export async function deletePhase(phaseId: string) {
 }
 
 export async function deduplicateCandidates() {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const serviceDb = createServiceClient();
@@ -390,6 +409,7 @@ async function sendInvite(
 }
 
 export async function inviteUser(email: string, full_name: string, role: string, school_id: string | null) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   if (!isSuper(profile.role) && role === "super_admin") return { error: "Only a super admin can invite a super admin." };
@@ -403,6 +423,7 @@ export async function inviteUser(email: string, full_name: string, role: string,
 export async function bulkInviteUsers(
   rows: { email: string; full_name: string; role: string; school_id: string | null }[]
 ) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const canSuper = isSuper(profile.role);
@@ -444,6 +465,7 @@ async function routeSchoolId(db: ReturnType<typeof createServiceClient>, univers
 
 // Approve a name-only match: link the JazzHR applicant to the suspected candidate.
 export async function approveJazzMatch(reviewId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -460,6 +482,7 @@ export async function approveJazzMatch(reviewId: string) {
 
 // Reject a name-only match: import the JazzHR applicant as a separate candidate.
 export async function rejectJazzMatch(reviewId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -476,6 +499,7 @@ export async function rejectJazzMatch(reviewId: string) {
 
 // Unlink a candidate from JazzHR (clears jazz_id so it's no longer auto-refreshed).
 export async function unlinkJazzCandidate(candidateId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -487,6 +511,7 @@ export async function unlinkJazzCandidate(candidateId: string) {
 
 // ---- RESOURCES (read: everyone; write: admin+) -----------------------------
 export async function addResource(name: string, description: string | null, link: string | null) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canManageResources(profile.role)) return { error: "Forbidden" };
   if (!name.trim()) return { error: "Name is required" };
@@ -500,6 +525,7 @@ export async function addResource(name: string, description: string | null, link
 }
 
 export async function updateResource(id: string, name: string, description: string | null, link: string | null) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canManageResources(profile.role)) return { error: "Forbidden" };
   if (!name.trim()) return { error: "Name is required" };
@@ -513,6 +539,7 @@ export async function updateResource(id: string, name: string, description: stri
 }
 
 export async function deleteResource(id: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canManageResources(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -523,6 +550,7 @@ export async function deleteResource(id: string) {
 }
 
 export async function seedPlaybook(schoolId: string, force = false) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -561,11 +589,22 @@ export async function seedPlaybook(schoolId: string, force = false) {
   return { ok: true };
 }
 
+// ---- VIEW AS (admin read-only preview of another person) -------------------
+export async function setViewAs(userId: string | null) {
+  const me = await getCurrentProfile();
+  if (!me || !isAdminPlus(me.role)) return { error: "Forbidden" };
+  const jar = cookies();
+  if (userId && userId !== me.id) jar.set(VIEW_AS_COOKIE, userId, { httpOnly: true, sameSite: "lax", path: "/" });
+  else jar.delete(VIEW_AS_COOKIE);
+  return { ok: true };
+}
+
 // ---- BUDGETS — admins add allocations; team leads add expenses (w/ receipt) --
 export async function addBudgetEntry(e: {
   school_id: string | null; kind: "allocation" | "expense"; label: string;
   amount: number; notes: string | null; receipt_url?: string | null;
 }) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" };
   const leadPlus = profile.role === "team_lead" || isAdminPlus(profile.role);
@@ -615,6 +654,7 @@ export async function signedReceiptUrl(path: string): Promise<{ ok: true; url: s
 }
 
 export async function deleteBudgetEntry(id: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" };
   const db = createServiceClient();
@@ -679,6 +719,7 @@ export async function getUserSnapshot(userId: string) {
 
 // Admin's recommended spending split by category (org-wide guidance).
 export async function setBudgetGuidance(items: { category: string; pct: number }[]) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();

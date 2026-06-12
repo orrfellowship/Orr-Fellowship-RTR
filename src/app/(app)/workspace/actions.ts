@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
-import { getCurrentProfile } from "@/lib/auth";
+import { getCurrentProfile, isPreviewing } from "@/lib/auth";
 import { canEditPlaybook, canEditEvents, isAdminPlus } from "@/lib/types";
 import { queueNotification, supersedePending } from "@/lib/notify";
 
@@ -10,6 +10,7 @@ const CLAIM_DELAY_MS = 30 * 60 * 1000;
 
 // Toggle a favorite for the current user (favorites table is per-user via RLS).
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
@@ -25,6 +26,7 @@ export async function toggleFavorite(candidateId: string, makeFav: boolean) {
 
 // Flag / unflag not-interested. RLS allows this only within the user's school.
 export async function setNotInterested(candidateId: string, value: boolean) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase
     .from("candidates")
@@ -37,6 +39,7 @@ export async function setNotInterested(candidateId: string, value: boolean) {
 
 // Log an outreach note. Author must be the current user (enforced by RLS).
 export async function logOutreach(candidateId: string, body: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
@@ -50,6 +53,7 @@ export async function logOutreach(candidateId: string, body: string) {
 
 // ---- POINT PERSON (team_lead+ only; DB trigger also enforces this) ----
 export async function reassignPointPerson(candidateId: string, ownerId: string | null) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase
     .from("candidates")
@@ -97,6 +101,7 @@ export async function getOutreach(candidateId: string) {
 // the service client. Optionally TAG another person (anyone, any school); they get
 // notified + the intro shows up in their queue.
 export async function addConnection(candidateId: string, relationship: string, taggedProfileId: string | null = null) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
@@ -170,6 +175,7 @@ export async function getConnections(candidateId: string) {
 
 // ---- PLAYBOOK (team_lead of own school, or admin+; DB RLS enforces) ----
 export async function addPhase(schoolId: string, label: string, title: string, sortOrder: number) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase
     .from("playbook_phases")
@@ -184,6 +190,7 @@ export async function upsertTask(t: {
   assignee_label: string | null; month_label: string | null; notes: string | null;
   due_date: string | null; done: boolean;
 }) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
@@ -213,6 +220,7 @@ export async function upsertTask(t: {
 // Replace the set of people assigned to a task. Keeps the legacy assignee_id in
 // sync (first person, or null) so older reads still resolve a primary owner.
 export async function setTaskAssignees(taskId: string, profileIds: string[]) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditPlaybook(profile.role)) return { error: "Only team leads or admins can assign tasks." };
   const db = createServiceClient();
@@ -253,6 +261,7 @@ async function recomputeTaskDone(db: ReturnType<typeof createServiceClient>, tas
 // A fellow (or anyone assigned) submits their portion of a task → pending_review.
 // value=false retracts their submission. Operates on the calling user only.
 export async function requestTaskComplete(taskId: string, value: boolean) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
@@ -272,6 +281,7 @@ export async function requestTaskComplete(taskId: string, value: boolean) {
 // or sends back (value=false) one assignee's submission. Without it (team /
 // unassigned tasks, or the console), it toggles the whole task done directly.
 export async function confirmTaskComplete(taskId: string, value: boolean, forProfileId?: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditPlaybook(profile.role)) return { error: "Only team leads or admins can confirm tasks." };
   const db = createServiceClient();
@@ -299,6 +309,7 @@ export async function confirmTaskComplete(taskId: string, value: boolean, forPro
 }
 
 export async function deleteTask(taskId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase.from("playbook_tasks").delete().eq("id", taskId);
   if (error) return { error: error.message };
@@ -307,6 +318,7 @@ export async function deleteTask(taskId: string) {
 }
 
 export async function deleteOutreach(logId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase.from("outreach_log").delete().eq("id", logId);
   if (error) return { error: error.message };
@@ -316,6 +328,7 @@ export async function deleteOutreach(logId: string) {
 
 // Remove a warm intro. You may remove your own; team leads/admins may remove any.
 export async function deleteConnection(connectionId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
@@ -332,6 +345,7 @@ export async function deleteConnection(connectionId: string) {
 }
 
 export async function updatePhase(phaseId: string, label: string, title: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase.from("playbook_phases").update({ label, title }).eq("id", phaseId);
   if (error) return { error: error.message };
@@ -340,6 +354,7 @@ export async function updatePhase(phaseId: string, label: string, title: string)
 }
 
 export async function deletePhase(phaseId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { error } = await supabase.from("playbook_phases").delete().eq("id", phaseId);
   if (error) return { error: error.message };
@@ -349,6 +364,7 @@ export async function deletePhase(phaseId: string) {
 
 // ---- NOTIFICATIONS (in-app bell) ------------------------------------------
 export async function markNotificationsRead(ids: string[]) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
@@ -365,6 +381,7 @@ export async function addEvent(e: {
   title: string; description: string | null; address?: string | null; event_date: string;
   event_type: "attend" | "info"; school_id: string | null;
 }) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditEvents(profile.role)) return { error: "Only team leads or admins can add events." };
   if (!e.title.trim() || !e.event_date) return { error: "Title and date are required." };
@@ -387,6 +404,7 @@ export async function updateEvent(id: string, patch: {
   title?: string; description?: string | null; address?: string | null;
   event_date?: string; event_type?: "attend" | "info";
 }) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditEvents(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -404,6 +422,7 @@ export async function updateEvent(id: string, patch: {
 }
 
 export async function deleteEvent(id: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditEvents(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -416,6 +435,7 @@ export async function deleteEvent(id: string) {
 
 // Admin note on an event, targeted at one school's team lead (not org-wide).
 export async function addEventNote(eventId: string, schoolId: string, body: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Only admins can add event notes." };
   if (!body.trim()) return { error: "Note can't be empty." };
@@ -429,6 +449,7 @@ export async function addEventNote(eventId: string, schoolId: string, body: stri
 }
 
 export async function deleteEventNote(id: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const { error } = await createServiceClient().from("event_notes").delete().eq("id", id);
@@ -440,6 +461,7 @@ export async function deleteEventNote(id: string) {
 
 // RSVP to an event. status null clears it.
 export async function setRsvp(eventId: string, status: "going" | "not_going" | null) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
   const supabase = createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
