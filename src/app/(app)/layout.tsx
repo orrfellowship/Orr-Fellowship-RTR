@@ -35,7 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     : ((school as any)?.color_primary ?? accentFor(role, (school as any)?.name));
 
   const brand = isAdminPlus(role)
-    ? { label: "Orr Recruiting", sublabel: SUBLABEL[role], crest: "OR", logoUrl: null as string | null }
+    ? { label: "Orr Recruiting", sublabel: SUBLABEL[role], crest: "OR", logoUrl: "/orr-emblem.png" as string | null }
     : { label: (school as any)?.name ?? "Workspace", sublabel: SUBLABEL[role], crest: initials((school as any)?.name ?? "Orr"), logoUrl: (school as any)?.logo_url ?? null };
 
   const [{ data: notifications }, navData, peopleRes] = await Promise.all([

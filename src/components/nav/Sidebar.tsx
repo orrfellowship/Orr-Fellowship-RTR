@@ -44,7 +44,7 @@ export default function Sidebar({
 
       {/* Brand */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: collapsed ? "20px 0 16px" : "20px 20px 16px", justifyContent: collapsed ? "center" : "flex-start", position: "relative" }}>
-        <div style={{ width: 38, height: 38, borderRadius: 10, background: accent, display: "grid", placeItems: "center", flexShrink: 0, boxShadow: `0 6px 18px ${accent}55`, overflow: "hidden", fontFamily: FD, fontWeight: 700, color: "#fff", fontSize: 14, letterSpacing: 0.3 }}>
+        <div style={{ width: 38, height: 38, borderRadius: 10, background: brand.logoUrl ? "#fff" : accent, display: "grid", placeItems: "center", flexShrink: 0, boxShadow: `0 6px 18px ${accent}55`, overflow: "hidden", fontFamily: FD, fontWeight: 700, color: "#fff", fontSize: 14, letterSpacing: 0.3, padding: brand.logoUrl ? 3 : 0, boxSizing: "border-box" }}>
           {brand.logoUrl ? <img src={brand.logoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : brand.crest}
         </div>
         {!collapsed && (
