@@ -109,6 +109,11 @@ export default function ConsoleClient({
   const [obExpand, setObExpand] = useState<Record<string, boolean>>({}); // overview "By school" tier expand
   const [budgetView, setBudgetView] = useState<"manage" | "analysis">("manage");
   const [snapshotUser, setSnapshotUser] = useState<UserProfile | null>(null);
+  const [usrSearch, setUsrSearch] = useState("");
+  const [usrRole, setUsrRole] = useState("all");
+  const [usrSchool, setUsrSchool] = useState("all");
+  const [usrStatus, setUsrStatus] = useState<"all" | "active" | "inactive">("all");
+  const [usrSort, setUsrSort] = useState<{ key: "name" | "email" | "role" | "school" | "signin"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [playbookSchool, setPlaybookSchool] = useState<string>(schoolSelectOptions(schools)[0]?.value ?? "");
   const [pbAssignee, setPbAssignee] = useState<string>("all");
   const [pbFrom, setPbFrom] = useState<string>("");
@@ -826,23 +831,70 @@ export default function ConsoleClient({
         })()}
 
         {/* ---- USERS ---- */}
-        {tab === "users" && adminPlus && (
+        {tab === "users" && adminPlus && (() => {
+          const roleRank: Record<string, number> = { super_admin: 0, admin: 1, team_lead: 2, fellow: 3 };
+          const uq = usrSearch.trim().toLowerCase();
+          const schoolNm = (id: string | null) => (id ? (schools.find((s) => s.id === id)?.name ?? "~") : "~");
+          const filtered = users.filter((u) => {
+            if (uq && !(`${u.full_name} ${u.email ?? ""}`.toLowerCase().includes(uq))) return false;
+            if (usrRole !== "all" && u.role !== usrRole) return false;
+            if (!matchesSchoolFilter(usrSchool, u.school_id, schools)) return false;
+            if (usrStatus === "active" && !u.is_active) return false;
+            if (usrStatus === "inactive" && u.is_active) return false;
+            return true;
+          });
+          const udir = usrSort.dir === "asc" ? 1 : -1;
+          const visibleUsers = [...filtered].sort((a, b) => {
+            let av: number | string, bv: number | string;
+            switch (usrSort.key) {
+              case "email":  av = (a.email ?? "~").toLowerCase(); bv = (b.email ?? "~").toLowerCase(); break;
+              case "role":   av = roleRank[a.role] ?? 9; bv = roleRank[b.role] ?? 9; break;
+              case "school": av = schoolNm(a.school_id).toLowerCase(); bv = schoolNm(b.school_id).toLowerCase(); break;
+              case "signin": av = a.last_sign_in_at ? Date.parse(a.last_sign_in_at) : -1; bv = b.last_sign_in_at ? Date.parse(b.last_sign_in_at) : -1; break;
+              default:       av = a.full_name.toLowerCase(); bv = b.full_name.toLowerCase();
+            }
+            if (av < bv) return -1 * udir;
+            if (av > bv) return 1 * udir;
+            return 0;
+          });
+          const toggleUsr = (k: typeof usrSort.key) => setUsrSort((p) => p.key === k ? { key: k, dir: p.dir === "asc" ? "desc" : "asc" } : { key: k, dir: "asc" });
+          const uarrow = (k: typeof usrSort.key) => usrSort.key === k ? (usrSort.dir === "asc" ? " ▲" : " ▼") : "";
+          const UH = ({ k, label, center }: { k: typeof usrSort.key; label: string; center?: boolean }) => (
+            <div onClick={() => toggleUsr(k)} style={{ cursor: "pointer", userSelect: "none", textAlign: center ? "center" : "left", color: usrSort.key === k ? C.navy : C.grayMute }}>{label}{uarrow(k)}</div>
+          );
+          const usrFiltersActive = !!uq || usrRole !== "all" || usrSchool !== "all" || usrStatus !== "all";
+          const usrSel: React.CSSProperties = { padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.gray, fontWeight: 600, textTransform: "capitalize" };
+          return (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>User Management</h1>
-                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{users.length} user{users.length !== 1 ? "s" : ""} · Role and school changes take effect immediately.</p>
+                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visibleUsers.length} of {users.length} user{users.length !== 1 ? "s" : ""} · Role and school changes take effect immediately.</p>
               </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={() => setBulkInviteOpen(true)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, padding: "10px 18px", borderRadius: 10, cursor: "pointer" }}>Bulk invite</button>
                 <button onClick={() => setInviteOpen(true)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, padding: "10px 18px", borderRadius: 10, cursor: "pointer" }}>+ Invite User</button>
               </div>
             </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px" }}>
+              <input value={usrSearch} onChange={(e) => setUsrSearch(e.target.value)} placeholder="Search name or email…" style={{ flex: "1 1 200px", minWidth: 160, padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5 }} />
+              <select value={usrRole} onChange={(e) => setUsrRole(e.target.value)} style={usrSel}>
+                <option value="all">All roles</option>
+                {ALL_ROLES.map((r) => <option key={r} value={r}>{r.replace("_", " ")}</option>)}
+              </select>
+              <SchoolFilter schools={schools} value={usrSchool} onChange={setUsrSchool} />
+              <select value={usrStatus} onChange={(e) => setUsrStatus(e.target.value as "all" | "active" | "inactive")} style={usrSel}>
+                <option value="all">All statuses</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+              {usrFiltersActive && <button onClick={() => { setUsrSearch(""); setUsrRole("all"); setUsrSchool("all"); setUsrStatus("all"); }} style={{ border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>}
+            </div>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
-                <div>Name</div><div>Email</div><div>Role</div><div>School</div><div style={{ textAlign: "center" }}>Last sign-in</div><div></div><div></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", background: "#FAFBFE" }}>
+                <UH k="name" label="Name" /><UH k="email" label="Email" /><UH k="role" label="Role" /><UH k="school" label="School" /><UH k="signin" label="Last sign-in" center /><div></div><div></div>
               </div>
-              {users.map((u) => (
+              {visibleUsers.map((u) => (
                 <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <input defaultValue={u.full_name}
@@ -879,10 +931,11 @@ export default function ConsoleClient({
                   </button>
                 </div>
               ))}
-              {users.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No users found.</div>}
+              {visibleUsers.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{usrFiltersActive ? "No users match these filters." : "No users found."}</div>}
             </div>
           </>
-        )}
+          );
+        })()}
 
         {/* ---- SYNC ---- */}
         {tab === "sync" && superUser && (
