@@ -208,20 +208,45 @@ export async function bulkImportCandidates(
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may import
+  if (rows.length === 0) return { ok: true, count: 0 };
   const db = createServiceClient();
-  const prepared = await Promise.all(
-    rows.map(async (r) => ({
-      ...r,
-      // No school chosen for this row? Route off a recognized school email.
-      school_id: await routeSchoolIdByEmail(db, r.school_id, r.email),
-      stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id,
-    }))
-  );
-  const { error } = await db.from("candidates").insert(prepared);
-  if (error) return { error: error.message };
+
+  // Build a name→id map ONCE so email-based routing needs no per-row query. The
+  // previous version issued one DB lookup per emailed row, which made big imports
+  // crawl (and could time out) — the real cap on import size.
+  const { data: schoolRows } = await db.from("schools").select("id, name");
+  const idByName = new Map<string, string>((schoolRows ?? []).map((s: any) => [s.name, s.id]));
+  const routeByEmail = (email: string | null) => {
+    const name = routeToSchoolNameByEmail(email);
+    return name ? idByName.get(name) ?? null : null;
+  };
+
+  const prepared = rows.map((r) => ({
+    ...r,
+    // No school chosen for this row? Route off a recognized school email.
+    school_id: r.school_id || routeByEmail(r.email),
+    stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id,
+  }));
+
+  // Insert in chunks so there's no practical cap on import size — a single giant
+  // insert can blow past request/statement limits. If a chunk fails, stop and
+  // report how many rows already landed rather than silently losing the rest.
+  const CHUNK = 500;
+  let inserted = 0;
+  for (let i = 0; i < prepared.length; i += CHUNK) {
+    const { error } = await db.from("candidates").insert(prepared.slice(i, i + CHUNK));
+    if (error) {
+      revalidatePath("/console");
+      revalidatePath("/workspace");
+      return inserted > 0
+        ? { error: `Imported ${inserted} of ${prepared.length} before an error: ${error.message}` }
+        : { error: error.message };
+    }
+    inserted += Math.min(CHUNK, prepared.length - i);
+  }
   revalidatePath("/console");
   revalidatePath("/workspace");
-  return { ok: true, count: rows.length };
+  return { ok: true, count: inserted };
 }
 
 export async function upsertGoal(school_id: string, goal_sourced: number, goal_contacted: number, goal_applied: number) {

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { resolveViewer, getSchoolById } from "@/lib/auth";
+import { resolveViewer, getSchoolById, displaySchool } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus } from "@/lib/types";
 import { accentFor, type Role } from "@/lib/nav/config";
@@ -28,7 +28,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const db = createServiceClient();
   const canViewAs = !!real && isAdminPlus(real.role);
 
-  const school = await getSchoolById(profile.school_id);
+  // Satellite/bonus fellows are shown under their tier group with Orr branding,
+  // not the arbitrary representative school their school_id points at.
+  const school = displaySchool(await getSchoolById(profile.school_id));
 
   const accent = isAdminPlus(role)
     ? accentFor(role)

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { resolveViewer, getSchoolById } from "@/lib/auth";
+import { resolveViewer, getSchoolById, displaySchool } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus } from "@/lib/types";
 import { canAccessWorkspaceSection } from "@/lib/nav/config";
@@ -42,7 +42,8 @@ export default async function WorkspaceSection({ params }: { params: { section: 
 
   const serviceDb = createServiceClient();
   const schoolId = profile.school_id ?? "";
-  const school = await getSchoolById(schoolId);
+  // Collapse satellite/bonus to their tier group with Orr branding (see displaySchool).
+  const school = displaySchool(await getSchoolById(schoolId));
 
   // Resolve the tier's schools (satellite/bonus share one team + playbook).
   // Shared, request-deduped loader — the layout's nav card resolves the same set.

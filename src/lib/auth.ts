@@ -2,6 +2,7 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus, type Profile } from "@/lib/types";
+import { ORR_ORANGE } from "@/lib/nav/config";
 
 // Cookie holding the user id an admin is previewing ("view as").
 export const VIEW_AS_COOKIE = "orr_view_as";
@@ -70,3 +71,18 @@ export const getSchoolById = cache(async (schoolId: string | null): Promise<Scho
     .maybeSingle();
   return (data as SchoolRow) ?? null;
 });
+
+// Satellite & bonus schools intentionally share one team, playbook and identity,
+// so a fellow's profile.school_id points at an arbitrary "representative" school
+// in that tier. Presenting that school's real name/color makes it look like they
+// were dropped into a random school — instead we show the tier group ("Satellite
+// School" / "Bonus School") with Orr branding. Core schools are returned as-is.
+export function tierGroupLabel(tier: string | null): string | null {
+  return tier === "satellite" ? "Satellite School" : tier === "bonus" ? "Bonus School" : null;
+}
+export function displaySchool(school: SchoolRow | null): SchoolRow | null {
+  if (!school) return school;
+  const group = tierGroupLabel(school.tier);
+  if (!group) return school;
+  return { ...school, name: group, color_primary: ORR_ORANGE, logo_url: "/orr-emblem.png" };
+}
