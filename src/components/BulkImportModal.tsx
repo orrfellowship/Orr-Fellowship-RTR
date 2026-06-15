@@ -8,8 +8,9 @@ import ImportTable from "./ImportTable";
 const C = { navy: "#11123E", grayMute: "#6E7385" };
 const HEAD = "'Cabin', sans-serif";
 
-export default function BulkImportModal({ schools, existingEmails, existingNames, onClose }: {
+export default function BulkImportModal({ schools, team = [], existingEmails, existingNames, onClose }: {
   schools: { id: string; name: string; tier?: string | null }[];
+  team?: { id: string; full_name: string }[];
   existingEmails: Set<string>;
   existingNames?: Set<string>;
   onClose: () => void;
@@ -29,7 +30,7 @@ export default function BulkImportModal({ schools, existingEmails, existingNames
           <button onClick={onClose} style={{ border: "none", background: "none", fontSize: 22, color: C.grayMute, cursor: "pointer", padding: "0 4px", lineHeight: 1, flexShrink: 0 }}>×</button>
         </div>
 
-        <ImportTable schools={schools} existingEmails={existingEmails} existingNames={existingNames} onClose={onClose} />
+        <ImportTable schools={schools} team={team} existingEmails={existingEmails} existingNames={existingNames} onClose={onClose} />
       </div>
     </div>
   );

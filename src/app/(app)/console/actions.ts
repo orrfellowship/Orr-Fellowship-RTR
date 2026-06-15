@@ -16,7 +16,7 @@ import { createServerSupabase, createServiceClient } from "@/lib/supabase/server
 import { getCurrentProfile, isPreviewing, VIEW_AS_COOKIE } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
-import { routeToSchoolName } from "@/lib/stages";
+import { routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
 import { sendEmail, emailLayout } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
@@ -120,18 +120,70 @@ export async function deleteTask(taskId: string) {
   return { ok: true };
 }
 
+// Resolve a school NAME (from one of the routing tables) to its school_id.
+async function schoolIdByName(db: ReturnType<typeof createServiceClient>, name: string | null) {
+  if (!name) return null;
+  const { data } = await db.from("schools").select("id").eq("name", name).maybeSingle();
+  return data?.id ?? null;
+}
+
+// Fallback routing for manually-entered candidates: if no school was chosen but
+// the candidate has a recognizable school email (e.g. @purdue.edu), send them to
+// that school. Returns the school_id to use (possibly the original, possibly null).
+async function routeSchoolIdByEmail(
+  db: ReturnType<typeof createServiceClient>, school_id: string | null, email: string | null,
+) {
+  if (school_id) return school_id; // only fill in when the person didn't pick a school
+  return schoolIdByName(db, routeToSchoolNameByEmail(email));
+}
+
 export async function addCandidate(data: {
   name: string; email: string | null; school_id: string | null;
   stage: string | null; gpa: string | null; area_of_study: string | null;
-  university_raw?: string | null;
+  university_raw?: string | null; point_person_id?: string | null;
 }) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may add
   const db = createServiceClient();
+  // No school selected? Route off a school email address if we recognize it.
+  const school_id = await routeSchoolIdByEmail(db, data.school_id, data.email);
   // Manually-entered candidates start in the "sourced" phase (stage key "new");
   // JazzHR advances them from there. Respect an explicit stage if one is given.
-  const { error } = await db.from("candidates").insert({ ...data, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
+  const { error } = await db.from("candidates").insert({ ...data, school_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function updateCandidate(id: string, fields: {
+  name?: string; email?: string | null; school_id?: string | null;
+  university_raw?: string | null; gpa?: string | null; area_of_study?: string | null;
+  linkedin?: string | null; grad_date?: string | null;
+}) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated" }; // any signed-in user may edit
+  if (fields.name !== undefined && !fields.name.trim()) return { error: "Name can't be empty." };
+
+  // Only persist keys that were actually provided, so a partial edit never wipes
+  // an untouched column. Trim text; empty strings become null for nullable fields.
+  const clean = (v: string | null | undefined) => {
+    if (v === undefined) return undefined;
+    const t = (v ?? "").trim();
+    return t === "" ? null : t;
+  };
+  const updates: Record<string, any> = {};
+  if (fields.name !== undefined) updates.name = fields.name.trim();
+  for (const k of ["email", "university_raw", "gpa", "area_of_study", "linkedin", "grad_date"] as const) {
+    if (fields[k] !== undefined) updates[k] = clean(fields[k]);
+  }
+  if (fields.school_id !== undefined) updates.school_id = fields.school_id || null;
+  if (Object.keys(updates).length === 0) return { ok: true };
+
+  const db = createServiceClient();
+  const { error } = await db.from("candidates").update(updates).eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/console");
   revalidatePath("/workspace");
@@ -151,15 +203,21 @@ export async function deleteCandidate(id: string) {
 }
 
 export async function bulkImportCandidates(
-  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null }[]
+  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null }[]
 ) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may import
   const db = createServiceClient();
-  const { error } = await db.from("candidates").insert(
-    rows.map((r) => ({ ...r, stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id }))
+  const prepared = await Promise.all(
+    rows.map(async (r) => ({
+      ...r,
+      // No school chosen for this row? Route off a recognized school email.
+      school_id: await routeSchoolIdByEmail(db, r.school_id, r.email),
+      stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id,
+    }))
   );
+  const { error } = await db.from("candidates").insert(prepared);
   if (error) return { error: error.message };
   revalidatePath("/console");
   revalidatePath("/workspace");
@@ -457,10 +515,7 @@ function factualFromSnapshot(m: any, school_id: string | null) {
 }
 
 async function routeSchoolId(db: ReturnType<typeof createServiceClient>, universityRaw: string | null) {
-  const name = routeToSchoolName(universityRaw);
-  if (!name) return null;
-  const { data } = await db.from("schools").select("id").eq("name", name).maybeSingle();
-  return data?.id ?? null;
+  return schoolIdByName(db, routeToSchoolName(universityRaw));
 }
 
 // Approve a name-only match: link the JazzHR applicant to the suspected candidate.

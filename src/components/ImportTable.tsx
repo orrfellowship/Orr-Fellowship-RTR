@@ -17,11 +17,14 @@ const C = {
 const HEAD = "'Cabin', sans-serif";
 
 // Stage, GPA and major are intentionally NOT imported here — those flow in from
-// JazzHR. We only seed the candidate's name, email, and school.
-type Row = { name: string; email: string; school: string };
-const emptyRow = (): Row => ({ name: "", email: "", school: "" });
+// JazzHR. We only seed the candidate's name, email, school, and point person.
+// `point_person` holds a team-member id (or "" for unassigned).
+type Row = { name: string; email: string; school: string; point_person: string };
+const emptyRow = (): Row => ({ name: "", email: "", school: "", point_person: "" });
 
-function parseRows(text: string): Row[] {
+// resolvePerson maps a free-text name from a pasted/uploaded "Point Person" column
+// to a team-member id (exact name match first, then a contains match), or "".
+function parseRows(text: string, resolvePerson: (text: string) => string): Row[] {
   const lines = text.trim().split(/\r?\n/).filter((l) => l.trim());
   if (!lines.length) return [];
   const delim = lines[0].includes("\t") ? "\t" : ",";
@@ -36,24 +39,36 @@ function parseRows(text: string): Row[] {
   const iName = idx(["name"], 0);
   const iEmail = idx(["email"], 1);
   const iSchool = idx(["school"], 2);
+  // Point person only auto-maps when there's a header naming it — never from a
+  // positional fallback, so a stray 4th column isn't misread as an owner.
+  const iPerson = hasHeader ? Math.max(...["point person", "point_person", "owner", "assignee"].map((k) => header.indexOf(k))) : -1;
   return data
     .filter((r) => (r[iName] ?? "").trim())
     .map((r) => ({
       name: r[iName] ?? "",
       email: r[iEmail] ?? "",
       school: r[iSchool] ?? "",
+      point_person: iPerson >= 0 ? resolvePerson(r[iPerson] ?? "") : "",
     }));
 }
 
 // onClose: when provided (modal usage), a Cancel/Done button is shown alongside
 // Import. The page usage omits it and simply shows the result inline.
-export default function ImportTable({ schools, existingEmails, existingNames, onClose }: {
+export default function ImportTable({ schools, team = [], existingEmails, existingNames, onClose }: {
   schools: { id: string; name: string; tier?: string | null }[];
+  team?: { id: string; full_name: string }[];
   existingEmails: Set<string>;
   existingNames?: Set<string>;
   onClose?: () => void;
 }) {
   const names = existingNames ?? new Set<string>();
+  const resolvePerson = (txt: string) => {
+    const t = txt.trim().toLowerCase();
+    if (!t) return "";
+    return team.find((m) => m.full_name.toLowerCase() === t)?.id
+      ?? team.find((m) => m.full_name.toLowerCase().includes(t))?.id
+      ?? "";
+  };
   const isDupeRow = (r: { name: string; email: string }) =>
     (!!r.email && existingEmails.has(r.email.toLowerCase())) || (!!r.name && names.has(r.name.trim().toLowerCase()));
   const router = useRouter();
@@ -74,7 +89,7 @@ export default function ImportTable({ schools, existingEmails, existingNames, on
     const txt = e.clipboardData.getData("text");
     const isMultiCell = txt.includes("\t") || txt.includes("\n") || txt.includes(",");
     if (!isMultiCell) return;
-    const parsed = parseRows(txt);
+    const parsed = parseRows(txt, resolvePerson);
     if (parsed.length === 0) return;
     e.preventDefault();
     setRows(parsed.length < 3 ? [...parsed, ...Array(3 - parsed.length).fill(null).map(emptyRow)] : parsed);
@@ -96,7 +111,7 @@ export default function ImportTable({ schools, existingEmails, existingNames, on
       } else {
         csv = await file.text();
       }
-      const parsed = parseRows(csv);
+      const parsed = parseRows(csv, resolvePerson);
       if (parsed.length === 0) { setError("No rows found in that file."); return; }
       setRows(parsed.length < 3 ? [...parsed, ...Array(3 - parsed.length).fill(null).map(emptyRow)] : parsed);
     } catch {
@@ -116,6 +131,7 @@ export default function ImportTable({ schools, existingEmails, existingNames, on
       stage: null,
       gpa: null,
       area_of_study: null,
+      point_person_id: r.point_person || null,
     };
   });
 
@@ -147,6 +163,17 @@ export default function ImportTable({ schools, existingEmails, existingNames, on
           ⬆ Upload CSV / Excel
           <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} style={{ display: "none" }} />
         </label>
+        {team.length > 0 && (
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: C.grayMute }}>
+            Assign all to
+            <select value="" onChange={(e) => { const v = e.target.value === "__none__" ? "" : e.target.value; if (!e.target.value) return; setRows((prev) => prev.map((r) => ({ ...r, point_person: v }))); }}
+              style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 12.5, padding: "7px 10px", borderRadius: 8, cursor: "pointer" }}>
+              <option value="">Choose…</option>
+              {team.map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+              <option value="__none__">Unassigned</option>
+            </select>
+          </label>
+        )}
         <span style={{ fontSize: 12.5, color: C.grayMute }}>or type / paste rows below. Stage, GPA and major sync from JazzHR.</span>
       </div>
 
@@ -154,14 +181,15 @@ export default function ImportTable({ schools, existingEmails, existingNames, on
       <div ref={containerRef} onPaste={onPaste} style={{ overflowY: "auto", border: `1px solid ${C.line}`, borderRadius: 10, flex: 1 }}>
         <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
           <colgroup>
-            <col style={{ width: "34%" }} />
-            <col style={{ width: "34%" }} />
             <col style={{ width: "27%" }} />
+            <col style={{ width: "27%" }} />
+            <col style={{ width: "22%" }} />
+            <col style={{ width: "19%" }} />
             <col style={{ width: "5%" }} />
           </colgroup>
           <thead>
             <tr style={{ background: C.canvas, borderBottom: `2px solid ${C.line}` }}>
-              {(["Name *", "Email", "School"] as const).map((h) => (
+              {(["Name *", "Email", "School", "Point Person"] as const).map((h) => (
                 <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.6, borderRight: `1px solid ${C.line}` }}>{h}</th>
               ))}
               <th />
@@ -185,6 +213,14 @@ export default function ImportTable({ schools, existingEmails, existingNames, on
                     <input list="import-schools" value={row.school} onChange={(e) => update(i, { school: e.target.value })}
                       placeholder="School (or type any)"
                       style={{ ...inp, color: row.school ? C.gray : C.grayMute }} />
+                  </td>
+                  <td style={cell}>
+                    <select value={row.point_person} onChange={(e) => update(i, { point_person: e.target.value })}
+                      disabled={team.length === 0}
+                      style={{ ...inp, cursor: team.length ? "pointer" : "default", color: row.point_person ? C.gray : C.grayMute, appearance: "auto" }}>
+                      <option value="">Unassigned</option>
+                      {team.map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+                    </select>
                   </td>
                   <td style={{ padding: "0 6px", textAlign: "center" }}>
                     <button onClick={() => delRow(i)} title="Remove row"

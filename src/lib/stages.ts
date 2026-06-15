@@ -141,6 +141,56 @@ export function routeToSchoolName(university: string | null): string | null {
   return null;
 }
 
+// ----------------------------------------------------------------------------
+// EMAIL → SCHOOL ROUTING — used as a fallback when a candidate is entered with
+// a `.edu` address but no school selected. domains[] are the school's email
+// domains (lowercase); a candidate matches if their address's domain equals one
+// of them or is a subdomain of it (e.g. "umail.iu.edu" → "iu.edu"). school_name
+// values map to the same seeded `schools.name` rows as SCHOOL_MATCH above.
+// ----------------------------------------------------------------------------
+interface SchoolEmailMatch { school_name: string; domains: string[]; }
+
+export const SCHOOL_EMAIL_DOMAINS: SchoolEmailMatch[] = [
+  { school_name: "Purdue", domains: ["purdue.edu", "pfw.edu"] },
+  { school_name: "IU", domains: ["iu.edu", "indiana.edu", "iupui.edu"] },
+  { school_name: "Ball State", domains: ["bsu.edu"] },
+  { school_name: "Indiana State", domains: ["indstate.edu", "sycamores.indstate.edu"] },
+  { school_name: "USI", domains: ["usi.edu", "eagles.usi.edu"] },
+  { school_name: "UIndy", domains: ["uindy.edu"] },
+  { school_name: "Ivy Tech", domains: ["ivytech.edu"] },
+  { school_name: "Butler", domains: ["butler.edu"] },
+  { school_name: "Marian", domains: ["marian.edu"] },
+  { school_name: "Wabash", domains: ["wabash.edu"] },
+  { school_name: "DePauw", domains: ["depauw.edu"] },
+  { school_name: "Hanover", domains: ["hanover.edu"] },
+  { school_name: "Franklin", domains: ["franklincollege.edu"] },
+  { school_name: "Earlham", domains: ["earlham.edu"] },
+  { school_name: "Manchester U", domains: ["manchester.edu"] },
+  { school_name: "Anderson", domains: ["anderson.edu"] },
+  { school_name: "Taylor", domains: ["taylor.edu"] },
+  { school_name: "Rose-Hulman", domains: ["rose-hulman.edu"] },
+  { school_name: "Valparaiso", domains: ["valpo.edu"] },
+  { school_name: "Notre Dame & Saint Marys", domains: ["nd.edu", "saintmarys.edu"] },
+  { school_name: "Miami of Ohio", domains: ["miamioh.edu"] },
+  { school_name: "Trine", domains: ["trine.edu"] },
+  { school_name: "Denison", domains: ["denison.edu"] },
+  { school_name: "IWU", domains: ["indwes.edu"] },
+];
+
+// Returns the seeded school NAME an email's domain routes to, or null. Personal
+// addresses (gmail/outlook/etc.) and any unrecognized domain return null.
+export function routeToSchoolNameByEmail(email: string | null): string | null {
+  if (!email) return null;
+  const at = email.lastIndexOf("@");
+  if (at < 0) return null;
+  const domain = email.slice(at + 1).toLowerCase().trim();
+  if (!domain) return null;
+  for (const entry of SCHOOL_EMAIL_DOMAINS) {
+    if (entry.domains.some((d) => domain === d || domain.endsWith("." + d))) return entry.school_name;
+  }
+  return null;
+}
+
 export type SchoolLite = { id: string; name: string; tier?: string | null };
 
 // Resolve a typed/selected school name to a school_id for candidate entry.

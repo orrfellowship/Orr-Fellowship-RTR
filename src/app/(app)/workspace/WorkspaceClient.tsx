@@ -115,6 +115,7 @@ export default function WorkspaceClient({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const canEdit = canEditPlaybook(profile.role);
   const canAssign = canReassign(profile.role);
@@ -385,6 +386,12 @@ export default function WorkspaceClient({
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>My School Board</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardVisible.length}{boardFiltersActive ? ` of ${candidates.length}` : ""} candidate{candidates.length !== 1 ? "s" : ""}.</p>
               </div>
+              {canAssign && team.length > 0 && (
+                <button onClick={() => setAssignOpen(true)}
+                  style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  ⚡ Assign Point People
+                </button>
+              )}
             </div>
 
             {/* Search bar */}
@@ -633,12 +640,167 @@ export default function WorkspaceClient({
       {bulkOpen && (
         <BulkImportModal
           schools={allSchools}
+          team={team}
           existingEmails={new Set(allCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
           existingNames={new Set(allCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
           onClose={() => setBulkOpen(false)}
         />
       )}
+      {assignOpen && (
+        <AssignPointPeopleModal
+          candidates={candidates}
+          team={team}
+          meId={profile.id}
+          accent={accent}
+          onClose={() => setAssignOpen(false)}
+          startTransition={startTransition}
+        />
+      )}
     </>
+  );
+}
+
+// ---- Assign Point People — a flashcard deck for quickly distributing candidates ----
+// Pick one team member, then go card-by-card: "Skip" or "Assign to <person>".
+// The deck is snapshotted when you start so it doesn't shift as you assign.
+function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, startTransition }: {
+  candidates: Cand[]; team: TeamMember[]; meId: string; accent: string;
+  onClose: () => void; startTransition: (cb: () => void) => void;
+}) {
+  const [phase, setPhase] = useState<"pick" | "deck" | "done">("pick");
+  const [personId, setPersonId] = useState<string | null>(null);
+  const [unassignedOnly, setUnassignedOnly] = useState(true);
+  const [deck, setDeck] = useState<Cand[]>([]);
+  const [idx, setIdx] = useState(0);
+  const [assigned, setAssigned] = useState(0);
+
+  const personName = team.find((t) => t.id === personId)?.full_name ?? "this person";
+  const nameOf = (id: string | null) => (id === meId ? "You" : team.find((t) => t.id === id)?.full_name ?? "Unassigned");
+  const poolFor = (pid: string) =>
+    candidates.filter((c) => !c.not_interested && (unassignedOnly ? !c.point_person_id : c.point_person_id !== pid));
+
+  const start = () => {
+    if (!personId) return;
+    const pool = poolFor(personId);
+    setDeck(pool); setIdx(0); setAssigned(0);
+    setPhase(pool.length ? "deck" : "done");
+  };
+
+  const current = deck[idx] ?? null;
+  const advance = () => { if (idx + 1 >= deck.length) setPhase("done"); else setIdx((i) => i + 1); };
+  const assign = () => {
+    if (!current || !personId) return;
+    const id = current.id, pid = personId;
+    startTransition(() => { reassignPointPerson(id, pid); });
+    setAssigned((n) => n + 1);
+    advance();
+  };
+
+  // Keyboard: ← skip, → assign, Esc close.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return onClose();
+      if (phase !== "deck") return;
+      if (e.key === "ArrowRight") { e.preventDefault(); assign(); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); advance(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [phase, idx, deck, personId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const card: React.CSSProperties = { position: "relative", background: "#fff", borderRadius: 18, padding: 28, width: 480, maxWidth: "95vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(11,12,42,.28)" };
+  const btn = (bg: string, color = "#fff"): React.CSSProperties => ({ border: "none", background: bg, color, fontWeight: 700, padding: "12px 18px", borderRadius: 11, cursor: "pointer", fontSize: 14 });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.5)" }} />
+
+      {phase === "pick" && (
+        <div style={card}>
+          <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, border: "none", background: "none", fontSize: 22, color: C.grayMute, cursor: "pointer", lineHeight: 1 }}>×</button>
+          <h2 style={{ fontFamily: HEAD, fontSize: 24, color: C.navy, margin: "0 0 4px" }}>Assign Point People</h2>
+          <p style={{ fontSize: 13.5, color: C.grayMute, margin: "0 0 18px" }}>Pick a team member, then go through candidates one at a time.</p>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 16, cursor: "pointer", fontSize: 13.5, color: C.gray, fontWeight: 600 }}>
+            <input type="checkbox" checked={unassignedOnly} onChange={(e) => setUnassignedOnly(e.target.checked)} style={{ width: 16, height: 16, accentColor: accent }} />
+            Only show unassigned candidates
+          </label>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+            {team.map((t) => {
+              const count = poolFor(t.id).length;
+              const sel = personId === t.id;
+              return (
+                <button key={t.id} onClick={() => setPersonId(t.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, textAlign: "left", padding: "12px 14px", borderRadius: 12, cursor: "pointer",
+                    border: `1.5px solid ${sel ? accent : C.line}`, background: sel ? `${accent}12` : "#fff" }}>
+                  <div style={{ width: 34, height: 34, borderRadius: "50%", background: sel ? accent : C.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: HEAD, fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
+                    {t.full_name.charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13.5, color: sel ? accent : C.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.id === meId ? `${t.full_name} (you)` : t.full_name}</div>
+                    <div style={{ fontSize: 11.5, color: C.grayMute }}>{count} to review</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <button onClick={onClose} style={{ ...btn(C.line, C.gray), background: "#fff", border: `1px solid ${C.line}` }}>Cancel</button>
+            <button onClick={start} disabled={!personId} style={{ ...btn(personId ? C.navy : C.navy3), cursor: personId ? "pointer" : "not-allowed" }}>Start →</button>
+          </div>
+        </div>
+      )}
+
+      {phase === "deck" && current && (
+        <div style={card}>
+          <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, border: "none", background: "none", fontSize: 22, color: C.grayMute, cursor: "pointer", lineHeight: 1 }}>×</button>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>Assigning to <b style={{ color: accent }}>{personName}</b></div>
+            <div style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 700 }}>{idx + 1} / {deck.length}</div>
+          </div>
+          {/* Progress bar */}
+          <div style={{ height: 6, borderRadius: 99, background: C.line, overflow: "hidden", marginBottom: 22 }}>
+            <div style={{ height: "100%", width: `${(idx / deck.length) * 100}%`, background: accent, transition: "width .2s" }} />
+          </div>
+
+          {/* The card */}
+          <div style={{ border: `1px solid ${C.line}`, borderRadius: 14, padding: "26px 22px", textAlign: "center", marginBottom: 22, background: C.canvas }}>
+            <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 26, color: C.navy, marginBottom: 8 }}>{current.name}</div>
+            <div style={{ marginBottom: 12 }}><StagePill stage={current.stage} /></div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13.5, color: C.gray }}>
+              {current.email && <div>{current.email}</div>}
+              {(current.area_of_study || current.gpa) && <div style={{ color: C.grayMute }}>{[current.area_of_study, current.gpa ? `GPA ${current.gpa}` : null].filter(Boolean).join(" · ")}</div>}
+              <div style={{ marginTop: 6, fontSize: 12.5, color: current.point_person_id ? C.grayMute : C.orange, fontWeight: 600 }}>
+                {current.point_person_id ? `Currently: ${nameOf(current.point_person_id)}` : "Currently unassigned"}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 12 }}>
+            <button onClick={advance} style={{ ...btn("#fff", C.gray), flex: 1, border: `1.5px solid ${C.line}` }}>Skip →</button>
+            <button onClick={assign} style={{ ...btn(accent), flex: 2 }}>Assign to {personName}</button>
+          </div>
+          <div style={{ textAlign: "center", marginTop: 12, fontSize: 11.5, color: C.grayMute }}>← skip · → assign · {assigned} assigned so far</div>
+        </div>
+      )}
+
+      {phase === "done" && (
+        <div style={card}>
+          <h2 style={{ fontFamily: HEAD, fontSize: 24, color: C.navy, margin: "0 0 6px" }}>All done</h2>
+          <p style={{ fontSize: 14, color: C.gray, margin: "0 0 22px" }}>
+            {deck.length === 0
+              ? `No candidates to review for ${personName}.`
+              : <>Assigned <b style={{ color: C.good }}>{assigned}</b> candidate{assigned !== 1 ? "s" : ""} to <b>{personName}</b>.</>}
+          </p>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <button onClick={() => { setPersonId(null); setPhase("pick"); }} style={{ ...btn("#fff", C.navy), border: `1px solid ${C.line}` }}>Assign someone else</button>
+            <button onClick={onClose} style={btn(C.navy)}>Done</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -7,7 +7,7 @@ import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
-  upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, deleteCandidate, deleteOutreach, deleteConnection,
+  upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
   unlinkJazzCandidate, getUserSnapshot,
 } from "./actions";
@@ -21,7 +21,7 @@ import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
 import DuplicateReview, { findDuplicateGroups } from "@/components/DuplicateReview";
-import { phaseOf } from "@/lib/stages";
+import { phaseOf, routeToSchoolNameByEmail } from "@/lib/stages";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -1059,13 +1059,13 @@ export default function ConsoleClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} profile={profile} team={team} onClose={() => setOpenId(null)} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
+        <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => setOpenId(null)} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
       )}
       {addOpen && (
-        <AddCandidateModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setAddOpen(false)} startTransition={startTransition} />
+        <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setAddOpen(false)} startTransition={startTransition} />
       )}
       {bulkOpen && (
-        <BulkImportModal schools={schools} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} />
+        <BulkImportModal schools={schools} team={team} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} />
       )}
       {inviteOpen && (
         <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />
@@ -1135,8 +1135,8 @@ type Connection = { id: string; fellow_id: string; name: string; relationship: s
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
 // ---- Candidate Drawer ----
-function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, superUser }: {
-  c: Cand; profile: Profile; team: TeamMember[];
+function CandidateDrawer({ c, profile, team, schools, onClose, startTransition, aiData, superUser }: {
+  c: Cand; profile: Profile; team: TeamMember[]; schools: School[];
   onClose: () => void; startTransition: (cb: () => void) => void;
   aiData: AI | null; superUser: boolean;
 }) {
@@ -1149,6 +1149,33 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
   const [delOpen, setDelOpen] = useState(false);
   const [delText, setDelText] = useState("");
   const QUICK = ["Called — left voicemail", "Emailed", "Met in person", "Scheduled follow-up"];
+
+  // ---- Edit details ----
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const blankEdit = {
+    name: c.name, email: c.email ?? "", school_id: schoolOptionValue(schools, c.school_id),
+    university_raw: c.university_raw ?? "", gpa: c.gpa ?? "", grad_date: c.grad_date ?? "",
+    area_of_study: c.area_of_study ?? "", linkedin: c.linkedin ?? "",
+  };
+  const [edit, setEdit] = useState(blankEdit);
+  const startEdit = () => { setEdit(blankEdit); setEditing(true); };
+  const setEf = (k: keyof typeof blankEdit, v: string) => setEdit((p) => ({ ...p, [k]: v }));
+  const saveEdit = () => {
+    if (!edit.name.trim()) return;
+    setSaving(true);
+    startTransition(() => {
+      updateCandidate(c.id, {
+        name: edit.name, email: edit.email, school_id: edit.school_id || null,
+        university_raw: edit.university_raw, gpa: edit.gpa, grad_date: edit.grad_date,
+        area_of_study: edit.area_of_study, linkedin: edit.linkedin,
+      }).then((r: any) => {
+        setSaving(false);
+        if (r?.error) alert(r.error);
+        else { setEditing(false); router.refresh(); }
+      });
+    });
+  };
 
   useEffect(() => {
     let active = true;
@@ -1197,6 +1224,9 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
       <div style={{ position: "relative", width: 440, maxWidth: "93vw", background: C.canvas, height: "100%", overflowY: "auto" }}>
         <div style={{ background: C.navy, color: "#fff", padding: "24px 24px 20px", position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
+          {!editing && (
+            <button onClick={startEdit} title="Edit details" style={{ position: "absolute", top: 16, right: 54, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", height: 30, padding: "0 12px", borderRadius: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>✎ Edit</button>
+          )}
           <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px" }}>{c.name}</h2>
           <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.72)" }}>{c.area_of_study}</div>
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>
@@ -1213,12 +1243,16 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
             </button>
           </div>
 
-          {([["Email", c.email], ["GPA", c.gpa], ["Grad Date", c.grad_date], ["University", c.university_raw], ["Added by", c.created_by ? (team.find((t) => t.id === c.created_by)?.full_name ?? "Team member") : (c.source === "jazzhr" ? "JazzHR sync" : "—")]] as [string, string | null][]).map(([k, v]) => (
-            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span>
-              <span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>
-            </div>
-          ))}
+          {editing ? (
+            <EditCandidateForm edit={edit} setEf={setEf} schools={schools} saving={saving} onSave={saveEdit} onCancel={() => setEditing(false)} />
+          ) : (
+            ([["Email", c.email], ["GPA", c.gpa], ["Grad Date", c.grad_date], ["University", c.university_raw], ["Added by", c.created_by ? (team.find((t) => t.id === c.created_by)?.full_name ?? "Team member") : (c.source === "jazzhr" ? "JazzHR sync" : "—")]] as [string, string | null][]).map(([k, v]) => (
+              <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
+                <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span>
+                <span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>
+              </div>
+            ))
+          )}
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
             <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>Point person</span>
@@ -1379,6 +1413,46 @@ function CandidateDrawer({ c, profile, team, onClose, startTransition, aiData, s
   );
 }
 
+// ---- Edit Candidate form (inline in the drawer) ----
+type EditFields = { name: string; email: string; school_id: string; university_raw: string; gpa: string; grad_date: string; area_of_study: string; linkedin: string };
+function EditCandidateForm({ edit, setEf, schools, saving, onSave, onCancel }: {
+  edit: EditFields;
+  setEf: (k: keyof EditFields, v: string) => void;
+  schools: School[]; saving: boolean; onSave: () => void; onCancel: () => void;
+}) {
+  const labelStyle: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 };
+  const inputStyle: React.CSSProperties = { width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, boxSizing: "border-box" };
+  const field = (label: string, k: keyof EditFields, placeholder?: string) => (
+    <div style={{ marginBottom: 12 }}>
+      <label style={labelStyle}>{label}</label>
+      <input value={edit[k]} onChange={(e) => setEf(k, e.target.value)} placeholder={placeholder} style={inputStyle} />
+    </div>
+  );
+  return (
+    <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 16, margin: "4px 0 20px" }}>
+      <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 12, letterSpacing: 0.8 }}>Edit details</div>
+      <div style={{ marginBottom: 12 }}>
+        <label style={labelStyle}>Name *</label>
+        <input value={edit.name} onChange={(e) => setEf("name", e.target.value)} style={{ ...inputStyle, borderColor: edit.name.trim() ? C.line : C.orange }} />
+      </div>
+      {field("Email", "email", "email@example.com")}
+      <div style={{ marginBottom: 12 }}>
+        <label style={labelStyle}>School</label>
+        <SearchableSelect options={schoolSelectOptions(schools)} value={edit.school_id} onChange={(v) => setEf("school_id", v)} placeholder="Search schools…" />
+      </div>
+      {field("University", "university_raw", "e.g. University of Kentucky")}
+      {field("GPA", "gpa")}
+      {field("Grad date", "grad_date")}
+      {field("Area of study", "area_of_study")}
+      {field("LinkedIn", "linkedin", "https://linkedin.com/in/…")}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+        <button onClick={onCancel} disabled={saving} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "9px 16px", borderRadius: 9, cursor: saving ? "default" : "pointer" }}>Cancel</button>
+        <button onClick={onSave} disabled={saving || !edit.name.trim()} style={{ border: "none", background: edit.name.trim() ? C.navy : "#9AA0B5", color: "#fff", fontWeight: 700, padding: "9px 18px", borderRadius: 9, cursor: saving || !edit.name.trim() ? "default" : "pointer" }}>{saving ? "Saving…" : "Save"}</button>
+      </div>
+    </div>
+  );
+}
+
 // ---- Searchable dropdown (single-select with a filter box) ----
 function SearchableSelect({ options, value, onChange, placeholder }: {
   options: { value: string; label: string }[];
@@ -1413,14 +1487,15 @@ function SearchableSelect({ options, value, onChange, placeholder }: {
 }
 
 // ---- Add Candidate Modal ----
-function AddCandidateModal({ schools, existingEmails, existingNames, onClose, startTransition }: {
-  schools: School[]; existingEmails: Set<string>; existingNames: Set<string>;
+function AddCandidateModal({ schools, team, meId, existingEmails, existingNames, onClose, startTransition }: {
+  schools: School[]; team: TeamMember[]; meId: string; existingEmails: Set<string>; existingNames: Set<string>;
   onClose: () => void; startTransition: (cb: () => void) => void;
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [schoolValue, setSchoolValue] = useState("");
   const [specificSchool, setSpecificSchool] = useState("");
+  const [pointPerson, setPointPerson] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -1430,6 +1505,8 @@ function AddCandidateModal({ schools, existingEmails, existingNames, onClose, st
 
   const dupeEmail = !!email.trim() && existingEmails.has(email.trim().toLowerCase());
   const dupeName = !!name.trim() && existingNames.has(name.trim().toLowerCase());
+  // Preview the email-domain auto-routing the server applies when no school is set.
+  const emailRoutedSchool = routeToSchoolNameByEmail(email.trim() || null);
 
   const submit = () => {
     if (!name.trim()) { setError("Name is required."); return; }
@@ -1444,6 +1521,7 @@ function AddCandidateModal({ schools, existingEmails, existingNames, onClose, st
         email: email.trim() || null,
         school_id: schoolValue || null,
         university_raw,
+        point_person_id: pointPerson,
         // Stage / GPA / major are filled in later from JazzHR — not part of sourcing.
         stage: null, gpa: null, area_of_study: null,
       }).then((r) => {
@@ -1480,7 +1558,16 @@ function AddCandidateModal({ schools, existingEmails, existingNames, onClose, st
             <input value={specificSchool} onChange={(e) => setSpecificSchool(e.target.value)} placeholder="Which school? (e.g. University of Kentucky)"
               style={{ ...inputStyle, marginTop: 8 }} />
           )}
+          {!schoolValue && emailRoutedSchool && (
+            <div style={{ fontSize: 12, color: C.navy2, marginTop: 6 }}>↪ No school picked — they&apos;ll be routed to <b>{emailRoutedSchool}</b> from their email.</div>
+          )}
         </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Point person</label>
+          <PersonPicker value={pointPerson} options={team} meId={meId} placeholder="Search team…" onChange={(v) => setPointPerson(v)} />
+        </div>
+
         <div style={{ background: "#EEF1F7", borderRadius: 9, padding: "9px 12px", marginBottom: 14, fontSize: 12, color: C.grayMute }}>
           Stage, GPA, and major are added automatically once the candidate applies through JazzHR.
         </div>
