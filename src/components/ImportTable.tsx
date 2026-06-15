@@ -18,13 +18,12 @@ const HEAD = "'Cabin', sans-serif";
 
 // Stage, GPA and major are intentionally NOT imported here — those flow in from
 // JazzHR. We only seed the candidate's name, email, school, and point person.
-// `point_person` holds a team-member id (or "" for unassigned).
+// `point_person` is free text (a typed name); it's resolved to a team-member id
+// at import time, so an unmatched name simply imports as unassigned.
 type Row = { name: string; email: string; school: string; point_person: string };
 const emptyRow = (): Row => ({ name: "", email: "", school: "", point_person: "" });
 
-// resolvePerson maps a free-text name from a pasted/uploaded "Point Person" column
-// to a team-member id (exact name match first, then a contains match), or "".
-function parseRows(text: string, resolvePerson: (text: string) => string): Row[] {
+function parseRows(text: string): Row[] {
   const lines = text.trim().split(/\r?\n/).filter((l) => l.trim());
   if (!lines.length) return [];
   const delim = lines[0].includes("\t") ? "\t" : ",";
@@ -39,8 +38,9 @@ function parseRows(text: string, resolvePerson: (text: string) => string): Row[]
   const iName = idx(["name"], 0);
   const iEmail = idx(["email"], 1);
   const iSchool = idx(["school"], 2);
-  // Point person only auto-maps when there's a header naming it — never from a
-  // positional fallback, so a stray 4th column isn't misread as an owner.
+  // Point person is only read from a named header — never a positional fallback,
+  // so a stray 4th column isn't misread as an owner. The text is kept as typed
+  // and matched to a team member when the rows are imported.
   const iPerson = hasHeader ? Math.max(...["point person", "point_person", "owner", "assignee"].map((k) => header.indexOf(k))) : -1;
   return data
     .filter((r) => (r[iName] ?? "").trim())
@@ -48,7 +48,7 @@ function parseRows(text: string, resolvePerson: (text: string) => string): Row[]
       name: r[iName] ?? "",
       email: r[iEmail] ?? "",
       school: r[iSchool] ?? "",
-      point_person: iPerson >= 0 ? resolvePerson(r[iPerson] ?? "") : "",
+      point_person: iPerson >= 0 ? (r[iPerson] ?? "") : "",
     }));
 }
 
@@ -89,7 +89,7 @@ export default function ImportTable({ schools, team = [], existingEmails, existi
     const txt = e.clipboardData.getData("text");
     const isMultiCell = txt.includes("\t") || txt.includes("\n") || txt.includes(",");
     if (!isMultiCell) return;
-    const parsed = parseRows(txt, resolvePerson);
+    const parsed = parseRows(txt);
     if (parsed.length === 0) return;
     e.preventDefault();
     setRows(parsed.length < 3 ? [...parsed, ...Array(3 - parsed.length).fill(null).map(emptyRow)] : parsed);
@@ -111,7 +111,7 @@ export default function ImportTable({ schools, team = [], existingEmails, existi
       } else {
         csv = await file.text();
       }
-      const parsed = parseRows(csv, resolvePerson);
+      const parsed = parseRows(csv);
       if (parsed.length === 0) { setError("No rows found in that file."); return; }
       setRows(parsed.length < 3 ? [...parsed, ...Array(3 - parsed.length).fill(null).map(emptyRow)] : parsed);
     } catch {
@@ -121,6 +121,7 @@ export default function ImportTable({ schools, team = [], existingEmails, existi
 
   const validRows = rows.filter((r) => r.name.trim());
   const dupeCount = validRows.filter(isDupeRow).length;
+  const unmatchedPeople = validRows.filter((r) => r.point_person.trim() && !resolvePerson(r.point_person)).length;
   const resolved = validRows.map((r) => {
     const { school_id, university_raw } = resolveCandidateSchool(r.school, schools);
     return {
@@ -131,7 +132,7 @@ export default function ImportTable({ schools, team = [], existingEmails, existi
       stage: null,
       gpa: null,
       area_of_study: null,
-      point_person_id: r.point_person || null,
+      point_person_id: resolvePerson(r.point_person) || null,
     };
   });
 
@@ -154,8 +155,9 @@ export default function ImportTable({ schools, team = [], existingEmails, existi
 
   return (
     <>
-      {/* School suggestions for the per-row inputs (you can also type any school). */}
+      {/* Suggestions for the per-row inputs (you can also type freely). */}
       <datalist id="import-schools">{schools.map((s) => <option key={s.id} value={s.name} />)}</datalist>
+      <datalist id="import-people">{team.map((m) => <option key={m.id} value={m.full_name} />)}</datalist>
 
       {/* Upload / hint toolbar */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -166,10 +168,10 @@ export default function ImportTable({ schools, team = [], existingEmails, existi
         {team.length > 0 && (
           <label style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: C.grayMute }}>
             Assign all to
-            <select value="" onChange={(e) => { const v = e.target.value === "__none__" ? "" : e.target.value; if (!e.target.value) return; setRows((prev) => prev.map((r) => ({ ...r, point_person: v }))); }}
+            <select value="" onChange={(e) => { if (!e.target.value) return; const v = e.target.value === "__none__" ? "" : e.target.value; setRows((prev) => prev.map((r) => ({ ...r, point_person: v }))); }}
               style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 600, fontSize: 12.5, padding: "7px 10px", borderRadius: 8, cursor: "pointer" }}>
               <option value="">Choose…</option>
-              {team.map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+              {team.map((m) => <option key={m.id} value={m.full_name}>{m.full_name}</option>)}
               <option value="__none__">Unassigned</option>
             </select>
           </label>
@@ -215,12 +217,10 @@ export default function ImportTable({ schools, team = [], existingEmails, existi
                       style={{ ...inp, color: row.school ? C.gray : C.grayMute }} />
                   </td>
                   <td style={cell}>
-                    <select value={row.point_person} onChange={(e) => update(i, { point_person: e.target.value })}
-                      disabled={team.length === 0}
-                      style={{ ...inp, cursor: team.length ? "pointer" : "default", color: row.point_person ? C.gray : C.grayMute, appearance: "auto" }}>
-                      <option value="">Unassigned</option>
-                      {team.map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
-                    </select>
+                    <input list="import-people" value={row.point_person} onChange={(e) => update(i, { point_person: e.target.value })}
+                      placeholder={team.length ? "Team member" : "—"} disabled={team.length === 0}
+                      title={row.point_person && !resolvePerson(row.point_person) ? "No matching team member — will import as unassigned" : undefined}
+                      style={{ ...inp, color: !row.point_person ? C.grayMute : resolvePerson(row.point_person) ? C.gray : C.orange }} />
                   </td>
                   <td style={{ padding: "0 6px", textAlign: "center" }}>
                     <button onClick={() => delRow(i)} title="Remove row"
@@ -244,6 +244,7 @@ export default function ImportTable({ schools, team = [], existingEmails, existi
         <div style={{ padding: "9px 14px", background: C.canvas, borderRadius: 9, fontSize: 13 }}>
           <b style={{ color: C.navy }}>{validRows.length}</b> row{validRows.length !== 1 ? "s" : ""} ready to import
           {dupeCount > 0 && <span style={{ color: C.orange, marginLeft: 10 }}>⚠ {dupeCount} possible duplicate{dupeCount !== 1 ? "s" : ""} (name or email match) — will still be imported</span>}
+          {unmatchedPeople > 0 && <span style={{ color: C.orange, marginLeft: 10 }}>⚠ {unmatchedPeople} point person name{unmatchedPeople !== 1 ? "s" : ""} not matched — will import as unassigned</span>}
         </div>
       )}
       {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E" }}>{error}</div>}
