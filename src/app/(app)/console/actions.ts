@@ -20,7 +20,7 @@ import { routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
 import { sendEmail, emailLayout } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
-import { getTierSchoolIds, fetchAllRows } from "@/lib/queries";
+import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -252,6 +252,108 @@ export async function bulkImportCandidates(
   revalidatePath("/console");
   revalidatePath("/workspace");
   return { ok: true, count: inserted };
+}
+
+// ---- Server-side candidate pagination --------------------------------------
+// One page of candidates, filtered/sorted/counted in the database so the client
+// never holds the whole table. Used by the console + workspace candidate lists.
+// Limitations (acceptable at 500/page): GPA is a text column so Min-GPA and the
+// GPA sort compare lexically; the stage sort is alphabetical (not phase order).
+const UUID_NONE = "00000000-0000-0000-0000-000000000000";
+export type CandidatePageParams = {
+  variant: "console" | "workspace"; // which column set to return
+  page: number;                 // 0-based
+  pageSize: number;
+  scope?: string;               // "all" | <school_id> | "tier:satellite" | "tier:bonus"
+  unroutedOnly?: boolean;
+  q?: string;
+  major?: string;               // "All majors" → ignored
+  stage?: string;               // "All stages" → ignored
+  minGpa?: string;
+  favOnly?: boolean;
+  mineOnly?: boolean;           // point_person_id == me
+  creator?: string;             // "anyone" | "jazzhr" | <profile_id>
+  sortKey?: "name" | "school" | "major" | "gpa" | "stage";
+  sortDir?: "asc" | "desc";
+  withAi?: boolean;             // super-admin AI scores for the page
+};
+export async function listCandidates(
+  p: CandidatePageParams,
+): Promise<{ rows: any[]; total: number; ai: any[] }> {
+  const profile = await getCurrentProfile();
+  if (!profile) return { rows: [], total: 0, ai: [] };
+  const db = createServiceClient();
+
+  // This user's favorites — drives the favOnly filter and the per-row star.
+  const favRows = await fetchAllRows<{ candidate_id: string }>((from, to) =>
+    db.from("favorites").select("candidate_id").eq("user_id", profile.id).range(from, to));
+  const favSet = new Set(favRows.map((r) => r.candidate_id));
+
+  const cols: string = p.variant === "workspace" ? CAND_COLS_WORKSPACE : CAND_COLS_CONSOLE;
+  let qb: any = db.from("candidates").select(cols as any, { count: "exact" });
+
+  if (p.scope === "tier:satellite" || p.scope === "tier:bonus") {
+    const tier = p.scope.slice(5);
+    const ids = ((await getSchoolsCached()) as any[]).filter((s) => s.tier === tier).map((s) => s.id);
+    qb = qb.in("school_id", ids.length ? ids : [UUID_NONE]);
+  } else if (p.scope && p.scope !== "all") {
+    qb = qb.eq("school_id", p.scope);
+  }
+  if (p.unroutedOnly) qb = qb.is("school_id", null);
+
+  if (p.q && p.q.trim()) {
+    // Strip PostgREST filter-syntax characters so the search can't break the query.
+    const term = p.q.trim().replace(/[%,()\\*]/g, " ").trim();
+    if (term) qb = qb.or(`name.ilike.%${term}%,email.ilike.%${term}%,area_of_study.ilike.%${term}%`);
+  }
+  if (p.major && p.major !== "All majors") qb = qb.eq("area_of_study", p.major);
+  if (p.stage && p.stage !== "All stages") qb = qb.eq("stage", p.stage);
+  if (p.minGpa && p.minGpa.trim() && !Number.isNaN(parseFloat(p.minGpa))) qb = qb.gte("gpa", p.minGpa.trim());
+  if (p.favOnly) qb = qb.in("id", favSet.size ? [...favSet] : [UUID_NONE]);
+  if (p.mineOnly) qb = qb.eq("point_person_id", profile.id);
+  if (p.creator === "jazzhr") qb = qb.eq("source", "jazzhr");
+  else if (p.creator && p.creator !== "anyone") qb = qb.eq("created_by", p.creator);
+
+  const sortCol = p.sortKey === "school" ? "school_id" : p.sortKey === "major" ? "area_of_study"
+    : (p.sortKey === "gpa" || p.sortKey === "stage") ? p.sortKey : "name";
+  qb = qb.order(sortCol, { ascending: p.sortDir !== "desc", nullsFirst: false });
+  if (sortCol !== "name") qb = qb.order("name", { ascending: true });
+
+  const from = Math.max(0, p.page) * p.pageSize;
+  const { data, count, error } = await qb.range(from, from + p.pageSize - 1);
+  if (error) return { rows: [], total: 0, ai: [] };
+  const rows = (data ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
+
+  let ai: any[] = [];
+  if (p.withAi && isSuper(profile.role) && rows.length) {
+    const ids = rows.map((r: any) => r.id);
+    const { data: aiRows } = await db.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").in("candidate_id", ids);
+    ai = aiRows ?? [];
+  }
+  return { rows, total: count ?? rows.length, ai };
+}
+
+// Lightweight, full-set data the candidate pages still need even when the table
+// itself is paginated: the distinct Major/Stage dropdown values, and a slim
+// projection of every candidate for duplicate detection, JazzHR match review and
+// the "already exists" import warnings. Far smaller than the full rows.
+export type SlimCandidate = { id: string; name: string; email: string | null; school_id: string | null; jazz_id: string | null; source: string | null; stage: string | null; area_of_study: string | null; gpa: string | null; university_raw: string | null };
+export type CandidateFacets = {
+  majors: string[];
+  stages: string[];
+  unroutedCount: number;
+  slim: SlimCandidate[];
+};
+export async function getCandidateFacets(includeSlim: boolean): Promise<CandidateFacets> {
+  const db = createServiceClient();
+  const rows = await fetchAllRows<SlimCandidate>(
+    (from, to) => db.from("candidates").select("id, name, email, school_id, jazz_id, source, stage, area_of_study, gpa, university_raw").order("name").range(from, to),
+  );
+  const majors = Array.from(new Set(rows.map((r) => r.area_of_study).filter((m): m is string => !!m))).sort((a, b) => a.localeCompare(b));
+  const stages = Array.from(new Set(rows.map((r) => r.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
+  const unroutedCount = rows.filter((r) => !r.school_id).length;
+  const slim = includeSlim ? rows : [];
+  return { majors, stages, unroutedCount, slim };
 }
 
 export async function upsertGoal(school_id: string, goal_sourced: number, goal_contacted: number, goal_applied: number) {

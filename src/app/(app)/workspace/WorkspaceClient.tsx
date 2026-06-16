@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useTransition, useEffect } from "react";
+import { useState, useMemo, useTransition, useEffect, useRef } from "react";
 import type { Profile, Resource } from "@/lib/types";
 import { canReassign, canEditPlaybook, canManageResources, canEditEvents } from "@/lib/types";
 import {
@@ -9,6 +9,7 @@ import {
   deleteOutreach, deleteConnection, updatePhase, deletePhase,
   requestTaskComplete, confirmTaskComplete, setTaskAssignees,
 } from "./actions";
+import { listCandidates } from "@/app/(app)/console/actions";
 import { phaseOf } from "@/lib/stages";
 import { evaluateCandidate } from "@/lib/triggers";
 import StandingsClient from "@/components/StandingsClient";
@@ -89,12 +90,18 @@ const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 export default function WorkspaceClient({
   profile, initialSection, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
   budgetEntries = [], budgetSchoolId = null, budgetGuidance = [],
+  allCandidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], slimCandidates = [],
 }: {
   profile: Profile; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
   lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[];
   allProfiles: { id: string; full_name: string }[];
   budgetEntries?: BudgetEntry[]; budgetSchoolId?: string | null; budgetGuidance?: Guidance[];
+  // Candidates tab (S === "all") is server-paginated: `allCandidates` is the
+  // first page; these carry the total + facet dropdowns + slim dedupe list.
+  allCandidatesTotal?: number; candidatesPageSize?: number;
+  facetMajors?: string[]; facetStages?: string[];
+  slimCandidates?: { id: string; name: string; email: string | null }[];
 }) {
   const isMobile = useIsMobile();
   const [tab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources" | "budget">(initialSection as any);
@@ -111,6 +118,11 @@ export default function WorkspaceClient({
   const [boardFavOnly, setBoardFavOnly] = useState(false);
   const [boardOwner, setBoardOwner] = useState("");
   const [allSort, setAllSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
+  // Server-paginated Candidates tab (S === "all"). `allCandidates` is page 0.
+  const [allRows, setAllRows] = useState<AllCand[]>(allCandidates);
+  const [allTotal, setAllTotal] = useState<number>(allCandidatesTotal ?? allCandidates.length);
+  const [allPageNum, setAllPageNum] = useState(0);
+  const [allLoading, setAllLoading] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
@@ -132,9 +144,33 @@ export default function WorkspaceClient({
   // (logging outreach, flags, warm intros) is limited to the assigned point
   // person — or team leads/admins, who manage their whole school.
   const openFromSchool = candidates.find((c) => c.id === openId) ?? null;
-  const openFromAll = allCandidates.find((c) => c.id === openId) ?? null;
+  const openFromAll = allRows.find((c) => c.id === openId) ?? null;
   const open: Cand | null = openFromSchool ?? (openFromAll as Cand | null);
   const openCanEdit = open ? (canAssign || open.point_person_id === profile.id) : false;
+
+  // Fetch one page of the org-wide Candidates list with current filters applied.
+  const ALL_PAGE_SIZE = candidatesPageSize;
+  const loadAllPage = async (page: number) => {
+    setAllLoading(true);
+    const res = await listCandidates({
+      variant: "workspace", page, pageSize: ALL_PAGE_SIZE,
+      scope: allSchool, q: allSearch, major: allMajor, stage: allStage, minGpa: allMinGpa,
+      favOnly: allFavOnly, mineOnly: allMineOnly,
+      sortKey: allSort.key, sortDir: allSort.dir,
+    });
+    setAllRows(res.rows as AllCand[]);
+    setAllTotal(res.total);
+    setAllPageNum(page);
+    setAllLoading(false);
+  };
+  const allMounted = useRef(false);
+  useEffect(() => {
+    if (tab !== "all") return;
+    if (!allMounted.current) { allMounted.current = true; return; }
+    const t = setTimeout(() => { loadAllPage(0); }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allSearch, allSchool, allMajor, allStage, allMinGpa, allFavOnly, allMineOnly, allSort]);
 
   const PHASE_ORDER_PIPELINE = ["sourced", "contacted", "applied"] as const;
   const PHASE_LABEL: Record<string, string> = { sourced: "Sourced", contacted: "Contacted", applied: "Applied" };
@@ -496,38 +532,11 @@ export default function WorkspaceClient({
 
         {/* ---- APPLICANTS ---- */}
         {tab === "all" && (() => {
-          const schoolNameOf = (c: AllCand) => allSchools.find((s) => s.id === c.school_id)?.name ?? "";
-          const stageRank: Record<string, number> = { Sourced: 0, Contacted: 1, Applied: 2, Advanced: 3, Finalist: 4, Fellow: 5 };
-          const distinctMajors = Array.from(new Set(allCandidates.map((c) => c.area_of_study).filter((m): m is string => !!m))).sort((a, b) => a.localeCompare(b));
-          const distinctStages = Array.from(new Set(allCandidates.map((c) => c.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
-
-          const q = allSearch.trim().toLowerCase();
-          const minGpa = parseFloat(allMinGpa);
-          let visible = allCandidates.filter((c) => {
-            if (!matchesSchoolFilter(allSchool, c.school_id, allSchools)) return false;
-            if (q && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(q))) return false;
-            if (allMajor !== "All majors" && c.area_of_study !== allMajor) return false;
-            if (allStage !== "All stages" && c.stage !== allStage) return false;
-            if (allFavOnly && !c.is_favorite) return false;
-            if (allMineOnly && c.point_person_id !== profile.id) return false;
-            if (!isNaN(minGpa)) { const g = parseFloat(c.gpa ?? ""); if (isNaN(g) || g < minGpa) return false; }
-            return true;
-          });
-
-          const dir = allSort.dir === "asc" ? 1 : -1;
-          visible = [...visible].sort((a, b) => {
-            let av: number | string, bv: number | string;
-            switch (allSort.key) {
-              case "school": av = schoolNameOf(a) || "~"; bv = schoolNameOf(b) || "~"; break;
-              case "major":  av = a.area_of_study ?? "~"; bv = b.area_of_study ?? "~"; break;
-              case "gpa":    av = parseFloat(a.gpa ?? "") || -1; bv = parseFloat(b.gpa ?? "") || -1; break;
-              case "stage":  av = stageRank[PHASE_OF[a.stage ?? ""] ?? ""] ?? -1; bv = stageRank[PHASE_OF[b.stage ?? ""] ?? ""] ?? -1; break;
-              default:       av = a.name.toLowerCase(); bv = b.name.toLowerCase();
-            }
-            if (av < bv) return -1 * dir;
-            if (av > bv) return 1 * dir;
-            return 0;
-          });
+          // Server provides the filtered/sorted page; dropdowns read the facets.
+          const distinctMajors = facetMajors;
+          const distinctStages = facetStages;
+          const visible = allRows;
+          const totalPages = Math.max(1, Math.ceil(allTotal / ALL_PAGE_SIZE));
 
           const toggleSort = (key: typeof allSort.key) =>
             setAllSort((p) => p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
@@ -535,14 +544,14 @@ export default function WorkspaceClient({
           const SortHead = ({ k, label }: { k: typeof allSort.key; label: string }) => (
             <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: allSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
           );
-          const filtersActive = q || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMineOnly || allMinGpa.trim() !== "" || allSchool !== "all";
+          const filtersActive = allSearch.trim() !== "" || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMineOnly || allMinGpa.trim() !== "" || allSchool !== "all";
 
           return (
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
                 <div>
                   <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Candidates</h1>
-                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates · click a row to view details</p>
+                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{allTotal.toLocaleString()} candidate{allTotal !== 1 ? "s" : ""}{allLoading ? " · loading…" : ""} · click a row to view details</p>
                 </div>
                 <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
               </div>
@@ -610,8 +619,21 @@ export default function WorkspaceClient({
                     </div>
                   );
                 })}
-                {visible.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{filtersActive ? "No candidates match these filters." : "No candidates yet."}</div>}
+                {visible.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{allLoading ? "Loading…" : filtersActive ? "No candidates match these filters." : "No candidates yet."}</div>}
               </div>
+
+              {/* Pagination */}
+              {allTotal > ALL_PAGE_SIZE && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 16 }}>
+                  <button onClick={() => loadAllPage(allPageNum - 1)} disabled={allPageNum <= 0 || allLoading}
+                    style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: allPageNum <= 0 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: allPageNum <= 0 || allLoading ? "default" : "pointer" }}>← Prev</button>
+                  <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>
+                    Page {allPageNum + 1} of {totalPages} · {(allPageNum * ALL_PAGE_SIZE + 1).toLocaleString()}–{Math.min((allPageNum + 1) * ALL_PAGE_SIZE, allTotal).toLocaleString()} of {allTotal.toLocaleString()}
+                  </span>
+                  <button onClick={() => loadAllPage(allPageNum + 1)} disabled={allPageNum >= totalPages - 1 || allLoading}
+                    style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: allPageNum >= totalPages - 1 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: allPageNum >= totalPages - 1 || allLoading ? "default" : "pointer" }}>Next →</button>
+                </div>
+              )}
             </>
           );
         })()}
@@ -632,7 +654,7 @@ export default function WorkspaceClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} allProfiles={allProfiles} onClose={() => setOpenId(null)} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
+        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} allProfiles={allProfiles} onClose={() => { setOpenId(null); if (tab === "all") loadAllPage(allPageNum); }} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
       )}
       {resumeFor && (
         <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
@@ -642,9 +664,9 @@ export default function WorkspaceClient({
           schools={allSchools}
           team={team}
           canAssignPointPerson={canAssign}
-          existingEmails={new Set(allCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
-          existingNames={new Set(allCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
-          onClose={() => setBulkOpen(false)}
+          existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
+          existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
+          onClose={() => { setBulkOpen(false); if (tab === "all") loadAllPage(0); }}
         />
       )}
       {assignOpen && (

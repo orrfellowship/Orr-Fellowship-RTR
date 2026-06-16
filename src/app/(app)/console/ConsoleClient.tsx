@@ -9,7 +9,7 @@ import {
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
-  unlinkJazzCandidate, getUserSnapshot,
+  unlinkJazzCandidate, getUserSnapshot, listCandidates,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
@@ -40,6 +40,9 @@ type Cand = {
   source: string | null; created_by: string | null;
 };
 type TeamMember = { id: string; full_name: string };
+// Slim full-set projection for the Candidates tab's full-dataset features
+// (duplicate detection, JazzHR match review, import dedupe warnings).
+type SlimCand = { id: string; name: string; email: string | null; school_id: string | null; jazz_id: string | null; source: string | null; stage: string | null; area_of_study: string | null; gpa: string | null; university_raw: string | null };
 type Goal = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 type AIFlag = { text: string; kind: "standout" | "concern" | "info" };
 type AI = { candidate_id: string; resume_score: number | null; summary: string | null; flags: AIFlag[]; analyzed_at: string | null };
@@ -96,11 +99,17 @@ function fmtPct(actual: number, goal: number) {
 export default function ConsoleClient({
   profile, initialSection, schools, candidates, team, goals, ai, phases, users, reviews, resources,
   events = [], people = [], budgetEntries = [], budgetGuidance = [],
+  candidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], facetUnrouted = 0, slimCandidates = [],
 }: {
   profile: Profile; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
   events?: CalEvent[]; people?: { id: string; full_name: string }[]; budgetEntries?: BudgetEntry[]; budgetGuidance?: Guidance[];
+  // Candidates tab is server-paginated: `candidates` is the first page; these
+  // carry the total count + the full-set facets/slim list the page still needs.
+  candidatesTotal?: number; candidatesPageSize?: number;
+  facetMajors?: string[]; facetStages?: string[]; facetUnrouted?: number;
+  slimCandidates?: SlimCand[];
 }) {
   const isMobile = useIsMobile();
   const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "calendar" | "budget" | "users" | "sync" | "resources" | "review">(initialSection as any);
@@ -140,6 +149,13 @@ export default function ConsoleClient({
   const [appFavOnly, setAppFavOnly] = useState(false);
   const [appCreator, setAppCreator] = useState("anyone"); // anyone | jazzhr | <profile_id>
   const [appSort, setAppSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage" | "ai"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
+  // Server-paginated Candidates tab. `candidates` is the first page from the
+  // server; we refetch a page whenever filters/sort/page change.
+  const [appRows, setAppRows] = useState<Cand[]>(candidates);
+  const [appTotal, setAppTotal] = useState<number>(candidatesTotal ?? candidates.length);
+  const [appPage, setAppPage] = useState(0);
+  const [appAi, setAppAi] = useState<AI[]>(ai);
+  const [appLoading, setAppLoading] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dupOpen, setDupOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -155,7 +171,7 @@ export default function ConsoleClient({
   // schools individually + one "Satellite School" + one "Bonus School" group.
   const schoolPickOptions = useMemo(() => schoolSelectOptions(schools).map((o) => ({ id: o.value, name: o.label })), [schools]);
 
-  const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a as AI])), [ai]);
+  const aiMap = useMemo(() => new Map(appAi.map((a) => [a.candidate_id, a as AI])), [appAi]);
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
 
   // ---- JazzHR sync (super-admin only) ----
@@ -236,7 +252,37 @@ export default function ConsoleClient({
     ];
   }, [scope, candidates, goals, schools]);
 
-  const open = candidates.find((c) => c.id === openId) ?? null;
+  const open = appRows.find((c) => c.id === openId) ?? candidates.find((c) => c.id === openId) ?? null;
+
+  // Fetch one page of candidates with the current filters/sort applied server-side.
+  const APP_PAGE_SIZE = candidatesPageSize;
+  const loadAppPage = async (page: number) => {
+    setAppLoading(true);
+    const res = await listCandidates({
+      variant: "console", page, pageSize: APP_PAGE_SIZE,
+      scope: appSchool, unroutedOnly: showUnrouted,
+      q: appSearch, major: appMajor, stage: appStage, minGpa: appMinGpa,
+      favOnly: appFavOnly, creator: appCreator,
+      sortKey: appSort.key === "ai" ? "name" : appSort.key, sortDir: appSort.dir,
+      withAi: superUser,
+    });
+    setAppRows(res.rows as Cand[]);
+    setAppTotal(res.total);
+    setAppAi(res.ai as AI[]);
+    setAppPage(page);
+    setAppLoading(false);
+  };
+  // Refetch page 0 whenever a filter/sort changes (debounced so typing in the
+  // search box doesn't fire a request per keystroke). Skips the initial mount —
+  // the server already provided page 0.
+  const appMounted = useRef(false);
+  useEffect(() => {
+    if (tab !== "applicants") return;
+    if (!appMounted.current) { appMounted.current = true; return; }
+    const t = setTimeout(() => { loadAppPage(0); }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appSearch, appSchool, appMajor, appStage, appMinGpa, appFavOnly, appCreator, appSort, showUnrouted]);
   const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
   const playbookGrouped = playbookSchoolObj?.tier === "satellite" || playbookSchoolObj?.tier === "bonus";
@@ -347,43 +393,13 @@ export default function ConsoleClient({
 
         {/* ---- APPLICANTS ---- */}
         {tab === "applicants" && (() => {
-          const schoolNameOf = (c: Cand) => schools.find((s) => s.id === c.school_id)?.name ?? "";
-          const stageRank: Record<string, number> = { Sourced: 0, Contacted: 1, Applied: 2, Advanced: 3, Finalist: 4, Fellow: 5 };
-          const distinctMajors = Array.from(new Set(candidates.map((c) => c.area_of_study).filter((m): m is string => !!m))).sort((a, b) => a.localeCompare(b));
-          const distinctStages = Array.from(new Set(candidates.map((c) => c.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
-
-          const scopeFiltered = candidates.filter((c) => matchesSchoolFilter(appSchool, c.school_id, schools));
-          const unroutedCount = scopeFiltered.filter((c) => !c.school_id).length;
-
-          const q = appSearch.trim().toLowerCase();
-          const minGpa = parseFloat(appMinGpa);
-          let visible = scopeFiltered.filter((c) => {
-            if (showUnrouted && c.school_id) return false;
-            if (q && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(q))) return false;
-            if (appMajor !== "All majors" && c.area_of_study !== appMajor) return false;
-            if (appStage !== "All stages" && c.stage !== appStage) return false;
-            if (appFavOnly && !c.is_favorite) return false;
-            if (appCreator === "jazzhr" && c.source !== "jazzhr") return false;
-            if (appCreator !== "anyone" && appCreator !== "jazzhr" && c.created_by !== appCreator) return false;
-            if (!isNaN(minGpa)) { const g = parseFloat(c.gpa ?? ""); if (isNaN(g) || g < minGpa) return false; }
-            return true;
-          });
-
-          const dir = appSort.dir === "asc" ? 1 : -1;
-          visible = [...visible].sort((a, b) => {
-            let av: number | string, bv: number | string;
-            switch (appSort.key) {
-              case "school": av = schoolNameOf(a) || "~"; bv = schoolNameOf(b) || "~"; break;
-              case "major":  av = a.area_of_study ?? "~"; bv = b.area_of_study ?? "~"; break;
-              case "gpa":    av = parseFloat(a.gpa ?? "") || -1; bv = parseFloat(b.gpa ?? "") || -1; break;
-              case "stage":  av = stageRank[PHASE_OF[a.stage ?? ""] ?? ""] ?? -1; bv = stageRank[PHASE_OF[b.stage ?? ""] ?? ""] ?? -1; break;
-              case "ai":     av = aiMap.get(a.id)?.resume_score ?? -1; bv = aiMap.get(b.id)?.resume_score ?? -1; break;
-              default:       av = a.name.toLowerCase(); bv = b.name.toLowerCase();
-            }
-            if (av < bv) return -1 * dir;
-            if (av > bv) return 1 * dir;
-            return 0;
-          });
+          // Rows are filtered/sorted/paginated by the server (loadAppPage); the
+          // dropdowns + full-set widgets read the facets/slim list passed in.
+          const distinctMajors = facetMajors;
+          const distinctStages = facetStages;
+          const unroutedCount = facetUnrouted;
+          const visible = appRows;
+          const totalPages = Math.max(1, Math.ceil(appTotal / APP_PAGE_SIZE));
 
           const toggleSort = (key: typeof appSort.key) =>
             setAppSort((p) => p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
@@ -391,7 +407,7 @@ export default function ConsoleClient({
           const SortHead = ({ k, label }: { k: typeof appSort.key; label: string }) => (
             <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: appSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
           );
-          const filtersActive = q || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all" || appCreator !== "anyone";
+          const filtersActive = appSearch.trim() !== "" || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all" || appCreator !== "anyone";
 
           return (
           <>
@@ -399,7 +415,7 @@ export default function ConsoleClient({
               <div>
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Candidates</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
-                  {visible.length} candidates{superUser ? " · AI scores visible" : ""}
+                  {appTotal.toLocaleString()} candidate{appTotal !== 1 ? "s" : ""}{appLoading ? " · loading…" : ""}{superUser ? " · AI scores visible" : ""}
                   {unroutedCount > 0 && !showUnrouted && <span style={{ color: C.orange }}> · {unroutedCount} unrouted</span>}
                 </p>
               </div>
@@ -422,7 +438,7 @@ export default function ConsoleClient({
                 </button>
                 {reviewOpen && (
                   <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                    <MatchReview reviews={reviews} candidates={candidates} schools={schools} />
+                    <MatchReview reviews={reviews} candidates={slimCandidates} schools={schools} />
                   </div>
                 )}
               </div>
@@ -430,7 +446,7 @@ export default function ConsoleClient({
 
             {/* Duplicate candidates — any source (manual, import, JazzHR) */}
             {adminPlus && (() => {
-              const dupCount = findDuplicateGroups(candidates).length;
+              const dupCount = findDuplicateGroups(slimCandidates).length;
               if (dupCount === 0) return null;
               return (
                 <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
@@ -444,7 +460,7 @@ export default function ConsoleClient({
                   </button>
                   {dupOpen && (
                     <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                      <DuplicateReview candidates={candidates} schools={schools} />
+                      <DuplicateReview candidates={slimCandidates} schools={schools} />
                     </div>
                   )}
                 </div>
@@ -509,7 +525,7 @@ export default function ConsoleClient({
                         {adminPlus ? (
                           <select
                             value={schoolOptionValue(schools, c.school_id)}
-                            onChange={(e) => startTransition(() => { reassignSchool(c.id, e.target.value || null); })}
+                            onChange={(e) => { const v = e.target.value || null; reassignSchool(c.id, v).then(() => loadAppPage(appPage)); }}
                             style={{ fontSize: 12, fontWeight: 600, color: c.school_id ? C.navy2 : C.orange, border: `1px solid ${c.school_id ? C.line : C.orange}`, borderRadius: 7, padding: "4px 6px", background: "#fff", maxWidth: "100%", cursor: "pointer" }}>
                             <option value="">— Unrouted —</option>
                             {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -529,9 +545,22 @@ export default function ConsoleClient({
                   );
                 })}
               {visible.length === 0 && (
-                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{filtersActive ? "No candidates match these filters." : showUnrouted ? "No unrouted candidates — routing is complete!" : "No candidates yet — run a sync."}</div>
+                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{appLoading ? "Loading…" : filtersActive ? "No candidates match these filters." : showUnrouted ? "No unrouted candidates — routing is complete!" : "No candidates yet — run a sync."}</div>
               )}
             </div>
+
+            {/* Pagination */}
+            {appTotal > APP_PAGE_SIZE && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 16 }}>
+                <button onClick={() => loadAppPage(appPage - 1)} disabled={appPage <= 0 || appLoading}
+                  style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage <= 0 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage <= 0 || appLoading ? "default" : "pointer" }}>← Prev</button>
+                <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>
+                  Page {appPage + 1} of {totalPages} · {(appPage * APP_PAGE_SIZE + 1).toLocaleString()}–{Math.min((appPage + 1) * APP_PAGE_SIZE, appTotal).toLocaleString()} of {appTotal.toLocaleString()}
+                </span>
+                <button onClick={() => loadAppPage(appPage + 1)} disabled={appPage >= totalPages - 1 || appLoading}
+                  style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage >= totalPages - 1 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage >= totalPages - 1 || appLoading ? "default" : "pointer" }}>Next →</button>
+              </div>
+            )}
           </>
         );})()}
 
@@ -1059,13 +1088,13 @@ export default function ConsoleClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => setOpenId(null)} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
+        <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => { setOpenId(null); if (tab === "applicants") loadAppPage(appPage); }} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
       )}
       {addOpen && (
-        <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setAddOpen(false)} startTransition={startTransition} />
+        <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setAddOpen(false); loadAppPage(0); }} startTransition={startTransition} />
       )}
       {bulkOpen && (
-        <BulkImportModal schools={schools} team={team} canAssignPointPerson existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} />
+        <BulkImportModal schools={schools} team={team} canAssignPointPerson existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setBulkOpen(false); loadAppPage(0); }} />
       )}
       {inviteOpen && (
         <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />

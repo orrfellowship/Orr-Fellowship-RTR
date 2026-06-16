@@ -8,6 +8,7 @@ import {
   CAND_COLS_STANDINGS, CAND_COLS_CONSOLE,
 } from "@/lib/queries";
 import ConsoleClient from "../ConsoleClient";
+import { listCandidates, getCandidateFacets } from "../actions";
 
 // Each route renders one section → only fetch what that section reads.
 export default async function ConsoleSection({ params }: { params: { section: string } }) {
@@ -37,26 +38,39 @@ export default async function ConsoleSection({ params }: { params: { section: st
 
   // Standings only reads id/school_id/stage; every other view needs the full row.
   const candSelect = S === "standings" ? CAND_COLS_STANDINGS : CAND_COLS_CONSOLE;
+  // The Candidates tab is server-paginated (500/page); it doesn't load the full
+  // table. Other sections (overview/standings/schools/sync/review) still need it.
+  const paginatedList = S === "applicants";
 
   // Reference tables (schools/goals/resources) come from the shared Data Cache.
   const [schools, candidates, favs, team, goals, phases, resources, reviewData, aiData, usersData, people, budgetEntries, budgetGuidance] = await Promise.all([
     getSchoolsCached(),
-    need.candidates ? fetchAllRows((from, to) => supabase.from("candidates").select(candSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
+    need.candidates && !paginatedList ? fetchAllRows((from, to) => supabase.from("candidates").select(candSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
     need.favs ? supabase.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.team ? supabase.from("profiles").select("id, full_name").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.goals ? getGoalsCached() : Promise.resolve([] as any[]),
     need.phases ? supabase.from("playbook_phases").select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.resources ? getResourcesCached() : Promise.resolve([] as any[]),
     need.reviews ? serviceDb.from("jazz_match_review").select("id, jazz_snapshot, candidate_id, reason").eq("status", "pending").order("created_at", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.ai ? fetchAllRows((from, to) => supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").range(from, to)) : Promise.resolve([] as any[]),
+    need.ai && !paginatedList ? fetchAllRows((from, to) => supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").range(from, to)) : Promise.resolve([] as any[]),
     need.users ? supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.calendar ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.budget ? serviceDb.from("budget_entries").select("id, school_id, kind, label, amount, notes, receipt_url, created_by").order("created_at", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.budget ? serviceDb.from("budget_guidance").select("id, category, pct").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
   ]);
 
+  // Candidates tab: first page + count + the full-set facets/slim list that the
+  // duplicate review, match review and import dedupe warnings still need.
+  const PAGE_SIZE = 500;
+  const [candPage, facets] = paginatedList
+    ? await Promise.all([
+        listCandidates({ variant: "console", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc", withAi: sup }),
+        getCandidateFacets(true),
+      ])
+    : [{ rows: [] as any[], total: 0, ai: [] as any[] }, { majors: [] as string[], stages: [] as string[], unroutedCount: 0, slim: [] as any[] }];
+
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
-  const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
+  const enriched = paginatedList ? candPage.rows : (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
 
   // User Management: attach each user's last sign-in from Supabase Auth.
   let usersWithAuth = (usersData ?? []) as any[];
@@ -97,9 +111,15 @@ export default async function ConsoleSection({ params }: { params: { section: st
       initialSection={S}
       schools={schools ?? []}
       candidates={enriched}
+      candidatesTotal={paginatedList ? candPage.total : undefined}
+      candidatesPageSize={PAGE_SIZE}
+      facetMajors={facets.majors}
+      facetStages={facets.stages}
+      facetUnrouted={facets.unroutedCount}
+      slimCandidates={facets.slim}
       team={team ?? []}
       goals={goals ?? []}
-      ai={aiData ?? []}
+      ai={paginatedList ? candPage.ai : (aiData ?? [])}
       phases={phases ?? []}
       users={usersWithAuth}
       reviews={reviewData ?? []}
