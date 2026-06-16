@@ -641,6 +641,7 @@ export default function WorkspaceClient({
         <BulkImportModal
           schools={allSchools}
           team={team}
+          canAssignPointPerson={canAssign}
           existingEmails={new Set(allCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
           existingNames={new Set(allCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
           onClose={() => setBulkOpen(false)}

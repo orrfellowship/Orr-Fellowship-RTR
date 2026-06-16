@@ -113,12 +113,11 @@ function SummaryCard({ label, value, color, sub, tooltip }: {
   );
 }
 
-// ---- SVG radar — 6 axes ----
+// ---- SVG radar — 5 axes ----
 function RadarChart({ m, color }: { m: SchoolMetric; color: string }) {
   const SZ = 150, cx = SZ / 2, cy = SZ / 2, R = 56;
   const axes = [
     { label: "Src Goal",  value: m.gS },
-    { label: "Cntd Goal", value: m.gC },
     { label: "Appl Goal", value: m.gA },
     { label: "Yield",     value: m.yieldRate },
     { label: "Depth",     value: Math.min(m.depth * 2.5, 1) },
@@ -269,7 +268,6 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
 
   const METRIC_TIPS = {
     sourced:   "Sourced: Candidates identified or reached out to — the top of the funnel.",
-    contacted: "Contacted: Candidates who were actively engaged and responded to outreach.",
     applied:   "Applied: Candidates who submitted a full application to the Orr Fellowship.",
   };
 
@@ -338,11 +336,10 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                         </div>
                       </div>
 
-                      {/* Three metric boxes side by side */}
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginLeft: 38 }}>
+                      {/* Metric boxes side by side */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginLeft: 38 }}>
                         {([
                           { label: "Sourced",   act: m.sourced,   goal: m.goalSourced,   ratio: m.gS },
-                          { label: "Contacted", act: m.contacted, goal: m.goalContacted, ratio: m.gC },
                           { label: "Applied",   act: m.applied,   goal: m.goal,          ratio: m.gA },
                         ]).map(({ label, act, goal, ratio }) => {
                           const pct  = goal > 0 ? Math.round(ratio * 100) : 0;
@@ -587,7 +584,6 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
         const rows: [string, number | string, number | string][] = mA && mB ? [
           ["Active Pipeline", mA.active,    mB.active],
           ["Sourced",         mA.sourced,   mB.sourced],
-          ["Contacted",       mA.contacted, mB.contacted],
           ["Applied",         mA.applied,   mB.applied],
           ["Finalists",       mA.finalists, mB.finalists],
           ["Fellows",         mA.fellows,   mB.fellows],

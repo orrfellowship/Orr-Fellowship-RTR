@@ -14,7 +14,7 @@ function bustCache(tags: string[], paths: string[]) {
 import { cookies } from "next/headers";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile, isPreviewing, VIEW_AS_COOKIE } from "@/lib/auth";
-import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
+import { isSuper, isAdminPlus, canManageResources, canReassign } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
 import { sendEmail, emailLayout } from "@/lib/email";
@@ -148,9 +148,11 @@ export async function addCandidate(data: {
   const db = createServiceClient();
   // No school selected? Route off a school email address if we recognize it.
   const school_id = await routeSchoolIdByEmail(db, data.school_id, data.email);
+  // Only team leads / admins may assign a point person; ignore it from anyone else.
+  const point_person_id = canReassign(profile.role) ? (data.point_person_id ?? null) : null;
   // Manually-entered candidates start in the "sourced" phase (stage key "new");
   // JazzHR advances them from there. Respect an explicit stage if one is given.
-  const { error } = await db.from("candidates").insert({ ...data, school_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
+  const { error } = await db.from("candidates").insert({ ...data, school_id, point_person_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
   if (error) return { error: error.message };
   revalidatePath("/console");
   revalidatePath("/workspace");
@@ -221,10 +223,13 @@ export async function bulkImportCandidates(
     return name ? idByName.get(name) ?? null : null;
   };
 
+  // Only team leads / admins may assign point people on import.
+  const allowPP = canReassign(profile.role);
   const prepared = rows.map((r) => ({
     ...r,
     // No school chosen for this row? Route off a recognized school email.
     school_id: r.school_id || routeByEmail(r.email),
+    point_person_id: allowPP ? (r.point_person_id ?? null) : null,
     stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id,
   }));
 

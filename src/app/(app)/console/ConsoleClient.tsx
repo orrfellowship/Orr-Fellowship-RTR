@@ -1065,7 +1065,7 @@ export default function ConsoleClient({
         <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setAddOpen(false)} startTransition={startTransition} />
       )}
       {bulkOpen && (
-        <BulkImportModal schools={schools} team={team} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} />
+        <BulkImportModal schools={schools} team={team} canAssignPointPerson existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} />
       )}
       {inviteOpen && (
         <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />
