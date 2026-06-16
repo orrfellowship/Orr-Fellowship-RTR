@@ -4,7 +4,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus } from "@/lib/types";
 import { canAccessWorkspaceSection } from "@/lib/nav/config";
 import {
-  getTierSchoolIds, getSchoolsCached, getGoalsCached, getResourcesCached,
+  getTierSchoolIds, getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
   CAND_COLS_STANDINGS, CAND_COLS_WORKSPACE,
 } from "@/lib/queries";
 import WorkspaceClient from "../WorkspaceClient";
@@ -57,11 +57,11 @@ export default async function WorkspaceSection({ params }: { params: { section: 
   // Parallel, section-scoped fetches. Reference tables come from the shared
   // Data Cache (getSchoolsCached / getGoalsCached / getResourcesCached).
   const [candidates, favs, team, phases, allCandidates, allProfiles, allSchools, allGoals, resources] = await Promise.all([
-    need.candidates ? serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, source, created_by").in("school_id", tierSchoolIds).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.candidates ? fetchAllRows((from, to) => serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, source, created_by").in("school_id", tierSchoolIds).order("name").range(from, to)) : Promise.resolve([] as any[]),
     wantFavs ? serviceDb.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.team ? serviceDb.from("profiles").select("id, full_name, role").in("school_id", tierSchoolIds).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.phases ? serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").eq("school_id", playbookSchoolId).order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.allCandidates ? serviceDb.from("candidates").select(allCandSelect).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.allCandidates ? fetchAllRows((from, to) => serviceDb.from("candidates").select(allCandSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
     need.allProfiles ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.allSchools ? getSchoolsCached() : Promise.resolve([] as any[]),
     need.allGoals ? getGoalsCached() : Promise.resolve([] as any[]),
@@ -93,7 +93,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
   const candidateIds = (candidates ?? []).map((c: any) => c.id);
   const lastContactByCand: Record<string, string> = {};
   if (need.lastContact && candidateIds.length) {
-    const { data: logs } = await serviceDb.from("outreach_log").select("candidate_id, created_at").in("candidate_id", candidateIds);
+    const logs = await fetchAllRows((from, to) => serviceDb.from("outreach_log").select("candidate_id, created_at").in("candidate_id", candidateIds).range(from, to));
     for (const l of logs ?? []) {
       const prev = lastContactByCand[(l as any).candidate_id];
       if (!prev || (l as any).created_at > prev) lastContactByCand[(l as any).candidate_id] = (l as any).created_at;

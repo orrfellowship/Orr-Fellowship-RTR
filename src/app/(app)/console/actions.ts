@@ -20,7 +20,7 @@ import { routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
 import { sendEmail, emailLayout } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
-import { getTierSchoolIds } from "@/lib/queries";
+import { getTierSchoolIds, fetchAllRows } from "@/lib/queries";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -404,11 +404,11 @@ export async function deduplicateCandidates() {
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const serviceDb = createServiceClient();
-  const { data: allCands, error } = await serviceDb
-    .from("candidates")
-    .select("id, email, jazz_id")
-    .not("email", "is", null);
-  if (error) return { error: error.message };
+  // Page through — a single select caps at 1000, which would leave most
+  // duplicates unmerged once the table grows past that.
+  const allCands = await fetchAllRows<{ id: string; email: string | null; jazz_id: string | null }>(
+    (from, to) => serviceDb.from("candidates").select("id, email, jazz_id").not("email", "is", null).range(from, to),
+  );
 
   const emailGroups = new Map<string, { id: string; jazz_id: string | null }[]>();
   for (const c of allCands ?? []) {
@@ -768,13 +768,13 @@ export async function getUserSnapshot(userId: string) {
   const { ids: schoolIds } = await getTierSchoolIds(t.school_id);
   const queue: { name: string; why: string }[] = [];
   if (schoolIds.length) {
-    const { data: cands } = await db.from("candidates").select("id, name, stage, point_person_id, not_interested").in("school_id", schoolIds);
-    const list = (cands ?? []) as any[];
+    const cands = await fetchAllRows((from, to) => db.from("candidates").select("id, name, stage, point_person_id, not_interested").in("school_id", schoolIds).range(from, to));
+    const list = cands as any[];
     const ids = list.map((c) => c.id);
     const lastContact: Record<string, string> = {};
     if (ids.length) {
-      const { data: logs } = await db.from("outreach_log").select("candidate_id, created_at").in("candidate_id", ids);
-      for (const l of logs ?? []) { const cid = (l as any).candidate_id, ts = (l as any).created_at; if (!lastContact[cid] || ts > lastContact[cid]) lastContact[cid] = ts; }
+      const logs = await fetchAllRows((from, to) => db.from("outreach_log").select("candidate_id, created_at").in("candidate_id", ids).range(from, to));
+      for (const l of logs) { const cid = (l as any).candidate_id, ts = (l as any).created_at; if (!lastContact[cid] || ts > lastContact[cid]) lastContact[cid] = ts; }
     }
     const now = Date.now();
     const lead = t.role === "team_lead";

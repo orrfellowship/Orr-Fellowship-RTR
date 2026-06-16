@@ -4,7 +4,7 @@ import { createServerSupabase, createServiceClient } from "@/lib/supabase/server
 import { isSuper, isAdminPlus } from "@/lib/types";
 import { canAccessConsoleSection } from "@/lib/nav/config";
 import {
-  getSchoolsCached, getGoalsCached, getResourcesCached,
+  getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
   CAND_COLS_STANDINGS, CAND_COLS_CONSOLE,
 } from "@/lib/queries";
 import ConsoleClient from "../ConsoleClient";
@@ -41,14 +41,14 @@ export default async function ConsoleSection({ params }: { params: { section: st
   // Reference tables (schools/goals/resources) come from the shared Data Cache.
   const [schools, candidates, favs, team, goals, phases, resources, reviewData, aiData, usersData, people, budgetEntries, budgetGuidance] = await Promise.all([
     getSchoolsCached(),
-    need.candidates ? supabase.from("candidates").select(candSelect).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.candidates ? fetchAllRows((from, to) => supabase.from("candidates").select(candSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
     need.favs ? supabase.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.team ? supabase.from("profiles").select("id, full_name").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.goals ? getGoalsCached() : Promise.resolve([] as any[]),
     need.phases ? supabase.from("playbook_phases").select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.resources ? getResourcesCached() : Promise.resolve([] as any[]),
     need.reviews ? serviceDb.from("jazz_match_review").select("id, jazz_snapshot, candidate_id, reason").eq("status", "pending").order("created_at", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.ai ? supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.ai ? fetchAllRows((from, to) => supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").range(from, to)) : Promise.resolve([] as any[]),
     need.users ? supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.calendar ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.budget ? serviceDb.from("budget_entries").select("id, school_id, kind, label, amount, notes, receipt_url, created_by").order("created_at", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),

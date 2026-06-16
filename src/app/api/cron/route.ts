@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
 import { evaluateCandidate, DIGEST_KINDS } from "@/lib/triggers";
+import { fetchAllRows } from "@/lib/queries";
 
 // Scheduled worker. Protected by CRON_SECRET. Call it from Supabase pg_cron +
 // pg_net (see db/phase3.sql):
@@ -103,8 +104,9 @@ async function runDigests(db: Db) {
 
   const [{ data: profiles }, { data: candidates }, { data: logs }, { data: events }] = await Promise.all([
     db.from("profiles").select("id, email, full_name, role, school_id, is_active"),
-    db.from("candidates").select("id, name, stage, point_person_id, not_interested, school_id"),
-    db.from("outreach_log").select("candidate_id, created_at"),
+    // Paged so nudges/digests cover every candidate, not just the first 1000.
+    fetchAllRows((from, to) => db.from("candidates").select("id, name, stage, point_person_id, not_interested, school_id").range(from, to)).then((data) => ({ data })),
+    fetchAllRows((from, to) => db.from("outreach_log").select("candidate_id, created_at").range(from, to)).then((data) => ({ data })),
     db.from("events").select("id, title, event_date, event_type, school_id").eq("event_type", "attend").eq("event_date", tomorrow),
   ]);
 

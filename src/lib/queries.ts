@@ -13,6 +13,27 @@ import { createServiceClient } from "@/lib/supabase/server";
 //  • getTierSchoolIds is React-cache()'d so the layout's nav loader and the
 //    section page collapse their identical tier lookup into one query/request.
 
+// ---- unbounded reads -------------------------------------------------------
+// PostgREST caps a single SELECT at 1000 rows (its `max-rows` default), so a
+// plain `.select()` silently truncates once a table passes 1000 rows. Any list
+// that scales with candidate count must page through with `.range()` until a
+// short page comes back. `makeQuery` should apply the range to the built query
+// (e.g. `db.from("candidates").select(...).order("name").range(from, to)`).
+export async function fetchAllRows<T = any>(
+  makeQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  pageSize = 1000,
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await makeQuery(from, from + pageSize - 1);
+    if (error) break; // mirror the existing `?? []` tolerance rather than crashing the page
+    const batch = data ?? [];
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return all;
+}
+
 // ---- candidate column sets -------------------------------------------------
 // Standings only needs these three (computeSchoolMetrics / StandingsClient).
 export const CAND_COLS_STANDINGS = "id, school_id, stage";

@@ -3,6 +3,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isSuper } from "@/lib/types";
 import { mostAdvancedStage, routeToSchoolName } from "@/lib/stages";
+import { fetchAllRows } from "@/lib/queries";
 
 const JAZZ_BASE = "https://api.resumatorapi.com/v1";
 const TARGET_JOB = "job_20260522153804_UPQZOUKTV6TQ5UB5"; // Orr Fellowship 2027 — Early Career Dev Program
@@ -170,7 +171,9 @@ export async function POST(request: NextRequest) {
   //    applicant can be LINKED to a manually-entered/imported record instead of
   //    creating a duplicate. JazzHR is the source of truth for factual fields;
   //    local data (owner, notes, favorites, outreach, connections) is preserved.
-  const { data: allCands } = await db.from("candidates").select("id, jazz_id, email, phone, name, school_id");
+  // Page through every candidate — the matching index must be complete or
+  // JazzHR applicants past the 1000th row would be re-created as duplicates.
+  const allCands = await fetchAllRows((from, to) => db.from("candidates").select("id, jazz_id, email, phone, name, school_id").range(from, to));
   const { data: schoolsData } = await db.from("schools").select("id, name");
   const schoolNameById = new Map((schoolsData ?? []).map((s: any) => [s.id, s.name as string]));
   const schoolIdByName = new Map((schoolsData ?? []).map((s: any) => [s.name as string, s.id as string]));
@@ -285,13 +288,11 @@ export async function PUT(_request: NextRequest) {
   }
   const db = createServiceClient();
 
-  // Fetch all candidates that have university_raw but no school_id
-  const { data: unrouted, error: fetchErr } = await db
-    .from("candidates")
-    .select("id, university_raw")
-    .is("school_id", null)
-    .not("university_raw", "is", null);
-  if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+  // Fetch all candidates that have university_raw but no school_id (paged so we
+  // re-route the entire backlog, not just the first 1000).
+  const unrouted = await fetchAllRows<{ id: string; university_raw: string | null }>(
+    (from, to) => db.from("candidates").select("id, university_raw").is("school_id", null).not("university_raw", "is", null).range(from, to),
+  );
 
   const { data: schools } = await db.from("schools").select("id, name");
   const schoolMap = new Map((schools ?? []).map((s: any) => [s.name, s.id]));
