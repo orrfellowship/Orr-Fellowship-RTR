@@ -17,6 +17,7 @@ import BudgetPanel, { BudgetAnalysis, type BudgetEntry, type Guidance } from "@/
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
+import ImportInfoModal from "@/components/ImportInfoModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
@@ -143,6 +144,7 @@ export default function ConsoleClient({
   const [showUnrouted, setShowUnrouted] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   // Applicants filters + sort
   const [appSearch, setAppSearch] = useState("");
   const [appMajor, setAppMajor] = useState("All majors");
@@ -437,6 +439,7 @@ export default function ConsoleClient({
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <button onClick={() => setAddOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add</button>
                 <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                <button onClick={() => setInfoOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Import info</button>
               </div>
             </div>
 
@@ -1101,6 +1104,9 @@ export default function ConsoleClient({
       )}
       {bulkOpen && (
         <BulkImportModal schools={schools} team={team} canAssignPointPerson existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setBulkOpen(false); loadAppPage(0); }} />
+      )}
+      {infoOpen && (
+        <ImportInfoModal onClose={() => { setInfoOpen(false); loadAppPage(appPage); }} />
       )}
       {inviteOpen && (
         <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />

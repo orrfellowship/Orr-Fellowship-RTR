@@ -197,6 +197,49 @@ export async function updateCandidate(id: string, fields: {
   return { ok: true };
 }
 
+// Import partial info for candidates already in the system. Rows are matched to
+// existing candidates by email (case-insensitive); a provided value is written
+// only when that field is currently blank (never overwrites), and rows whose
+// email isn't found are skipped. Currently fills in LinkedIn URLs.
+export async function importCandidateInfo(
+  rows: { email: string; linkedin?: string | null }[],
+): Promise<{ ok?: true; updated: number; skipped: number; error?: string }> {
+  if (isPreviewing()) return { error: "Exit preview to make changes.", updated: 0, skipped: 0 };
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated", updated: 0, skipped: 0 };
+
+  const byEmail = new Map<string, { linkedin: string }>();
+  for (const r of rows) {
+    const email = (r.email ?? "").trim().toLowerCase();
+    const linkedin = (r.linkedin ?? "").trim();
+    if (email) byEmail.set(email, { linkedin });
+  }
+  if (byEmail.size === 0) return { ok: true, updated: 0, skipped: rows.length };
+
+  const db = createServiceClient();
+  // Match in memory (case-insensitive email), paging past the 1000-row cap.
+  const all = await fetchAllRows<{ id: string; email: string | null; linkedin: string | null }>(
+    (from, to) => db.from("candidates").select("id, email, linkedin").not("email", "is", null).range(from, to),
+  );
+  const matched = new Set<string>();
+  let updated = 0;
+  for (const c of all) {
+    const email = (c.email ?? "").trim().toLowerCase();
+    const inp = byEmail.get(email);
+    if (!inp) continue;
+    matched.add(email);
+    // Fill blanks only — never overwrite an existing LinkedIn.
+    if (inp.linkedin && !(c.linkedin ?? "").trim()) {
+      const { error } = await db.from("candidates").update({ linkedin: inp.linkedin }).eq("id", c.id);
+      if (!error) updated++;
+    }
+  }
+  const skipped = byEmail.size - matched.size; // input emails with no candidate match
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true, updated, skipped };
+}
+
 export async function deleteCandidate(id: string) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();

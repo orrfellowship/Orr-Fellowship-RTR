@@ -15,6 +15,7 @@ import { evaluateCandidate } from "@/lib/triggers";
 import StandingsClient from "@/components/StandingsClient";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
+import ImportInfoModal from "@/components/ImportInfoModal";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
@@ -127,6 +128,7 @@ export default function WorkspaceClient({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const canEdit = canEditPlaybook(profile.role);
@@ -566,7 +568,10 @@ export default function WorkspaceClient({
                   <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Candidates</h1>
                   <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{allTotal.toLocaleString()} candidate{allTotal !== 1 ? "s" : ""}{allLoading ? " · loading…" : ""} · click a row to view details</p>
                 </div>
-                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                  <button onClick={() => setInfoOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Import info</button>
+                </div>
               </div>
 
               {/* Filter bar */}
@@ -672,6 +677,9 @@ export default function WorkspaceClient({
           existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
           onClose={() => { setBulkOpen(false); if (tab === "all") loadAllPage(0); }}
         />
+      )}
+      {infoOpen && (
+        <ImportInfoModal onClose={() => { setInfoOpen(false); if (tab === "all") loadAllPage(allPageNum); }} />
       )}
       {assignOpen && (
         <AssignPointPeopleModal
