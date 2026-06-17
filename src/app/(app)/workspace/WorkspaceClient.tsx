@@ -9,7 +9,7 @@ import {
   deleteOutreach, deleteConnection, updatePhase, deletePhase,
   requestTaskComplete, confirmTaskComplete, setTaskAssignees,
 } from "./actions";
-import { listCandidates } from "@/app/(app)/console/actions";
+import { listCandidates, updateCandidate } from "@/app/(app)/console/actions";
 import { phaseOf } from "@/lib/stages";
 import { evaluateCandidate } from "@/lib/triggers";
 import StandingsClient from "@/components/StandingsClient";
@@ -658,7 +658,7 @@ export default function WorkspaceClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} allProfiles={allProfiles} onClose={() => { setOpenId(null); if (tab === "all") loadAllPage(allPageNum); }} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
+        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} allProfiles={allProfiles} onClose={() => { setOpenId(null); if (tab === "all") loadAllPage(allPageNum); }} onSaved={() => { if (tab === "all") loadAllPage(allPageNum); }} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
       )}
       {resumeFor && (
         <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
@@ -1252,12 +1252,29 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
 type Connection = { id: string; fellow_id: string; name: string; relationship: string; tagged_profile_id?: string | null };
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
-function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, startTransition, onResume }: {
+function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, onSaved, startTransition, onResume }: {
   c: Cand; canEdit: boolean; profile: Profile; team: TeamMember[];
   allProfiles: { id: string; full_name: string }[];
-  onClose: () => void; startTransition: (cb: () => void) => void;
+  onClose: () => void; onSaved?: () => void; startTransition: (cb: () => void) => void;
   onResume: (jazzId: string, name: string) => void;
 }) {
+  // Editing candidate details is limited to whoever added the candidate.
+  const isCreator = c.created_by === profile.id;
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const blankEdit = { name: c.name, email: c.email ?? "", linkedin: c.linkedin ?? "", gpa: c.gpa ?? "", area_of_study: c.area_of_study ?? "" };
+  const [edit, setEdit] = useState(blankEdit);
+  const startEdit = () => { setEdit({ name: c.name, email: c.email ?? "", linkedin: c.linkedin ?? "", gpa: c.gpa ?? "", area_of_study: c.area_of_study ?? "" }); setEditing(true); };
+  const setEf = (k: keyof typeof blankEdit, v: string) => setEdit((p) => ({ ...p, [k]: v }));
+  const saveEdit = () => {
+    if (!edit.name.trim()) return;
+    setSaving(true);
+    updateCandidate(c.id, { name: edit.name, email: edit.email, linkedin: edit.linkedin, gpa: edit.gpa, area_of_study: edit.area_of_study }).then((r: any) => {
+      setSaving(false);
+      if (r?.error) alert(r.error);
+      else { setEditing(false); onSaved?.(); }
+    });
+  };
   const [draft, setDraft] = useState("");
   const [log, setLog] = useState<{ id: string; body: string; created_at: string; author_id: string | null }[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
@@ -1316,7 +1333,10 @@ function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, star
       <div style={{ position: "relative", width: 440, maxWidth: "93vw", background: C.canvas, height: "100%", overflowY: "auto" }}>
         <div style={{ background: C.navy, color: "#fff", padding: "24px 24px 20px", position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
-          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px" }}>{c.name}</h2>
+          {!editing && isCreator && (
+            <button onClick={startEdit} title="Edit candidate details" style={{ position: "absolute", top: 14, right: 54, background: C.orange, border: "none", color: "#fff", height: 32, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: "0 2px 8px rgba(221,84,52,.4)" }}>✎ Edit details</button>
+          )}
+          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}>{c.name}</h2>
           <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.72)" }}>{c.area_of_study}</div>
           <div style={{ fontSize: 11.5, color: "rgba(255,255,255,.6)", marginTop: 3 }}>Added by {c.created_by ? profileName(c.created_by) : (c.source === "jazzhr" ? "JazzHR sync" : "—")}</div>
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>
@@ -1334,19 +1354,38 @@ function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, star
             </div>
           )}
 
-          {[["Email", c.email], ["GPA", c.gpa]].map(([k, v]) => (
-            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span><span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>
+          {editing ? (
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 16, margin: "4px 0 20px" }}>
+              <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 12, letterSpacing: 0.8 }}>Edit details</div>
+              {([["Name", "name", "Full name"], ["Email", "email", "email@example.com"], ["Major", "area_of_study", "Area of study"], ["GPA", "gpa", "e.g. 3.7"], ["LinkedIn URL", "linkedin", "https://linkedin.com/in/…"]] as [string, keyof typeof blankEdit, string][]).map(([label, key, ph]) => (
+                <div key={key} style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>{label}{key === "name" ? " *" : ""}</label>
+                  <input value={edit[key]} onChange={(e) => setEf(key, e.target.value)} placeholder={ph}
+                    style={{ width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${key === "name" && !edit.name.trim() ? C.orange : C.line}`, fontSize: 13.5, boxSizing: "border-box" }} />
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+                <button onClick={() => setEditing(false)} disabled={saving} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "9px 16px", borderRadius: 9, cursor: saving ? "default" : "pointer" }}>Cancel</button>
+                <button onClick={saveEdit} disabled={saving || !edit.name.trim()} style={{ border: "none", background: edit.name.trim() ? C.navy : "#9AA0B5", color: "#fff", fontWeight: 700, padding: "9px 18px", borderRadius: 9, cursor: saving || !edit.name.trim() ? "default" : "pointer" }}>{saving ? "Saving…" : "Save"}</button>
+              </div>
             </div>
-          ))}
-          <div style={{ display: "flex", gap: 8, margin: "16px 0 20px" }}>
-            <a href={c.linkedin ?? "#"} target="_blank" rel="noopener noreferrer"
-              style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>LinkedIn ↗</a>
-            <button
-              onClick={() => { if (c.jazz_id) onResume(c.jazz_id, c.name); }}
-              disabled={!c.jazz_id}
-              style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>Résumé</button>
-          </div>
+          ) : (
+            <>
+              {[["Email", c.email], ["GPA", c.gpa]].map(([k, v]) => (
+                <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
+                  <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span><span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, margin: "16px 0 20px" }}>
+                <a href={c.linkedin ?? "#"} target="_blank" rel="noopener noreferrer"
+                  style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>LinkedIn ↗</a>
+                <button
+                  onClick={() => { if (c.jazz_id) onResume(c.jazz_id, c.name); }}
+                  disabled={!c.jazz_id}
+                  style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>Résumé</button>
+              </div>
+            </>
+          )}
 
           {/* warm-intro finder */}
           <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px", marginBottom: 20 }}>

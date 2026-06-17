@@ -1094,7 +1094,7 @@ export default function ConsoleClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => { setOpenId(null); if (tab === "applicants") loadAppPage(appPage); }} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
+        <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => { setOpenId(null); if (tab === "applicants") loadAppPage(appPage); }} onSaved={() => loadAppPage(appPage)} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
       )}
       {addOpen && (
         <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setAddOpen(false); loadAppPage(0); }} startTransition={startTransition} />
@@ -1170,9 +1170,9 @@ type Connection = { id: string; fellow_id: string; name: string; relationship: s
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
 // ---- Candidate Drawer ----
-function CandidateDrawer({ c, profile, team, schools, onClose, startTransition, aiData, superUser }: {
+function CandidateDrawer({ c, profile, team, schools, onClose, onSaved, startTransition, aiData, superUser }: {
   c: Cand; profile: Profile; team: TeamMember[]; schools: School[];
-  onClose: () => void; startTransition: (cb: () => void) => void;
+  onClose: () => void; onSaved?: () => void; startTransition: (cb: () => void) => void;
   aiData: AI | null; superUser: boolean;
 }) {
   const router = useRouter();
@@ -1207,7 +1207,7 @@ function CandidateDrawer({ c, profile, team, schools, onClose, startTransition, 
       }).then((r: any) => {
         setSaving(false);
         if (r?.error) alert(r.error);
-        else { setEditing(false); router.refresh(); }
+        else { setEditing(false); if (onSaved) onSaved(); else router.refresh(); }
       });
     });
   };
@@ -1259,10 +1259,10 @@ function CandidateDrawer({ c, profile, team, schools, onClose, startTransition, 
       <div style={{ position: "relative", width: 440, maxWidth: "93vw", background: C.canvas, height: "100%", overflowY: "auto" }}>
         <div style={{ background: C.navy, color: "#fff", padding: "24px 24px 20px", position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
-          {!editing && (
-            <button onClick={startEdit} title="Edit details" style={{ position: "absolute", top: 16, right: 54, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", height: 30, padding: "0 12px", borderRadius: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>✎ Edit</button>
+          {!editing && c.created_by === profile.id && (
+            <button onClick={startEdit} title="Edit candidate details" style={{ position: "absolute", top: 14, right: 54, background: C.orange, border: "none", color: "#fff", height: 32, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: "0 2px 8px rgba(221,84,52,.4)" }}>✎ Edit details</button>
           )}
-          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px" }}>{c.name}</h2>
+          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}>{c.name}</h2>
           <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.72)" }}>{c.area_of_study}</div>
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>
         </div>
@@ -1531,6 +1531,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
   const [schoolValue, setSchoolValue] = useState("");
   const [specificSchool, setSpecificSchool] = useState("");
   const [pointPerson, setPointPerson] = useState<string | null>(null);
+  const [linkedin, setLinkedin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -1557,6 +1558,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
         school_id: schoolValue || null,
         university_raw,
         point_person_id: pointPerson,
+        linkedin: linkedin.trim() || null,
         // Stage / GPA / major are filled in later from JazzHR — not part of sourcing.
         stage: null, gpa: null, area_of_study: null,
       }).then((r) => {
@@ -1601,6 +1603,11 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Point person</label>
           <PersonPicker value={pointPerson} options={team} meId={meId} placeholder="Search team…" onChange={(v) => setPointPerson(v)} />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>LinkedIn URL</label>
+          <input value={linkedin} onChange={(e) => setLinkedin(e.target.value)} placeholder="https://linkedin.com/in/…" style={inputStyle} />
         </div>
 
         <div style={{ background: "#EEF1F7", borderRadius: 9, padding: "9px 12px", marginBottom: 14, fontSize: 12, color: C.grayMute }}>

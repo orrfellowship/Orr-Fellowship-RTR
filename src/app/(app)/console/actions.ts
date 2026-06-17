@@ -140,7 +140,7 @@ async function routeSchoolIdByEmail(
 export async function addCandidate(data: {
   name: string; email: string | null; school_id: string | null;
   stage: string | null; gpa: string | null; area_of_study: string | null;
-  university_raw?: string | null; point_person_id?: string | null;
+  university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null;
 }) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
@@ -166,8 +166,14 @@ export async function updateCandidate(id: string, fields: {
 }) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
-  if (!profile) return { error: "Not authenticated" }; // any signed-in user may edit
+  if (!profile) return { error: "Not authenticated" };
   if (fields.name !== undefined && !fields.name.trim()) return { error: "Name can't be empty." };
+
+  const db = createServiceClient();
+  // Editing is limited to the person who added the candidate.
+  const { data: existing } = await db.from("candidates").select("created_by").eq("id", id).maybeSingle();
+  if (!existing) return { error: "Candidate not found." };
+  if ((existing as any).created_by !== profile.id) return { error: "Only the person who added this candidate can edit it." };
 
   // Only persist keys that were actually provided, so a partial edit never wipes
   // an untouched column. Trim text; empty strings become null for nullable fields.
@@ -184,7 +190,6 @@ export async function updateCandidate(id: string, fields: {
   if (fields.school_id !== undefined) updates.school_id = fields.school_id || null;
   if (Object.keys(updates).length === 0) return { ok: true };
 
-  const db = createServiceClient();
   const { error } = await db.from("candidates").update(updates).eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/console");
