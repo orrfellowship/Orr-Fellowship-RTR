@@ -30,6 +30,8 @@ const C = {
   line: "#E4E7EE", canvas: "#F7F8FB", gold: "#C9A227", good: "#2F8F6B",
 };
 const HEAD = "'Cabin', sans-serif";
+// Thousands-separated integer (e.g. 1,200).
+const nf = (n: number) => Number(n || 0).toLocaleString("en-US");
 
 type School = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
 type Cand = {
@@ -331,11 +333,11 @@ export default function ConsoleClient({
                   <div key={b.label} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
                     <div style={{ background: C.navy, color: "#fff", padding: "16px 20px", textAlign: "center" }}>
                       <div style={{ fontFamily: HEAD, fontSize: 13, fontWeight: 600, textTransform: "uppercase", opacity: 0.8 }}>{b.label}</div>
-                      <div style={{ fontFamily: HEAD, fontSize: 40, fontWeight: 700, marginTop: 4 }}>{b.actual}</div>
+                      <div style={{ fontFamily: HEAD, fontSize: 40, fontWeight: 700, marginTop: 4 }}>{nf(b.actual)}</div>
                     </div>
                     <div style={{ padding: "12px 20px", textAlign: "center", borderBottom: `1px solid ${C.line}` }}>
                       <div style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goal</div>
-                      <div style={{ fontFamily: HEAD, fontSize: 22, fontWeight: 700, color: C.navy2 }}>{b.goal}</div>
+                      <div style={{ fontFamily: HEAD, fontSize: 22, fontWeight: 700, color: C.navy2 }}>{nf(b.goal)}</div>
                     </div>
                     <div style={{ padding: "12px 20px", textAlign: "center", background: `${tone}14` }}>
                       <div style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>% Complete</div>
@@ -368,8 +370,8 @@ export default function ConsoleClient({
                         {opts.logo && <img src={opts.logo} alt="" style={{ height: 24, width: 24, objectFit: "contain", borderRadius: 4 }} />}
                         <div><div style={{ fontWeight: 700, color: C.gray }}>{name}</div><div style={{ fontSize: 11, color: C.grayMute, textTransform: "capitalize" }}>{sub}</div></div>
                       </div>
-                      <div style={{ color: accent, fontWeight: 700 }}>{c2.sourced}</div>
-                      <div style={{ color: accent, fontWeight: 700 }}>{c2.applied}</div>
+                      <div style={{ color: accent, fontWeight: 700 }}>{nf(c2.sourced)}</div>
+                      <div style={{ color: accent, fontWeight: 700 }}>{nf(c2.applied)}</div>
                     </div>
                   );
                 };
@@ -754,7 +756,7 @@ export default function ConsoleClient({
                       const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
                       return (
                         <div key={lbl} style={{ textAlign: "center" }}>
-                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: hasGoal ? tone : C.navy2 }}>{act}</div>
+                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: hasGoal ? tone : C.navy2 }}>{nf(act)}</div>
                           <div style={{ fontSize: 10, color: C.grayMute, fontWeight: 600 }}>{lbl}{hasGoal ? ` · ${pct}%` : ""}</div>
                         </div>
                       );
@@ -821,7 +823,7 @@ export default function ConsoleClient({
                               const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
                               return (
                                 <span key={lbl} style={{ fontSize: 13, color: C.grayMute }}>
-                                  {lbl}: <b style={{ color: hasGoal ? tone : C.navy2 }}>{act}</b>{hasGoal ? <span style={{ fontSize: 11, color: tone }}> ({pct}%)</span> : ""}
+                                  {lbl}: <b style={{ color: hasGoal ? tone : C.navy2 }}>{nf(act)}</b>{hasGoal ? <span style={{ fontSize: 11, color: tone }}> ({pct}%)</span> : ""}
                                 </span>
                               );
                             })}
