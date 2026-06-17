@@ -15,6 +15,8 @@ export type BudgetEntry = {
   label: string; amount: number | string; notes: string | null;
   receipt_url: string | null; created_by: string | null;
 };
+// `pct` is the legacy DB column name; it now holds a recommended DOLLAR amount
+// per category (not a percentage). Kept as-is to avoid a destructive rename.
 export type Guidance = { id?: string; category: string; pct: number | string };
 
 const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -118,11 +120,12 @@ export default function BudgetPanel({
   );
 }
 
-// ---- Recommended % split by category ----------------------------------------
+// ---- Recommended dollar amount by category ----------------------------------
 function GuidanceSection({ guidance, allocated, canManage, pending, onSave }: {
   guidance: Guidance[]; allocated: number; canManage: boolean; pending: boolean;
   onSave: (items: { category: string; pct: number }[]) => void;
 }) {
+  const recommendedTotal = guidance.reduce((sum, g) => sum + (Number(g.pct) || 0), 0);
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<{ category: string; pct: string }[]>(
     guidance.length ? guidance.map((g) => ({ category: g.category, pct: String(g.pct) })) : [{ category: "", pct: "" }],
@@ -134,7 +137,7 @@ function GuidanceSection({ guidance, allocated, canManage, pending, onSave }: {
   return (
     <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 18, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <div style={{ fontFamily: HEAD, fontWeight: 700, color: C.navy, fontSize: 14 }}>Recommended spending split</div>
+        <div style={{ fontFamily: HEAD, fontWeight: 700, color: C.navy, fontSize: 14 }}>Recommended budget by category</div>
         {canManage && !editing && <button onClick={() => setEditing(true)} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy2, fontWeight: 600, fontSize: 12.5, padding: "6px 12px", borderRadius: 8, cursor: "pointer" }}>Edit</button>}
       </div>
 
@@ -144,18 +147,25 @@ function GuidanceSection({ guidance, allocated, canManage, pending, onSave }: {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {guidance.map((g, i) => {
-              const pct = Number(g.pct || 0);
+              const amount = Number(g.pct || 0);
+              // Bar shows this category's share of the total recommendation.
+              const share = recommendedTotal > 0 ? (amount / recommendedTotal) * 100 : 0;
               return (
                 <div key={g.id ?? i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ width: 140, fontSize: 13, color: C.gray }}>{g.category}</div>
                   <div style={{ flex: 1, height: 8, background: C.canvas, borderRadius: 99, overflow: "hidden" }}>
-                    <div style={{ width: `${Math.min(pct, 100)}%`, height: "100%", background: C.navy2 }} />
+                    <div style={{ width: `${Math.min(share, 100)}%`, height: "100%", background: C.navy2 }} />
                   </div>
-                  <div style={{ width: 44, textAlign: "right", fontSize: 13, fontWeight: 700, color: C.navy }}>{pct}%</div>
-                  <div style={{ width: 80, textAlign: "right", fontSize: 12, color: C.grayMute }}>{usd((allocated * pct) / 100)}</div>
+                  <div style={{ width: 90, textAlign: "right", fontSize: 13, fontWeight: 700, color: C.navy }}>{usd(amount)}</div>
                 </div>
               );
             })}
+            <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${C.line}`, marginTop: 4, paddingTop: 8, fontSize: 12.5 }}>
+              <span style={{ color: C.grayMute }}>Recommended total</span>
+              <span style={{ fontWeight: 700, color: recommendedTotal > allocated && allocated > 0 ? C.orange : C.navy }}>
+                {usd(recommendedTotal)}{allocated > 0 ? ` of ${usd(allocated)} allocated` : ""}
+              </span>
+            </div>
           </div>
         )
       ) : (
@@ -163,7 +173,10 @@ function GuidanceSection({ guidance, allocated, canManage, pending, onSave }: {
           {rows.map((r, i) => (
             <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input value={r.category} onChange={(e) => setRows((p) => p.map((x, j) => j === i ? { ...x, category: e.target.value } : x))} placeholder="Category (e.g. Events)" style={{ ...inp, flex: 1 }} />
-              <input value={r.pct} onChange={(e) => setRows((p) => p.map((x, j) => j === i ? { ...x, pct: e.target.value } : x))} placeholder="%" inputMode="decimal" style={{ ...inp, width: 70 }} />
+              <div style={{ position: "relative", width: 120 }}>
+                <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13.5, color: C.grayMute, pointerEvents: "none" }}>$</span>
+                <input value={r.pct} onChange={(e) => setRows((p) => p.map((x, j) => j === i ? { ...x, pct: e.target.value } : x))} placeholder="0" inputMode="decimal" style={{ ...inp, width: "100%", paddingLeft: 20 }} />
+              </div>
               <button onClick={() => setRows((p) => p.filter((_, j) => j !== i))} style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 17 }}>×</button>
             </div>
           ))}
