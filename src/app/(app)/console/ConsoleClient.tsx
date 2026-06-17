@@ -409,6 +409,19 @@ export default function ConsoleClient({
           );
           const filtersActive = appSearch.trim() !== "" || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all" || appCreator !== "anyone";
 
+          // Pagination control — rendered both above and below the table.
+          const pager = (where: "top" | "bottom") => appTotal > APP_PAGE_SIZE ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: where === "top" ? 16 : 16, marginBottom: where === "top" ? 0 : 0 }}>
+              <button onClick={() => loadAppPage(appPage - 1)} disabled={appPage <= 0 || appLoading}
+                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage <= 0 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage <= 0 || appLoading ? "default" : "pointer" }}>← Prev</button>
+              <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>
+                Page {(appPage + 1).toLocaleString()} of {totalPages.toLocaleString()} · {(appPage * APP_PAGE_SIZE + 1).toLocaleString()}–{Math.min((appPage + 1) * APP_PAGE_SIZE, appTotal).toLocaleString()} of {appTotal.toLocaleString()}
+              </span>
+              <button onClick={() => loadAppPage(appPage + 1)} disabled={appPage >= totalPages - 1 || appLoading}
+                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage >= totalPages - 1 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage >= totalPages - 1 || appLoading ? "default" : "pointer" }}>Next →</button>
+            </div>
+          ) : null;
+
           return (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
@@ -503,6 +516,8 @@ export default function ConsoleClient({
               )}
             </div>
 
+            {pager("top")}
+
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16, ...(isMobile ? { overflowX: "auto" } : {}) }}>
               <div style={{ display: "grid", gridTemplateColumns: `1.7fr 1fr 1fr 0.6fr 1fr${superUser ? " 0.8fr" : ""} 40px`, minWidth: isMobile ? 640 : undefined, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                 <SortHead k="name" label="Candidate" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" />{superUser && <SortHead k="ai" label="AI" />}<div></div>
@@ -549,18 +564,7 @@ export default function ConsoleClient({
               )}
             </div>
 
-            {/* Pagination */}
-            {appTotal > APP_PAGE_SIZE && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 16 }}>
-                <button onClick={() => loadAppPage(appPage - 1)} disabled={appPage <= 0 || appLoading}
-                  style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage <= 0 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage <= 0 || appLoading ? "default" : "pointer" }}>← Prev</button>
-                <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>
-                  Page {appPage + 1} of {totalPages} · {(appPage * APP_PAGE_SIZE + 1).toLocaleString()}–{Math.min((appPage + 1) * APP_PAGE_SIZE, appTotal).toLocaleString()} of {appTotal.toLocaleString()}
-                </span>
-                <button onClick={() => loadAppPage(appPage + 1)} disabled={appPage >= totalPages - 1 || appLoading}
-                  style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage >= totalPages - 1 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage >= totalPages - 1 || appLoading ? "default" : "pointer" }}>Next →</button>
-              </div>
-            )}
+            {pager("bottom")}
           </>
         );})()}
 
