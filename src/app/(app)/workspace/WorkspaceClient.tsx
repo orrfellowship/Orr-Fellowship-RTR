@@ -263,8 +263,6 @@ export default function WorkspaceClient({
     return results;
   }, [phases, profile.id]);
 
-  const MONTHS = ["July", "August", "September", "Oct/Nov"];
-
   return (
     <>
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: isMobile ? "20px 14px 60px" : "30px 28px 80px", opacity: pending ? 0.7 : 1 }}>
@@ -362,14 +360,14 @@ export default function WorkspaceClient({
                 </h2>
                 {myTasks.length === 0 ? (
                   <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12 }}>No tasks assigned to you.</div>
-                ) : MONTHS.map((month) => {
-                  const monthTasks = myTasks.filter((m) => m.task.month_label === month);
-                  if (!monthTasks.length) return null;
+                ) : phases.map((p) => {
+                  const dateTasks = p.playbook_tasks.filter((t) => effAssignees(t).includes(profile.id));
+                  if (!dateTasks.length) return null;
                   return (
-                    <div key={month} style={{ marginBottom: 16 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 8 }}>{month}</div>
+                    <div key={p.id} style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 8 }}>{p.title}</div>
                       <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
-                        {monthTasks.map(({ task: t, roleTitle }) => {
+                        {dateTasks.map((t) => {
                           const myState = compStateOf(t, profile.id);
                           const confirmed = myState === "confirmed";
                           const pending = myState === "pending_review";
@@ -386,7 +384,6 @@ export default function WorkspaceClient({
                                 <span style={{ fontSize: 13.5, color: C.gray, textDecoration: confirmed ? "line-through" : "none" }}>{t.text}</span>
                                 {pending && <div style={{ fontSize: 11, color: "#8A6D0E", fontWeight: 600 }}>Completed · waiting on team-lead review to count</div>}
                               </div>
-                              <span style={{ fontSize: 11, color: C.grayMute, flexShrink: 0 }}>{roleTitle}</span>
                             </div>
                           );
                         })}
@@ -889,8 +886,6 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
 }
 
 // ---- PLAYBOOK TAB ----
-const MONTHS = ["July", "August", "September", "Oct/Nov"] as const;
-
 function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTransition }: {
   phases: { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] }[];
   profile: Profile; canEdit: boolean; team: { id: string; full_name: string }[];
@@ -950,7 +945,7 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
     return { onTime, late, overdue, perPerson };
   }, [allTasks, team]);
 
-  function makeTask(phaseId: string, monthLabel: string) {
+  function makeTask(phaseId: string, monthLabel: string | null = null) {
     startTransition(() => {
       upsertTask({ phase_id: phaseId, text: "New task", assignee_id: null, assignee_label: null, month_label: monthLabel, notes: null, due_date: null, done: false });
     });
@@ -961,11 +956,11 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 6 }}>
         <div>
           <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Playbook</h1>
-          <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{canEdit ? "Role-based recruitment plan. Edit inline — changes save automatically." : "Your team's recruitment plan."}</p>
+          <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{canEdit ? "Recruitment plan organized by date. Edit inline — changes save automatically." : "Your team's recruitment plan."}</p>
         </div>
         {canEdit && (
-          <button onClick={() => startTransition(() => { addPhase(profile.school_id ?? "", "Role", `New Role ${phases.length + 1}`, phases.length); })}
-            style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", fontSize: 13.5 }}>+ Add role</button>
+          <button onClick={() => startTransition(() => { addPhase(profile.school_id ?? "", "", "New date", phases.length); })}
+            style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", fontSize: 13.5 }}>+ Add date</button>
         )}
       </div>
 
@@ -1079,48 +1074,40 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
                 )}
                 <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>{roleDone}/{p.playbook_tasks.length}</span>
                 {canEdit && (
-                  <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete role "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
+                  <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
                     style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, padding: "2px 6px", borderRadius: 6 }}>Delete</button>
                 )}
                 <span style={{ color: C.grayMute, fontSize: 16 }}>{isExpanded ? "▲" : "▼"}</span>
               </div>
 
-              {/* Month groups */}
-              {isExpanded && (
-                <div style={{ padding: "0 18px 14px" }}>
-                  {MONTHS.map((month) => {
-                    const mTasks = p.playbook_tasks.filter((t) => (t.month_label ?? "July") === month && matchesFilter(t));
-                    if (!mTasks.length && (!canEdit || filtersActive)) return null;
-                    return (
-                      <div key={month} style={{ marginTop: 16 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: accent, letterSpacing: 0.8, flex: 1 }}>{month}</div>
-                          {canEdit && (
-                            <button onClick={() => makeTask(p.id, month)}
-                              style={{ border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, fontSize: 11, padding: "3px 10px", borderRadius: 7, cursor: "pointer" }}>+ Add task</button>
-                          )}
-                        </div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                          {mTasks.map((t) => (
-                            <TaskRow key={t.id} task={t} phase={p} canEdit={canEdit} team={team} profile={profile}
-                              noteOpen={expandedNotes.has(t.id)} onToggleNote={() => toggleNote(t.id)}
-                              accent={accent} startTransition={startTransition} />
-                          ))}
-                          {mTasks.length === 0 && (
-                            <div style={{ fontSize: 12, color: C.grayMute, fontStyle: "italic", padding: "4px 0" }}>No tasks for {month} — add one above.</div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              {/* Tasks for this date */}
+              {isExpanded && (() => {
+                const tasks = p.playbook_tasks.filter(matchesFilter);
+                return (
+                  <div style={{ padding: "12px 18px 14px" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      {tasks.map((t) => (
+                        <TaskRow key={t.id} task={t} phase={p} canEdit={canEdit} team={team} profile={profile}
+                          noteOpen={expandedNotes.has(t.id)} onToggleNote={() => toggleNote(t.id)}
+                          accent={accent} startTransition={startTransition} />
+                      ))}
+                      {tasks.length === 0 && (
+                        <div style={{ fontSize: 12, color: C.grayMute, fontStyle: "italic", padding: "4px 0" }}>{filtersActive ? "No matching tasks." : "No tasks yet."}</div>
+                      )}
+                    </div>
+                    {canEdit && (
+                      <button onClick={() => makeTask(p.id)}
+                        style={{ marginTop: 10, border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, fontSize: 12, padding: "6px 12px", borderRadius: 8, cursor: "pointer" }}>+ Add task</button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
         {phases.length === 0 && (
           <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>
-            {canEdit ? "No roles yet — add the first role above." : "No playbook yet."}
+            {canEdit ? "No playbook yet — add the first date above." : "No playbook yet."}
           </div>
         )}
       </div>

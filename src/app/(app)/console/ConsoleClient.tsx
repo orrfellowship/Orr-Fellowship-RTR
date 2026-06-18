@@ -635,8 +635,8 @@ export default function ConsoleClient({
                 </h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
                   {playbookGrouped
-                    ? "One shared playbook for all schools in this group. Changes save on blur."
-                    : "Edit phase names, tasks, assignees, and due dates inline. Changes save on blur."}
+                    ? "One shared playbook for all schools in this group. Organized by date. Changes save on blur."
+                    : "Organized by date — edit dates, tasks, assignees, and due dates inline. Changes save on blur."}
                 </p>
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -655,9 +655,9 @@ export default function ConsoleClient({
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
-              <button onClick={() => startTransition(() => { addPhase(playbookSchool, "Month", "New phase", playbookPhases.length); })}
+              <button onClick={() => startTransition(() => { addPhase(playbookSchool, "", "New date", playbookPhases.length); })}
                 style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer" }}>
-                + Add phase
+                + Add date
               </button>
               <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5, marginLeft: 8 }}>Filter</span>
               <select value={pbAssignee} onChange={(e) => setPbAssignee(e.target.value)}
@@ -689,9 +689,9 @@ export default function ConsoleClient({
                     <input defaultValue={p.title}
                       onBlur={(e) => { if (e.target.value.trim() !== p.title) startTransition(() => { updatePhase(p.id, p.label, e.target.value.trim() || p.title); }); }}
                       style={{ fontFamily: HEAD, fontSize: 18, fontWeight: 700, color: C.navy, border: "none", background: "transparent", flex: 1, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
-                    <button onClick={() => { if (confirm(`Delete phase "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
+                    <button onClick={() => { if (confirm(`Delete "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
                       style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6, whiteSpace: "nowrap" }}>
-                      Delete phase
+                      Delete date
                     </button>
                   </div>
                   {visibleTasks.map((t) => (
@@ -722,7 +722,7 @@ export default function ConsoleClient({
                 </div>
                 );
               })}
-              {playbookPhases.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No playbook yet for this school — add the first phase.</div>}
+              {playbookPhases.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No playbook yet for this school — seed the defaults or add the first date.</div>}
             </div>
           </>
         )}

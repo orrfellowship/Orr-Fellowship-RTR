@@ -807,22 +807,43 @@ export async function seedPlaybook(schoolId: string, force = false) {
     await db.from("playbook_phases").delete().eq("school_id", schoolId);
   }
 
-  for (let i = 0; i < PLAYBOOK_DEFAULTS.length; i++) {
-    const role = PLAYBOOK_DEFAULTS[i];
+  // The playbook is organized by DATE, not by role. Flatten every role's tasks,
+  // group them by month, and de-duplicate identical tasks within a month so each
+  // date shows a clean task list.
+  const MONTH_ORDER = ["July", "August", "September", "Oct/Nov"];
+  const byMonth = new Map<string, string[]>();
+  const seen = new Map<string, Set<string>>();
+  for (const role of PLAYBOOK_DEFAULTS) {
+    for (const t of role.tasks) {
+      const month = t.month;
+      if (!byMonth.has(month)) { byMonth.set(month, []); seen.set(month, new Set()); }
+      const key = t.text.trim();
+      if (seen.get(month)!.has(key)) continue;
+      seen.get(month)!.add(key);
+      byMonth.get(month)!.push(t.text);
+    }
+  }
+  const months = [...byMonth.keys()].sort((a, b) => {
+    const ia = MONTH_ORDER.indexOf(a), ib = MONTH_ORDER.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
+  for (let i = 0; i < months.length; i++) {
+    const month = months[i];
     const { data: phase, error: phaseErr } = await db
       .from("playbook_phases")
-      .insert({ school_id: schoolId, title: role.title, label: role.title, sort_order: i })
+      .insert({ school_id: schoolId, title: month, label: month, sort_order: i })
       .select("id")
       .single();
     if (phaseErr || !phase) continue;
 
-    const tasks = role.tasks.map((t) => ({
+    const tasks = byMonth.get(month)!.map((text) => ({
       phase_id: phase.id,
-      text: t.text,
-      month_label: t.month,
+      text,
+      month_label: null,
       done: false,
       assignee_id: null,
-      assignee_label: role.title === "Oct/Nov Milestones" ? "team" : null,
+      assignee_label: null,
       notes: null,
       due_date: null,
     }));
