@@ -21,7 +21,9 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
 }) {
   const router = useRouter();
   const [q, setQ] = useState("");
+  const [school, setSchool] = useState("all"); // "all" | <school_id> | "__unrouted__"
   const [rows, setRows] = useState<Row[]>([]);
+  const sortedSchools = [...schools].sort((a, b) => a.name.localeCompare(b.name));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -33,7 +35,11 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
   useEffect(() => {
     const run = () => {
       setLoading(true);
-      listCandidates({ variant: "console", page: 0, pageSize: 500, q, sortKey: "name", sortDir: "asc" }).then((res) => {
+      listCandidates({
+        variant: "console", page: 0, pageSize: 1000, q, sortKey: "name", sortDir: "asc",
+        scope: school === "__unrouted__" ? "all" : school,
+        unroutedOnly: school === "__unrouted__",
+      }).then((res) => {
         setRows((res.rows as Row[]) ?? []);
         setLoading(false);
       });
@@ -41,7 +47,7 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
     if (!mounted.current) { mounted.current = true; run(); return; }
     const t = setTimeout(run, 250);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, school]);
 
   const toggle = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const allShownSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
@@ -74,13 +80,21 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 4px" }}>Bulk delete candidates</h2>
-            <p style={{ fontSize: 13, color: C.grayMute, margin: 0 }}>Search by name, select the ones to remove, then delete. Useful for cleaning up a bad import.</p>
+            <p style={{ fontSize: 13, color: C.grayMute, margin: 0 }}>Filter by school or search by name, select the ones to remove, then delete. Useful for cleaning up a bad import.</p>
           </div>
           <button onClick={onClose} style={{ border: "none", background: "none", fontSize: 22, color: C.grayMute, cursor: "pointer", padding: "0 4px", lineHeight: 1, flexShrink: 0 }}>×</button>
         </div>
 
-        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, email, or major…"
-          style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" }} />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, email, or major…"
+            style={{ flex: "1 1 240px", minWidth: 180, padding: "11px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" }} />
+          <select value={school} onChange={(e) => setSchool(e.target.value)}
+            style={{ padding: "11px 12px", borderRadius: 10, border: `1px solid ${school !== "all" ? C.orange : C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600, maxWidth: 220 }}>
+            <option value="all">All schools</option>
+            {sortedSchools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            <option value="__unrouted__">Unrouted (no school)</option>
+          </select>
+        </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12.5, color: C.grayMute }}>
           <button onClick={toggleAll} disabled={rows.length === 0} style={{ border: "none", background: "none", color: C.navy2, fontWeight: 700, cursor: rows.length ? "pointer" : "default", padding: 0 }}>
