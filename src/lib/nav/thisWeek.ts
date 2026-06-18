@@ -1,7 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus, type Profile } from "@/lib/types";
 import { evaluateCandidate } from "@/lib/triggers";
-import { getTierSchoolIds } from "@/lib/queries";
+import { getTierSchoolIds, fetchAllRows } from "@/lib/queries";
 import type { BadgeKey } from "@/lib/nav/config";
 
 export interface ThisWeek { queueCount: number; tasksDone: number; tasksTotal: number; }
@@ -27,19 +27,19 @@ export async function loadNavData(profile: Profile): Promise<NavData> {
   const { ids: schoolIds } = await getTierSchoolIds(profile.school_id);
   if (schoolIds.length === 0) return { badges, thisWeek: { queueCount: 0, tasksDone: 0, tasksTotal: 0 } };
 
-  const { data: cands } = await db
+  const list = await fetchAllRows((from, to) => db
     .from("candidates")
     .select("id, stage, point_person_id, not_interested")
-    .in("school_id", schoolIds);
-  const list = cands ?? [];
+    .in("school_id", schoolIds)
+    .range(from, to));
   badges.applicants = list.filter((c: any) => !c.not_interested).length;
 
   // last contact per candidate
   const ids = list.map((c: any) => c.id);
   const lastContact: Record<string, string> = {};
   if (ids.length) {
-    const { data: logs } = await db.from("outreach_log").select("candidate_id, created_at").in("candidate_id", ids);
-    for (const l of logs ?? []) {
+    const logs = await fetchAllRows((from, to) => db.from("outreach_log").select("candidate_id, created_at").in("candidate_id", ids).range(from, to));
+    for (const l of logs) {
       const cid = (l as any).candidate_id, ts = (l as any).created_at;
       if (!lastContact[cid] || ts > lastContact[cid]) lastContact[cid] = ts;
     }

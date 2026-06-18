@@ -12,10 +12,11 @@ const C = {
 const HEAD = "'Cabin', sans-serif";
 
 type Review = { id: string; jazz_snapshot: any; candidate_id: string | null; reason: string | null };
+// Only the fields the side-by-side comparison reads (matched against a JazzHR
+// snapshot). Kept minimal so a slim candidate projection can be passed in.
 type Cand = {
   id: string; name: string; email: string | null; school_id: string | null;
-  stage: string | null; gpa: string | null; area_of_study: string | null;
-  university_raw: string | null; linkedin: string | null;
+  stage: string | null; area_of_study: string | null; gpa: string | null;
 };
 type SchoolLite = { id: string; name: string };
 

@@ -9,7 +9,7 @@ import {
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
-  unlinkJazzCandidate, getUserSnapshot,
+  unlinkJazzCandidate, getUserSnapshot, listCandidates, migratePlaybooksToDates,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
@@ -17,6 +17,9 @@ import BudgetPanel, { BudgetAnalysis, type BudgetEntry, type Guidance } from "@/
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
+import ImportInfoModal from "@/components/ImportInfoModal";
+import BulkDeleteCandidatesModal from "@/components/BulkDeleteCandidatesModal";
+import PlaybookBoard from "@/components/PlaybookBoard";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
@@ -30,6 +33,8 @@ const C = {
   line: "#E4E7EE", canvas: "#F7F8FB", gold: "#C9A227", good: "#2F8F6B",
 };
 const HEAD = "'Cabin', sans-serif";
+// Thousands-separated integer (e.g. 1,200).
+const nf = (n: number) => Number(n || 0).toLocaleString("en-US");
 
 type School = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
 type Cand = {
@@ -39,7 +44,10 @@ type Cand = {
   point_person_id: string | null; not_interested: boolean; is_favorite: boolean;
   source: string | null; created_by: string | null;
 };
-type TeamMember = { id: string; full_name: string };
+type TeamMember = { id: string; full_name: string; school_id?: string | null; role?: string | null };
+// Slim full-set projection for the Candidates tab's full-dataset features
+// (duplicate detection, JazzHR match review, import dedupe warnings).
+type SlimCand = { id: string; name: string; email: string | null; school_id: string | null; jazz_id: string | null; source: string | null; stage: string | null; area_of_study: string | null; gpa: string | null; university_raw: string | null };
 type Goal = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 type AIFlag = { text: string; kind: "standout" | "concern" | "info" };
 type AI = { candidate_id: string; resume_score: number | null; summary: string | null; flags: AIFlag[]; analyzed_at: string | null };
@@ -96,18 +104,24 @@ function fmtPct(actual: number, goal: number) {
 export default function ConsoleClient({
   profile, initialSection, schools, candidates, team, goals, ai, phases, users, reviews, resources,
   events = [], people = [], budgetEntries = [], budgetGuidance = [],
+  candidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], facetUnrouted = 0, slimCandidates = [],
 }: {
   profile: Profile; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
   goals: Goal[]; ai: AI[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
   events?: CalEvent[]; people?: { id: string; full_name: string }[]; budgetEntries?: BudgetEntry[]; budgetGuidance?: Guidance[];
+  // Candidates tab is server-paginated: `candidates` is the first page; these
+  // carry the total count + the full-set facets/slim list the page still needs.
+  candidatesTotal?: number; candidatesPageSize?: number;
+  facetMajors?: string[]; facetStages?: string[]; facetUnrouted?: number;
+  slimCandidates?: SlimCand[];
 }) {
   const isMobile = useIsMobile();
   const [tab] = useState<"overview" | "applicants" | "standings" | "playbook" | "schools" | "calendar" | "budget" | "users" | "sync" | "resources" | "review">(initialSection as any);
   const [scope, setScope] = useState<string>("all"); // SchoolFilter value: all | id | tier:satellite | tier:bonus
   const [appSchool, setAppSchool] = useState<string>("all");
   const [obExpand, setObExpand] = useState<Record<string, boolean>>({}); // overview "By school" tier expand
-  const [budgetView, setBudgetView] = useState<"manage" | "analysis">("manage");
+  const [budgetView, setBudgetView] = useState<"manage" | "analysis">("analysis");
   const [snapshotUser, setSnapshotUser] = useState<UserProfile | null>(null);
   const [usrSearch, setUsrSearch] = useState("");
   const [usrRole, setUsrRole] = useState("all");
@@ -118,6 +132,8 @@ export default function ConsoleClient({
   const [pbAssignee, setPbAssignee] = useState<string>("all");
   const [pbFrom, setPbFrom] = useState<string>("");
   const [pbTo, setPbTo] = useState<string>("");
+  const [pbMigrating, setPbMigrating] = useState(false);
+  const router = useRouter();
   const pbFiltersActive = pbAssignee !== "all" || pbFrom !== "" || pbTo !== "";
   const pbMatches = (t: Task): boolean => {
     if (pbAssignee === "team" && t.assignee_label !== "team") return false;
@@ -132,6 +148,8 @@ export default function ConsoleClient({
   const [showUnrouted, setShowUnrouted] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [bulkDelOpen, setBulkDelOpen] = useState(false);
   // Applicants filters + sort
   const [appSearch, setAppSearch] = useState("");
   const [appMajor, setAppMajor] = useState("All majors");
@@ -140,6 +158,13 @@ export default function ConsoleClient({
   const [appFavOnly, setAppFavOnly] = useState(false);
   const [appCreator, setAppCreator] = useState("anyone"); // anyone | jazzhr | <profile_id>
   const [appSort, setAppSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage" | "ai"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
+  // Server-paginated Candidates tab. `candidates` is the first page from the
+  // server; we refetch a page whenever filters/sort/page change.
+  const [appRows, setAppRows] = useState<Cand[]>(candidates);
+  const [appTotal, setAppTotal] = useState<number>(candidatesTotal ?? candidates.length);
+  const [appPage, setAppPage] = useState(0);
+  const [appAi, setAppAi] = useState<AI[]>(ai);
+  const [appLoading, setAppLoading] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dupOpen, setDupOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -155,7 +180,7 @@ export default function ConsoleClient({
   // schools individually + one "Satellite School" + one "Bonus School" group.
   const schoolPickOptions = useMemo(() => schoolSelectOptions(schools).map((o) => ({ id: o.value, name: o.label })), [schools]);
 
-  const aiMap = useMemo(() => new Map(ai.map((a) => [a.candidate_id, a as AI])), [ai]);
+  const aiMap = useMemo(() => new Map(appAi.map((a) => [a.candidate_id, a as AI])), [appAi]);
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
 
   // ---- JazzHR sync (super-admin only) ----
@@ -236,11 +261,67 @@ export default function ConsoleClient({
     ];
   }, [scope, candidates, goals, schools]);
 
-  const open = candidates.find((c) => c.id === openId) ?? null;
+  const open = appRows.find((c) => c.id === openId) ?? candidates.find((c) => c.id === openId) ?? null;
+
+  // Fetch one page of candidates with the current filters/sort applied server-side.
+  const APP_PAGE_SIZE = candidatesPageSize;
+  const loadAppPage = async (page: number) => {
+    setAppLoading(true);
+    const res = await listCandidates({
+      variant: "console", page, pageSize: APP_PAGE_SIZE,
+      scope: appSchool, unroutedOnly: showUnrouted,
+      q: appSearch, major: appMajor, stage: appStage, minGpa: appMinGpa,
+      favOnly: appFavOnly, creator: appCreator,
+      sortKey: appSort.key === "ai" ? "name" : appSort.key, sortDir: appSort.dir,
+      withAi: superUser,
+    });
+    setAppRows(res.rows as Cand[]);
+    setAppTotal(res.total);
+    setAppAi(res.ai as AI[]);
+    setAppPage(page);
+    setAppLoading(false);
+  };
+  // Refetch page 0 whenever a filter/sort changes (debounced so typing in the
+  // search box doesn't fire a request per keystroke). Skips the initial mount —
+  // the server already provided page 0.
+  const appMounted = useRef(false);
+  useEffect(() => {
+    if (tab !== "applicants") return;
+    if (!appMounted.current) { appMounted.current = true; return; }
+    const t = setTimeout(() => { loadAppPage(0); }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appSearch, appSchool, appMajor, appStage, appMinGpa, appFavOnly, appCreator, appSort, showUnrouted]);
   const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
   const playbookGrouped = playbookSchoolObj?.tier === "satellite" || playbookSchoolObj?.tier === "bonus";
   const playbookLabel = schoolSelectOptions(schools).find((o) => o.value === playbookSchool)?.label ?? playbookSchoolObj?.name ?? "School";
+  // Team members of the selected school (satellite/bonus share one team across the tier).
+  const playbookTierIds = playbookGrouped
+    ? new Set(schools.filter((s) => s.tier === playbookSchoolObj?.tier).map((s) => s.id))
+    : new Set([playbookSchool]);
+  const playbookTeam = team.filter((m) => m.school_id && playbookTierIds.has(m.school_id));
+  // Flatten this school's tasks for the person-grouped board + a lookup for updates.
+  const playbookTaskMap = new Map(playbookPhases.flatMap((p) => p.playbook_tasks.map((t) => [t.id, { t, phaseId: p.id }])));
+  const playbookTasks = playbookPhases
+    .flatMap((p) => p.playbook_tasks.map((t) => ({ id: t.id, phaseId: p.id, phaseTitle: p.title, text: t.text, assigneeId: t.assignee_id, dueDate: t.due_date, done: t.done })))
+    .filter((t) => pbMatches(playbookTaskMap.get(t.id)!.t));
+  const playbookPhaseOpts = playbookPhases.map((p) => ({ id: p.id, title: p.title }));
+  const updatePlaybookTask = (taskId: string, patch: { text?: string; phaseId?: string; dueDate?: string | null; assigneeId?: string | null; done?: boolean }) => {
+    const found = playbookTaskMap.get(taskId); if (!found) return;
+    const o = found.t;
+    startTransition(() => { upsertTask({
+      id: taskId,
+      phase_id: patch.phaseId ?? found.phaseId,
+      text: patch.text ?? o.text,
+      assignee_id: patch.assigneeId !== undefined ? patch.assigneeId : o.assignee_id,
+      assignee_label: o.assignee_label ?? null,
+      month_label: o.month_label ?? null,
+      notes: o.notes ?? null,
+      due_date: patch.dueDate !== undefined ? patch.dueDate : o.due_date,
+      done: patch.done !== undefined ? patch.done : o.done,
+    }); });
+  };
 
   // goal draft state: school_id → {sourced, contacted, applied}
   const [goalDrafts, setGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
@@ -285,11 +366,11 @@ export default function ConsoleClient({
                   <div key={b.label} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
                     <div style={{ background: C.navy, color: "#fff", padding: "16px 20px", textAlign: "center" }}>
                       <div style={{ fontFamily: HEAD, fontSize: 13, fontWeight: 600, textTransform: "uppercase", opacity: 0.8 }}>{b.label}</div>
-                      <div style={{ fontFamily: HEAD, fontSize: 40, fontWeight: 700, marginTop: 4 }}>{b.actual}</div>
+                      <div style={{ fontFamily: HEAD, fontSize: 40, fontWeight: 700, marginTop: 4 }}>{nf(b.actual)}</div>
                     </div>
                     <div style={{ padding: "12px 20px", textAlign: "center", borderBottom: `1px solid ${C.line}` }}>
                       <div style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>Goal</div>
-                      <div style={{ fontFamily: HEAD, fontSize: 22, fontWeight: 700, color: C.navy2 }}>{b.goal}</div>
+                      <div style={{ fontFamily: HEAD, fontSize: 22, fontWeight: 700, color: C.navy2 }}>{nf(b.goal)}</div>
                     </div>
                     <div style={{ padding: "12px 20px", textAlign: "center", background: `${tone}14` }}>
                       <div style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>% Complete</div>
@@ -322,8 +403,8 @@ export default function ConsoleClient({
                         {opts.logo && <img src={opts.logo} alt="" style={{ height: 24, width: 24, objectFit: "contain", borderRadius: 4 }} />}
                         <div><div style={{ fontWeight: 700, color: C.gray }}>{name}</div><div style={{ fontSize: 11, color: C.grayMute, textTransform: "capitalize" }}>{sub}</div></div>
                       </div>
-                      <div style={{ color: accent, fontWeight: 700 }}>{c2.sourced}</div>
-                      <div style={{ color: accent, fontWeight: 700 }}>{c2.applied}</div>
+                      <div style={{ color: accent, fontWeight: 700 }}>{nf(c2.sourced)}</div>
+                      <div style={{ color: accent, fontWeight: 700 }}>{nf(c2.applied)}</div>
                     </div>
                   );
                 };
@@ -347,43 +428,13 @@ export default function ConsoleClient({
 
         {/* ---- APPLICANTS ---- */}
         {tab === "applicants" && (() => {
-          const schoolNameOf = (c: Cand) => schools.find((s) => s.id === c.school_id)?.name ?? "";
-          const stageRank: Record<string, number> = { Sourced: 0, Contacted: 1, Applied: 2, Advanced: 3, Finalist: 4, Fellow: 5 };
-          const distinctMajors = Array.from(new Set(candidates.map((c) => c.area_of_study).filter((m): m is string => !!m))).sort((a, b) => a.localeCompare(b));
-          const distinctStages = Array.from(new Set(candidates.map((c) => c.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
-
-          const scopeFiltered = candidates.filter((c) => matchesSchoolFilter(appSchool, c.school_id, schools));
-          const unroutedCount = scopeFiltered.filter((c) => !c.school_id).length;
-
-          const q = appSearch.trim().toLowerCase();
-          const minGpa = parseFloat(appMinGpa);
-          let visible = scopeFiltered.filter((c) => {
-            if (showUnrouted && c.school_id) return false;
-            if (q && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(q))) return false;
-            if (appMajor !== "All majors" && c.area_of_study !== appMajor) return false;
-            if (appStage !== "All stages" && c.stage !== appStage) return false;
-            if (appFavOnly && !c.is_favorite) return false;
-            if (appCreator === "jazzhr" && c.source !== "jazzhr") return false;
-            if (appCreator !== "anyone" && appCreator !== "jazzhr" && c.created_by !== appCreator) return false;
-            if (!isNaN(minGpa)) { const g = parseFloat(c.gpa ?? ""); if (isNaN(g) || g < minGpa) return false; }
-            return true;
-          });
-
-          const dir = appSort.dir === "asc" ? 1 : -1;
-          visible = [...visible].sort((a, b) => {
-            let av: number | string, bv: number | string;
-            switch (appSort.key) {
-              case "school": av = schoolNameOf(a) || "~"; bv = schoolNameOf(b) || "~"; break;
-              case "major":  av = a.area_of_study ?? "~"; bv = b.area_of_study ?? "~"; break;
-              case "gpa":    av = parseFloat(a.gpa ?? "") || -1; bv = parseFloat(b.gpa ?? "") || -1; break;
-              case "stage":  av = stageRank[PHASE_OF[a.stage ?? ""] ?? ""] ?? -1; bv = stageRank[PHASE_OF[b.stage ?? ""] ?? ""] ?? -1; break;
-              case "ai":     av = aiMap.get(a.id)?.resume_score ?? -1; bv = aiMap.get(b.id)?.resume_score ?? -1; break;
-              default:       av = a.name.toLowerCase(); bv = b.name.toLowerCase();
-            }
-            if (av < bv) return -1 * dir;
-            if (av > bv) return 1 * dir;
-            return 0;
-          });
+          // Rows are filtered/sorted/paginated by the server (loadAppPage); the
+          // dropdowns + full-set widgets read the facets/slim list passed in.
+          const distinctMajors = facetMajors;
+          const distinctStages = facetStages;
+          const unroutedCount = facetUnrouted;
+          const visible = appRows;
+          const totalPages = Math.max(1, Math.ceil(appTotal / APP_PAGE_SIZE));
 
           const toggleSort = (key: typeof appSort.key) =>
             setAppSort((p) => p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
@@ -391,7 +442,20 @@ export default function ConsoleClient({
           const SortHead = ({ k, label }: { k: typeof appSort.key; label: string }) => (
             <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: appSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
           );
-          const filtersActive = q || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all" || appCreator !== "anyone";
+          const filtersActive = appSearch.trim() !== "" || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all" || appCreator !== "anyone";
+
+          // Pagination control — rendered both above and below the table.
+          const pager = (where: "top" | "bottom") => appTotal > APP_PAGE_SIZE ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: where === "top" ? 16 : 16, marginBottom: where === "top" ? 0 : 0 }}>
+              <button onClick={() => loadAppPage(appPage - 1)} disabled={appPage <= 0 || appLoading}
+                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage <= 0 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage <= 0 || appLoading ? "default" : "pointer" }}>← Prev</button>
+              <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>
+                Page {(appPage + 1).toLocaleString()} of {totalPages.toLocaleString()} · {(appPage * APP_PAGE_SIZE + 1).toLocaleString()}–{Math.min((appPage + 1) * APP_PAGE_SIZE, appTotal).toLocaleString()} of {appTotal.toLocaleString()}
+              </span>
+              <button onClick={() => loadAppPage(appPage + 1)} disabled={appPage >= totalPages - 1 || appLoading}
+                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage >= totalPages - 1 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage >= totalPages - 1 || appLoading ? "default" : "pointer" }}>Next →</button>
+            </div>
+          ) : null;
 
           return (
           <>
@@ -399,13 +463,15 @@ export default function ConsoleClient({
               <div>
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Candidates</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
-                  {visible.length} candidates{superUser ? " · AI scores visible" : ""}
+                  {appTotal.toLocaleString()} candidate{appTotal !== 1 ? "s" : ""}{appLoading ? " · loading…" : ""}{superUser ? " · AI scores visible" : ""}
                   {unroutedCount > 0 && !showUnrouted && <span style={{ color: C.orange }}> · {unroutedCount} unrouted</span>}
                 </p>
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <button onClick={() => setAddOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add</button>
                 <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                <button onClick={() => setInfoOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Import info</button>
+                {adminPlus && <button onClick={() => setBulkDelOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.orange}`, background: "#fff", color: C.orange, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk delete</button>}
               </div>
             </div>
 
@@ -422,7 +488,7 @@ export default function ConsoleClient({
                 </button>
                 {reviewOpen && (
                   <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                    <MatchReview reviews={reviews} candidates={candidates} schools={schools} />
+                    <MatchReview reviews={reviews} candidates={slimCandidates} schools={schools} />
                   </div>
                 )}
               </div>
@@ -430,7 +496,7 @@ export default function ConsoleClient({
 
             {/* Duplicate candidates — any source (manual, import, JazzHR) */}
             {adminPlus && (() => {
-              const dupCount = findDuplicateGroups(candidates).length;
+              const dupCount = findDuplicateGroups(slimCandidates).length;
               if (dupCount === 0) return null;
               return (
                 <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
@@ -444,7 +510,7 @@ export default function ConsoleClient({
                   </button>
                   {dupOpen && (
                     <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                      <DuplicateReview candidates={candidates} schools={schools} />
+                      <DuplicateReview candidates={slimCandidates} schools={schools} />
                     </div>
                   )}
                 </div>
@@ -487,6 +553,8 @@ export default function ConsoleClient({
               )}
             </div>
 
+            {pager("top")}
+
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16, ...(isMobile ? { overflowX: "auto" } : {}) }}>
               <div style={{ display: "grid", gridTemplateColumns: `1.7fr 1fr 1fr 0.6fr 1fr${superUser ? " 0.8fr" : ""} 40px`, minWidth: isMobile ? 640 : undefined, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                 <SortHead k="name" label="Candidate" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" />{superUser && <SortHead k="ai" label="AI" />}<div></div>
@@ -509,7 +577,7 @@ export default function ConsoleClient({
                         {adminPlus ? (
                           <select
                             value={schoolOptionValue(schools, c.school_id)}
-                            onChange={(e) => startTransition(() => { reassignSchool(c.id, e.target.value || null); })}
+                            onChange={(e) => { const v = e.target.value || null; reassignSchool(c.id, v).then(() => loadAppPage(appPage)); }}
                             style={{ fontSize: 12, fontWeight: 600, color: c.school_id ? C.navy2 : C.orange, border: `1px solid ${c.school_id ? C.line : C.orange}`, borderRadius: 7, padding: "4px 6px", background: "#fff", maxWidth: "100%", cursor: "pointer" }}>
                             <option value="">— Unrouted —</option>
                             {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -529,9 +597,11 @@ export default function ConsoleClient({
                   );
                 })}
               {visible.length === 0 && (
-                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{filtersActive ? "No candidates match these filters." : showUnrouted ? "No unrouted candidates — routing is complete!" : "No candidates yet — run a sync."}</div>
+                <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{appLoading ? "Loading…" : filtersActive ? "No candidates match these filters." : showUnrouted ? "No unrouted candidates — routing is complete!" : "No candidates yet — run a sync."}</div>
               )}
             </div>
+
+            {pager("bottom")}
           </>
         );})()}
 
@@ -574,9 +644,9 @@ export default function ConsoleClient({
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>You set allocations; team leads log expenses with receipts.</p>
               </div>
               <div style={{ display: "flex", gap: 4, background: C.canvas, borderRadius: 10, padding: 4 }}>
-                {(["manage", "analysis"] as const).map((v) => (
+                {([["analysis", "Overview"], ["manage", "Manage"]] as const).map(([v, label]) => (
                   <button key={v} onClick={() => setBudgetView(v)}
-                    style={{ border: "none", background: budgetView === v ? "#fff" : "transparent", color: budgetView === v ? C.navy : C.grayMute, fontWeight: 700, fontSize: 13, padding: "7px 16px", borderRadius: 8, cursor: "pointer", boxShadow: budgetView === v ? "0 1px 4px rgba(17,18,62,.1)" : "none", textTransform: "capitalize" }}>{v}</button>
+                    style={{ border: "none", background: budgetView === v ? "#fff" : "transparent", color: budgetView === v ? C.navy : C.grayMute, fontWeight: 700, fontSize: 13, padding: "7px 16px", borderRadius: 8, cursor: "pointer", boxShadow: budgetView === v ? "0 1px 4px rgba(17,18,62,.1)" : "none" }}>{label}</button>
                 ))}
               </div>
             </div>
@@ -591,100 +661,54 @@ export default function ConsoleClient({
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
-                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>
-                  {!playbookGrouped && playbookSchoolObj?.logo_url && <img src={playbookSchoolObj.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 5, marginRight: 10, verticalAlign: "middle" }} />}
-                  {playbookLabel} Playbook
-                </h1>
+                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Team Tasks</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
-                  {playbookGrouped
-                    ? "One shared playbook for all schools in this group. Changes save on blur."
-                    : "Edit phase names, tasks, assignees, and due dates inline. Changes save on blur."}
+                  Assign and track each fellow&apos;s tasks for {playbookLabel}{playbookGrouped ? " (shared across this group)" : ""}. Changes save automatically.
                 </p>
               </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <select value={playbookSchool} onChange={(e) => setPlaybookSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                  {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-                <button onClick={async () => {
-                  const res = await seedPlaybook(playbookSchool);
-                  if (res.error === "already_seeded") {
-                    if (!confirm("This school already has a playbook. Reseed from defaults? (existing tasks will be deleted)")) return;
-                    await seedPlaybook(playbookSchool, true);
-                  }
-                }} style={{ border: "none", background: C.orange, color: "#fff", fontWeight: 700, fontSize: 13, padding: "10px 16px", borderRadius: 10, cursor: "pointer", whiteSpace: "nowrap" }}>
-                  Seed Defaults
-                </button>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
-              <button onClick={() => startTransition(() => { addPhase(playbookSchool, "Month", "New phase", playbookPhases.length); })}
-                style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer" }}>
-                + Add phase
-              </button>
-              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5, marginLeft: 8 }}>Filter</span>
-              <select value={pbAssignee} onChange={(e) => setPbAssignee(e.target.value)}
-                style={{ padding: "8px 11px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                <option value="all">Anyone</option>
-                <option value="team">Whole team</option>
-                <option value="unassigned">Unassigned</option>
-                {team.map((t) => <option key={t.id} value={t.id}>{t.id === profile.id ? `${t.full_name} (me)` : t.full_name}</option>)}
+              <select value={playbookSchool} onChange={(e) => setPlaybookSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
+            </div>
+
+            {/* Dates + due-date filter */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Dates</span>
+              {playbookPhases.map((p) => (
+                <span key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 4px 3px 10px", background: C.canvas }}>
+                  <button onClick={() => { const v = prompt("Rename date", p.title); if (v && v.trim() && v.trim() !== p.title) startTransition(() => { updatePhase(p.id, v.trim(), v.trim()); }); }}
+                    style={{ border: "none", background: "none", color: C.navy, fontWeight: 600, fontSize: 12.5, cursor: "pointer", padding: 0 }}>{p.title}</button>
+                  <button onClick={() => { if (confirm(`Delete the date "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }} title="Delete date"
+                    style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}>×</button>
+                </span>
+              ))}
+              <button onClick={() => { const v = prompt("New date (e.g. July, or a deadline)"); if (v && v.trim()) startTransition(() => { addPhase(playbookSchool, "", v.trim(), playbookPhases.length); }); }}
+                style={{ border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, fontSize: 12.5, padding: "4px 12px", borderRadius: 999, cursor: "pointer" }}>+ Add date</button>
+              <span style={{ flex: 1 }} />
               <span style={{ fontSize: 12.5, color: C.grayMute }}>Due</span>
-              <input type="date" value={pbFrom} onChange={(e) => setPbFrom(e.target.value)} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
+              <input type="date" value={pbFrom} onChange={(e) => setPbFrom(e.target.value)} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12.5 }} />
               <span style={{ fontSize: 12.5, color: C.grayMute }}>to</span>
-              <input type="date" value={pbTo} onChange={(e) => setPbTo(e.target.value)} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
-              {pbFiltersActive && (
-                <button onClick={() => { setPbAssignee("all"); setPbFrom(""); setPbTo(""); }}
-                  style={{ padding: "8px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
+              <input type="date" value={pbTo} onChange={(e) => setPbTo(e.target.value)} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12.5 }} />
+              {(pbFrom || pbTo) && (
+                <button onClick={() => { setPbFrom(""); setPbTo(""); }} style={{ border: "none", background: "transparent", color: C.navy2, fontSize: 12.5, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
               )}
             </div>
-            <div style={{ display: "grid", gap: 14, marginTop: 14 }}>
-              {playbookPhases.map((p) => {
-                if (pbFiltersActive && !p.playbook_tasks.some(pbMatches)) return null;
-                const visibleTasks = pbFiltersActive ? p.playbook_tasks.filter(pbMatches) : p.playbook_tasks;
-                return (
-                <div key={p.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22 }}>
-                  <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}>
-                    <input defaultValue={p.label}
-                      onBlur={(e) => { if (e.target.value.trim() !== p.label) startTransition(() => { updatePhase(p.id, e.target.value.trim() || p.label, p.title); }); }}
-                      style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 11, color: C.orange, textTransform: "uppercase", border: "none", background: "transparent", width: 90, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
-                    <input defaultValue={p.title}
-                      onBlur={(e) => { if (e.target.value.trim() !== p.title) startTransition(() => { updatePhase(p.id, p.label, e.target.value.trim() || p.title); }); }}
-                      style={{ fontFamily: HEAD, fontSize: 18, fontWeight: 700, color: C.navy, border: "none", background: "transparent", flex: 1, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
-                    <button onClick={() => { if (confirm(`Delete phase "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
-                      style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6, whiteSpace: "nowrap" }}>
-                      Delete phase
-                    </button>
-                  </div>
-                  {visibleTasks.map((t) => (
-                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${C.line}88` }}>
-                      <input type="checkbox" defaultChecked={t.done}
-                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: e.target.checked }); })}
-                        style={{ accentColor: C.orange, flexShrink: 0 }} />
-                      <input defaultValue={t.text}
-                        onBlur={(e) => { if (e.target.value.trim() !== t.text) startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: e.target.value.trim() || t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: t.done }); }); }}
-                        style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none", outline: "none", minWidth: 0 }} />
-                      <select value={t.assignee_id ?? ""}
-                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: e.target.value || null, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: t.done }); })}
-                        style={{ fontSize: 12, fontWeight: 600, color: t.assignee_id ? C.navy2 : C.orange, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }}>
-                        <option value="">Unassigned</option>
-                        {team.map((tm) => <option key={tm.id} value={tm.id}>{tm.id === profile.id ? `${tm.full_name} (me)` : tm.full_name}</option>)}
-                      </select>
-                      <input type="date" value={t.due_date ?? ""}
-                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: e.target.value || null, done: t.done }); })}
-                        style={{ fontSize: 12, color: C.grayMute, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }} />
-                      <button onClick={() => startTransition(() => { deleteTask(t.id); })} style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>
-                    </div>
-                  ))}
-                  <button onClick={() => startTransition(() => { upsertTask({ phase_id: p.id, text: "New task", assignee_id: null, assignee_label: null, month_label: null, notes: null, due_date: null, done: false }); })}
-                    style={{ marginTop: 10, border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, padding: "8px 14px", borderRadius: 9, cursor: "pointer", width: "100%" }}>
-                    + Add task
-                  </button>
-                  {p.playbook_tasks.length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic", marginTop: 8 }}>No tasks yet.</div>}
-                </div>
-                );
-              })}
-              {playbookPhases.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No playbook yet for this school — add the first phase.</div>}
+
+            <div style={{ marginTop: 14 }}>
+              {playbookPhases.length === 0 ? (
+                <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14 }}>No dates yet — add the first date above to start building this team&apos;s tasks.</div>
+              ) : (
+                <PlaybookBoard
+                  phases={playbookPhaseOpts}
+                  members={playbookTeam.map((m) => ({ id: m.id, full_name: m.full_name }))}
+                  tasks={playbookTasks}
+                  meId={profile.id}
+                  accent={C.orange}
+                  onAddTask={(assigneeId, phaseId) => startTransition(() => { upsertTask({ phase_id: phaseId, text: "New task", assignee_id: assigneeId, assignee_label: null, month_label: null, notes: null, due_date: null, done: false }); })}
+                  onUpdateTask={updatePlaybookTask}
+                  onDeleteTask={(id) => startTransition(() => { deleteTask(id); })}
+                />
+              )}
             </div>
           </>
         )}
@@ -721,7 +745,7 @@ export default function ConsoleClient({
                       const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
                       return (
                         <div key={lbl} style={{ textAlign: "center" }}>
-                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: hasGoal ? tone : C.navy2 }}>{act}</div>
+                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: hasGoal ? tone : C.navy2 }}>{nf(act)}</div>
                           <div style={{ fontSize: 10, color: C.grayMute, fontWeight: 600 }}>{lbl}{hasGoal ? ` · ${pct}%` : ""}</div>
                         </div>
                       );
@@ -788,7 +812,7 @@ export default function ConsoleClient({
                               const tone = pct >= 100 ? C.good : pct >= 70 ? C.gold : C.orange;
                               return (
                                 <span key={lbl} style={{ fontSize: 13, color: C.grayMute }}>
-                                  {lbl}: <b style={{ color: hasGoal ? tone : C.navy2 }}>{act}</b>{hasGoal ? <span style={{ fontSize: 11, color: tone }}> ({pct}%)</span> : ""}
+                                  {lbl}: <b style={{ color: hasGoal ? tone : C.navy2 }}>{nf(act)}</b>{hasGoal ? <span style={{ fontSize: 11, color: tone }}> ({pct}%)</span> : ""}
                                 </span>
                               );
                             })}
@@ -1059,13 +1083,19 @@ export default function ConsoleClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => setOpenId(null)} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
+        <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => { setOpenId(null); if (tab === "applicants") loadAppPage(appPage); }} onSaved={() => loadAppPage(appPage)} startTransition={startTransition} aiData={aiMap.get(open.id) ?? null} superUser={superUser} />
       )}
       {addOpen && (
-        <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setAddOpen(false)} startTransition={startTransition} />
+        <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setAddOpen(false); loadAppPage(0); }} startTransition={startTransition} />
       )}
       {bulkOpen && (
-        <BulkImportModal schools={schools} team={team} existingEmails={new Set(candidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => setBulkOpen(false)} />
+        <BulkImportModal schools={schools} team={team} canAssignPointPerson existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setBulkOpen(false); loadAppPage(0); }} />
+      )}
+      {infoOpen && (
+        <ImportInfoModal onClose={() => { setInfoOpen(false); loadAppPage(appPage); }} />
+      )}
+      {bulkDelOpen && (
+        <BulkDeleteCandidatesModal schools={schools.map((s) => ({ id: s.id, name: s.name }))} onClose={() => { setBulkDelOpen(false); loadAppPage(appPage); }} />
       )}
       {inviteOpen && (
         <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />
@@ -1135,9 +1165,9 @@ type Connection = { id: string; fellow_id: string; name: string; relationship: s
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
 // ---- Candidate Drawer ----
-function CandidateDrawer({ c, profile, team, schools, onClose, startTransition, aiData, superUser }: {
+function CandidateDrawer({ c, profile, team, schools, onClose, onSaved, startTransition, aiData, superUser }: {
   c: Cand; profile: Profile; team: TeamMember[]; schools: School[];
-  onClose: () => void; startTransition: (cb: () => void) => void;
+  onClose: () => void; onSaved?: () => void; startTransition: (cb: () => void) => void;
   aiData: AI | null; superUser: boolean;
 }) {
   const router = useRouter();
@@ -1172,7 +1202,7 @@ function CandidateDrawer({ c, profile, team, schools, onClose, startTransition, 
       }).then((r: any) => {
         setSaving(false);
         if (r?.error) alert(r.error);
-        else { setEditing(false); router.refresh(); }
+        else { setEditing(false); if (onSaved) onSaved(); else router.refresh(); }
       });
     });
   };
@@ -1224,10 +1254,10 @@ function CandidateDrawer({ c, profile, team, schools, onClose, startTransition, 
       <div style={{ position: "relative", width: 440, maxWidth: "93vw", background: C.canvas, height: "100%", overflowY: "auto" }}>
         <div style={{ background: C.navy, color: "#fff", padding: "24px 24px 20px", position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
-          {!editing && (
-            <button onClick={startEdit} title="Edit details" style={{ position: "absolute", top: 16, right: 54, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", height: 30, padding: "0 12px", borderRadius: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>✎ Edit</button>
+          {!editing && c.created_by === profile.id && (
+            <button onClick={startEdit} title="Edit candidate details" style={{ position: "absolute", top: 14, right: 54, background: C.orange, border: "none", color: "#fff", height: 32, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: "0 2px 8px rgba(221,84,52,.4)" }}>✎ Edit details</button>
           )}
-          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px" }}>{c.name}</h2>
+          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}>{c.name}</h2>
           <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.72)" }}>{c.area_of_study}</div>
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>
         </div>
@@ -1496,6 +1526,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
   const [schoolValue, setSchoolValue] = useState("");
   const [specificSchool, setSpecificSchool] = useState("");
   const [pointPerson, setPointPerson] = useState<string | null>(null);
+  const [linkedin, setLinkedin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -1522,6 +1553,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
         school_id: schoolValue || null,
         university_raw,
         point_person_id: pointPerson,
+        linkedin: linkedin.trim() || null,
         // Stage / GPA / major are filled in later from JazzHR — not part of sourcing.
         stage: null, gpa: null, area_of_study: null,
       }).then((r) => {
@@ -1566,6 +1598,11 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>Point person</label>
           <PersonPicker value={pointPerson} options={team} meId={meId} placeholder="Search team…" onChange={(v) => setPointPerson(v)} />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>LinkedIn URL</label>
+          <input value={linkedin} onChange={(e) => setLinkedin(e.target.value)} placeholder="https://linkedin.com/in/…" style={inputStyle} />
         </div>
 
         <div style={{ background: "#EEF1F7", borderRadius: 9, padding: "9px 12px", marginBottom: 14, fontSize: 12, color: C.grayMute }}>

@@ -10,6 +10,8 @@ const C = {
 };
 const HEAD = "'Cabin', sans-serif";
 const BODY = "'Open Sans', sans-serif";
+// Thousands-separated integer (e.g. 1,200).
+const nf = (n: number) => Number(n || 0).toLocaleString("en-US");
 
 type SchoolRow = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
 type CandRow   = { id: string; school_id: string | null; stage: string | null };
@@ -113,12 +115,11 @@ function SummaryCard({ label, value, color, sub, tooltip }: {
   );
 }
 
-// ---- SVG radar — 6 axes ----
+// ---- SVG radar — 5 axes ----
 function RadarChart({ m, color }: { m: SchoolMetric; color: string }) {
   const SZ = 150, cx = SZ / 2, cy = SZ / 2, R = 56;
   const axes = [
     { label: "Src Goal",  value: m.gS },
-    { label: "Cntd Goal", value: m.gC },
     { label: "Appl Goal", value: m.gA },
     { label: "Yield",     value: m.yieldRate },
     { label: "Depth",     value: Math.min(m.depth * 2.5, 1) },
@@ -207,7 +208,7 @@ function DrillModal({ m, mySchoolId, onClose }: { m: SchoolMetric; mySchoolId: s
               <div style={{ height: "100%", width: `${Math.min(m.pctToGoal, 100)}%`, background: tone, borderRadius: 99, transition: "width .6s" }} />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: C.grayMute }}>
-              <span>{m.applied} of {m.goal} applications</span>
+              <span>{nf(m.applied)} of {nf(m.goal)} applications</span>
               <span style={{ fontWeight: 700, color: tone }}>{m.pctToGoal}% to goal</span>
             </div>
           </>
@@ -269,7 +270,6 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
 
   const METRIC_TIPS = {
     sourced:   "Sourced: Candidates identified or reached out to — the top of the funnel.",
-    contacted: "Contacted: Candidates who were actively engaged and responded to outreach.",
     applied:   "Applied: Candidates who submitted a full application to the Orr Fellowship.",
   };
 
@@ -338,11 +338,10 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                         </div>
                       </div>
 
-                      {/* Three metric boxes side by side */}
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginLeft: 38 }}>
+                      {/* Metric boxes side by side */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginLeft: 38 }}>
                         {([
                           { label: "Sourced",   act: m.sourced,   goal: m.goalSourced,   ratio: m.gS },
-                          { label: "Contacted", act: m.contacted, goal: m.goalContacted, ratio: m.gC },
                           { label: "Applied",   act: m.applied,   goal: m.goal,          ratio: m.gA },
                         ]).map(({ label, act, goal, ratio }) => {
                           const pct  = goal > 0 ? Math.round(ratio * 100) : 0;
@@ -351,8 +350,8 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                             <div key={label} style={{ background: isMe ? `${m.color}0A` : C.canvas, borderRadius: 8, padding: "8px 10px" }}>
                               <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: C.grayMute, marginBottom: 4, fontFamily: HEAD }}>{label}</div>
                               <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 5 }}>
-                                <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: goal > 0 ? tone : C.navy2, lineHeight: 1 }}>{act}</span>
-                                {goal > 0 && <span style={{ fontSize: 10, color: C.grayMute }}>/ {goal}</span>}
+                                <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: goal > 0 ? tone : C.navy2, lineHeight: 1 }}>{nf(act)}</span>
+                                {goal > 0 && <span style={{ fontSize: 10, color: C.grayMute }}>/ {nf(goal)}</span>}
                               </div>
                               {goal > 0 ? (
                                 <>
@@ -446,8 +445,8 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                       )}
                     </div>
                     <div style={{ display: "flex", gap: 8, width: 80, flexShrink: 0 }}>
-                      <span style={{ fontSize: 10, color: C.grayMute, fontFamily: BODY, width: 32, textAlign: "center" }}>{m.sourced}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: C.navy, fontFamily: HEAD, width: 32, textAlign: "center" }}>{m.applied}</span>
+                      <span style={{ fontSize: 10, color: C.grayMute, fontFamily: BODY, width: 32, textAlign: "center" }}>{nf(m.sourced)}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: C.navy, fontFamily: HEAD, width: 32, textAlign: "center" }}>{nf(m.applied)}</span>
                     </div>
                   </div>
                 );
@@ -587,7 +586,6 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
         const rows: [string, number | string, number | string][] = mA && mB ? [
           ["Active Pipeline", mA.active,    mB.active],
           ["Sourced",         mA.sourced,   mB.sourced],
-          ["Contacted",       mA.contacted, mB.contacted],
           ["Applied",         mA.applied,   mB.applied],
           ["Finalists",       mA.finalists, mB.finalists],
           ["Fellows",         mA.fellows,   mB.fellows],
@@ -633,9 +631,9 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
                     const winB = nA !== null && nB !== null && nB > nA;
                     return (
                       <div key={label} style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", padding: "13px 20px", borderBottom: `1px solid ${C.line}`, alignItems: "center" }}>
-                        <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 18, color: winA ? colA : C.gray }}>{String(vA)}</div>
+                        <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 18, color: winA ? colA : C.gray }}>{nA !== null ? nf(nA) : String(vA)}</div>
                         <div style={{ textAlign: "center", fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{label}</div>
-                        <div style={{ textAlign: "right", fontFamily: HEAD, fontWeight: 700, fontSize: 18, color: winB ? colB : C.gray }}>{String(vB)}</div>
+                        <div style={{ textAlign: "right", fontFamily: HEAD, fontWeight: 700, fontSize: 18, color: winB ? colB : C.gray }}>{nB !== null ? nf(nB) : String(vB)}</div>
                       </div>
                     );
                   })}

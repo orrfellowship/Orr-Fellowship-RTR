@@ -14,13 +14,13 @@ function bustCache(tags: string[], paths: string[]) {
 import { cookies } from "next/headers";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile, isPreviewing, VIEW_AS_COOKIE } from "@/lib/auth";
-import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
+import { isSuper, isAdminPlus, canManageResources, canReassign } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
 import { sendEmail, emailLayout } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
-import { getTierSchoolIds } from "@/lib/queries";
+import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -140,7 +140,7 @@ async function routeSchoolIdByEmail(
 export async function addCandidate(data: {
   name: string; email: string | null; school_id: string | null;
   stage: string | null; gpa: string | null; area_of_study: string | null;
-  university_raw?: string | null; point_person_id?: string | null;
+  university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null;
 }) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
@@ -148,9 +148,11 @@ export async function addCandidate(data: {
   const db = createServiceClient();
   // No school selected? Route off a school email address if we recognize it.
   const school_id = await routeSchoolIdByEmail(db, data.school_id, data.email);
+  // Only team leads / admins may assign a point person; ignore it from anyone else.
+  const point_person_id = canReassign(profile.role) ? (data.point_person_id ?? null) : null;
   // Manually-entered candidates start in the "sourced" phase (stage key "new");
   // JazzHR advances them from there. Respect an explicit stage if one is given.
-  const { error } = await db.from("candidates").insert({ ...data, school_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
+  const { error } = await db.from("candidates").insert({ ...data, school_id, point_person_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
   if (error) return { error: error.message };
   revalidatePath("/console");
   revalidatePath("/workspace");
@@ -164,8 +166,14 @@ export async function updateCandidate(id: string, fields: {
 }) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
-  if (!profile) return { error: "Not authenticated" }; // any signed-in user may edit
+  if (!profile) return { error: "Not authenticated" };
   if (fields.name !== undefined && !fields.name.trim()) return { error: "Name can't be empty." };
+
+  const db = createServiceClient();
+  // Editing is limited to the person who added the candidate.
+  const { data: existing } = await db.from("candidates").select("created_by").eq("id", id).maybeSingle();
+  if (!existing) return { error: "Candidate not found." };
+  if ((existing as any).created_by !== profile.id) return { error: "Only the person who added this candidate can edit it." };
 
   // Only persist keys that were actually provided, so a partial edit never wipes
   // an untouched column. Trim text; empty strings become null for nullable fields.
@@ -182,12 +190,54 @@ export async function updateCandidate(id: string, fields: {
   if (fields.school_id !== undefined) updates.school_id = fields.school_id || null;
   if (Object.keys(updates).length === 0) return { ok: true };
 
-  const db = createServiceClient();
   const { error } = await db.from("candidates").update(updates).eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/console");
   revalidatePath("/workspace");
   return { ok: true };
+}
+
+// Import partial info for candidates already in the system. Rows are matched to
+// existing candidates by email (case-insensitive); a provided value is written
+// only when that field is currently blank (never overwrites), and rows whose
+// email isn't found are skipped. Currently fills in LinkedIn URLs.
+export async function importCandidateInfo(
+  rows: { email: string; linkedin?: string | null }[],
+): Promise<{ ok?: true; updated: number; skipped: number; error?: string }> {
+  if (isPreviewing()) return { error: "Exit preview to make changes.", updated: 0, skipped: 0 };
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated", updated: 0, skipped: 0 };
+
+  const byEmail = new Map<string, { linkedin: string }>();
+  for (const r of rows) {
+    const email = (r.email ?? "").trim().toLowerCase();
+    const linkedin = (r.linkedin ?? "").trim();
+    if (email) byEmail.set(email, { linkedin });
+  }
+  if (byEmail.size === 0) return { ok: true, updated: 0, skipped: rows.length };
+
+  const db = createServiceClient();
+  // Match in memory (case-insensitive email), paging past the 1000-row cap.
+  const all = await fetchAllRows<{ id: string; email: string | null; linkedin: string | null }>(
+    (from, to) => db.from("candidates").select("id, email, linkedin").not("email", "is", null).range(from, to),
+  );
+  const matched = new Set<string>();
+  let updated = 0;
+  for (const c of all) {
+    const email = (c.email ?? "").trim().toLowerCase();
+    const inp = byEmail.get(email);
+    if (!inp) continue;
+    matched.add(email);
+    // Fill blanks only — never overwrite an existing LinkedIn.
+    if (inp.linkedin && !(c.linkedin ?? "").trim()) {
+      const { error } = await db.from("candidates").update({ linkedin: inp.linkedin }).eq("id", c.id);
+      if (!error) updated++;
+    }
+  }
+  const skipped = byEmail.size - matched.size; // input emails with no candidate match
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true, updated, skipped };
 }
 
 export async function deleteCandidate(id: string) {
@@ -202,8 +252,28 @@ export async function deleteCandidate(id: string) {
   return { ok: true };
 }
 
+// Delete many candidates at once (admin+). Used to clean up a bad import.
+export async function bulkDeleteCandidates(ids: string[]): Promise<{ ok?: true; deleted: number; error?: string }> {
+  if (isPreviewing()) return { error: "Exit preview to make changes.", deleted: 0 };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden", deleted: 0 };
+  if (!ids.length) return { ok: true, deleted: 0 };
+  const db = createServiceClient();
+  let deleted = 0;
+  const CHUNK = 200;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const { error } = await db.from("candidates").delete().in("id", slice);
+    if (error) { revalidatePath("/console"); revalidatePath("/workspace"); return { error: error.message, deleted }; }
+    deleted += slice.length;
+  }
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true, deleted };
+}
+
 export async function bulkImportCandidates(
-  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null }[]
+  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null }[]
 ) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
@@ -221,10 +291,13 @@ export async function bulkImportCandidates(
     return name ? idByName.get(name) ?? null : null;
   };
 
+  // Only team leads / admins may assign point people on import.
+  const allowPP = canReassign(profile.role);
   const prepared = rows.map((r) => ({
     ...r,
     // No school chosen for this row? Route off a recognized school email.
     school_id: r.school_id || routeByEmail(r.email),
+    point_person_id: allowPP ? (r.point_person_id ?? null) : null,
     stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id,
   }));
 
@@ -247,6 +320,108 @@ export async function bulkImportCandidates(
   revalidatePath("/console");
   revalidatePath("/workspace");
   return { ok: true, count: inserted };
+}
+
+// ---- Server-side candidate pagination --------------------------------------
+// One page of candidates, filtered/sorted/counted in the database so the client
+// never holds the whole table. Used by the console + workspace candidate lists.
+// Limitations (acceptable at 500/page): GPA is a text column so Min-GPA and the
+// GPA sort compare lexically; the stage sort is alphabetical (not phase order).
+const UUID_NONE = "00000000-0000-0000-0000-000000000000";
+export type CandidatePageParams = {
+  variant: "console" | "workspace"; // which column set to return
+  page: number;                 // 0-based
+  pageSize: number;
+  scope?: string;               // "all" | <school_id> | "tier:satellite" | "tier:bonus"
+  unroutedOnly?: boolean;
+  q?: string;
+  major?: string;               // "All majors" → ignored
+  stage?: string;               // "All stages" → ignored
+  minGpa?: string;
+  favOnly?: boolean;
+  mineOnly?: boolean;           // point_person_id == me
+  creator?: string;             // "anyone" | "jazzhr" | <profile_id>
+  sortKey?: "name" | "school" | "major" | "gpa" | "stage";
+  sortDir?: "asc" | "desc";
+  withAi?: boolean;             // super-admin AI scores for the page
+};
+export async function listCandidates(
+  p: CandidatePageParams,
+): Promise<{ rows: any[]; total: number; ai: any[] }> {
+  const profile = await getCurrentProfile();
+  if (!profile) return { rows: [], total: 0, ai: [] };
+  const db = createServiceClient();
+
+  // This user's favorites — drives the favOnly filter and the per-row star.
+  const favRows = await fetchAllRows<{ candidate_id: string }>((from, to) =>
+    db.from("favorites").select("candidate_id").eq("user_id", profile.id).range(from, to));
+  const favSet = new Set(favRows.map((r) => r.candidate_id));
+
+  const cols: string = p.variant === "workspace" ? CAND_COLS_WORKSPACE : CAND_COLS_CONSOLE;
+  let qb: any = db.from("candidates").select(cols as any, { count: "exact" });
+
+  if (p.scope === "tier:satellite" || p.scope === "tier:bonus") {
+    const tier = p.scope.slice(5);
+    const ids = ((await getSchoolsCached()) as any[]).filter((s) => s.tier === tier).map((s) => s.id);
+    qb = qb.in("school_id", ids.length ? ids : [UUID_NONE]);
+  } else if (p.scope && p.scope !== "all") {
+    qb = qb.eq("school_id", p.scope);
+  }
+  if (p.unroutedOnly) qb = qb.is("school_id", null);
+
+  if (p.q && p.q.trim()) {
+    // Strip PostgREST filter-syntax characters so the search can't break the query.
+    const term = p.q.trim().replace(/[%,()\\*]/g, " ").trim();
+    if (term) qb = qb.or(`name.ilike.%${term}%,email.ilike.%${term}%,area_of_study.ilike.%${term}%`);
+  }
+  if (p.major && p.major !== "All majors") qb = qb.eq("area_of_study", p.major);
+  if (p.stage && p.stage !== "All stages") qb = qb.eq("stage", p.stage);
+  if (p.minGpa && p.minGpa.trim() && !Number.isNaN(parseFloat(p.minGpa))) qb = qb.gte("gpa", p.minGpa.trim());
+  if (p.favOnly) qb = qb.in("id", favSet.size ? [...favSet] : [UUID_NONE]);
+  if (p.mineOnly) qb = qb.eq("point_person_id", profile.id);
+  if (p.creator === "jazzhr") qb = qb.eq("source", "jazzhr");
+  else if (p.creator && p.creator !== "anyone") qb = qb.eq("created_by", p.creator);
+
+  const sortCol = p.sortKey === "school" ? "school_id" : p.sortKey === "major" ? "area_of_study"
+    : (p.sortKey === "gpa" || p.sortKey === "stage") ? p.sortKey : "name";
+  qb = qb.order(sortCol, { ascending: p.sortDir !== "desc", nullsFirst: false });
+  if (sortCol !== "name") qb = qb.order("name", { ascending: true });
+
+  const from = Math.max(0, p.page) * p.pageSize;
+  const { data, count, error } = await qb.range(from, from + p.pageSize - 1);
+  if (error) return { rows: [], total: 0, ai: [] };
+  const rows = (data ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
+
+  let ai: any[] = [];
+  if (p.withAi && isSuper(profile.role) && rows.length) {
+    const ids = rows.map((r: any) => r.id);
+    const { data: aiRows } = await db.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").in("candidate_id", ids);
+    ai = aiRows ?? [];
+  }
+  return { rows, total: count ?? rows.length, ai };
+}
+
+// Lightweight, full-set data the candidate pages still need even when the table
+// itself is paginated: the distinct Major/Stage dropdown values, and a slim
+// projection of every candidate for duplicate detection, JazzHR match review and
+// the "already exists" import warnings. Far smaller than the full rows.
+export type SlimCandidate = { id: string; name: string; email: string | null; school_id: string | null; jazz_id: string | null; source: string | null; stage: string | null; area_of_study: string | null; gpa: string | null; university_raw: string | null };
+export type CandidateFacets = {
+  majors: string[];
+  stages: string[];
+  unroutedCount: number;
+  slim: SlimCandidate[];
+};
+export async function getCandidateFacets(includeSlim: boolean): Promise<CandidateFacets> {
+  const db = createServiceClient();
+  const rows = await fetchAllRows<SlimCandidate>(
+    (from, to) => db.from("candidates").select("id, name, email, school_id, jazz_id, source, stage, area_of_study, gpa, university_raw").order("name").range(from, to),
+  );
+  const majors = Array.from(new Set(rows.map((r) => r.area_of_study).filter((m): m is string => !!m))).sort((a, b) => a.localeCompare(b));
+  const stages = Array.from(new Set(rows.map((r) => r.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
+  const unroutedCount = rows.filter((r) => !r.school_id).length;
+  const slim = includeSlim ? rows : [];
+  return { majors, stages, unroutedCount, slim };
 }
 
 export async function upsertGoal(school_id: string, goal_sourced: number, goal_contacted: number, goal_applied: number) {
@@ -399,11 +574,11 @@ export async function deduplicateCandidates() {
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const serviceDb = createServiceClient();
-  const { data: allCands, error } = await serviceDb
-    .from("candidates")
-    .select("id, email, jazz_id")
-    .not("email", "is", null);
-  if (error) return { error: error.message };
+  // Page through — a single select caps at 1000, which would leave most
+  // duplicates unmerged once the table grows past that.
+  const allCands = await fetchAllRows<{ id: string; email: string | null; jazz_id: string | null }>(
+    (from, to) => serviceDb.from("candidates").select("id, email, jazz_id").not("email", "is", null).range(from, to),
+  );
 
   const emailGroups = new Map<string, { id: string; jazz_id: string | null }[]>();
   for (const c of allCands ?? []) {
@@ -454,6 +629,7 @@ async function sendInvite(
   // New invite. If the user already exists (e.g. a prior invite created them but
   // the email failed), fall back to a recovery link so they can still set their
   // password — re-running an invite is therefore idempotent.
+  let kind: "invite" | "recovery" = "invite";
   let res = await db.auth.admin.generateLink({
     type: "invite",
     email,
@@ -463,6 +639,7 @@ async function sendInvite(
     },
   });
   if (res.error && /regist|already|exist/i.test(res.error.message)) {
+    kind = "recovery";
     res = await db.auth.admin.generateLink({
       type: "recovery",
       email,
@@ -470,8 +647,16 @@ async function sendInvite(
     });
   }
   if (res.error) return { error: res.error.message };
-  const link = res.data?.properties?.action_link;
   const user = res.data?.user;
+  // Build our OWN link carrying the hashed token, which the callback verifies
+  // with verifyOtp(). Admin-generated links can't use the PKCE code-exchange
+  // flow (there's no code_verifier cookie in the recipient's browser), which is
+  // what left users with "Auth session missing" on the set-password screen.
+  const tokenHash = (res.data?.properties as any)?.hashed_token as string | undefined;
+  const callbackPath = kind === "recovery" ? "reset-callback" : "invite-callback";
+  const link = tokenHash
+    ? `${siteUrlForInvite()}/auth/${callbackPath}?token_hash=${encodeURIComponent(tokenHash)}&type=${kind}`
+    : undefined;
   if (!link || !user) return { error: "Could not generate an invite link." };
 
   await db.from("profiles").upsert(
@@ -642,22 +827,43 @@ export async function seedPlaybook(schoolId: string, force = false) {
     await db.from("playbook_phases").delete().eq("school_id", schoolId);
   }
 
-  for (let i = 0; i < PLAYBOOK_DEFAULTS.length; i++) {
-    const role = PLAYBOOK_DEFAULTS[i];
+  // The playbook is organized by DATE, not by role. Flatten every role's tasks,
+  // group them by month, and de-duplicate identical tasks within a month so each
+  // date shows a clean task list.
+  const MONTH_ORDER = ["July", "August", "September", "Oct/Nov"];
+  const byMonth = new Map<string, string[]>();
+  const seen = new Map<string, Set<string>>();
+  for (const role of PLAYBOOK_DEFAULTS) {
+    for (const t of role.tasks) {
+      const month = t.month;
+      if (!byMonth.has(month)) { byMonth.set(month, []); seen.set(month, new Set()); }
+      const key = t.text.trim();
+      if (seen.get(month)!.has(key)) continue;
+      seen.get(month)!.add(key);
+      byMonth.get(month)!.push(t.text);
+    }
+  }
+  const months = [...byMonth.keys()].sort((a, b) => {
+    const ia = MONTH_ORDER.indexOf(a), ib = MONTH_ORDER.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
+  for (let i = 0; i < months.length; i++) {
+    const month = months[i];
     const { data: phase, error: phaseErr } = await db
       .from("playbook_phases")
-      .insert({ school_id: schoolId, title: role.title, label: role.title, sort_order: i })
+      .insert({ school_id: schoolId, title: month, label: month, sort_order: i })
       .select("id")
       .single();
     if (phaseErr || !phase) continue;
 
-    const tasks = role.tasks.map((t) => ({
+    const tasks = byMonth.get(month)!.map((text) => ({
       phase_id: phase.id,
-      text: t.text,
-      month_label: t.month,
+      text,
+      month_label: null,
       done: false,
       assignee_id: null,
-      assignee_label: role.title === "Oct/Nov Milestones" ? "team" : null,
+      assignee_label: null,
       notes: null,
       due_date: null,
     }));
@@ -667,6 +873,135 @@ export async function seedPlaybook(schoolId: string, force = false) {
   revalidatePath("/console");
   revalidatePath("/workspace");
   return { ok: true };
+}
+
+// One-time, non-destructive migration: convert existing ROLE-based playbooks to
+// DATE-based ones in place. Tasks are regrouped under month phases and de-duped
+// within a month; assignees and completions on the duplicates are merged onto
+// the kept task first, so nothing is lost. Idempotent — re-running is a no-op.
+const PLAYBOOK_MONTH_ORDER = ["July", "August", "September", "Oct/Nov"];
+
+async function migrateSchoolPlaybook(
+  db: ReturnType<typeof createServiceClient>, schoolId: string,
+): Promise<{ changed: boolean; merged: number }> {
+  const { data: phases } = await db.from("playbook_phases").select("id, title, sort_order").eq("school_id", schoolId).order("sort_order");
+  if (!phases || phases.length === 0) return { changed: false, merged: 0 };
+  const phaseTitle = new Map(phases.map((p: any) => [p.id as string, ((p.title as string) ?? "").trim()]));
+  const phaseIds = phases.map((p: any) => p.id as string);
+
+  const { data: tasks } = await db.from("playbook_tasks").select("id, phase_id, text, month_label, assignee_id, due_date, notes, done").in("phase_id", phaseIds);
+  if (!tasks || tasks.length === 0) return { changed: false, merged: 0 };
+  const taskIds = tasks.map((t: any) => t.id as string);
+
+  const { data: assignees } = await db.from("playbook_task_assignees").select("task_id, profile_id").in("task_id", taskIds);
+  const { data: completions } = await db.from("playbook_task_completions").select("task_id, profile_id, state, updated_at").in("task_id", taskIds);
+  const assigneesByTask = new Map<string, string[]>();
+  for (const a of assignees ?? []) (assigneesByTask.get((a as any).task_id) ?? assigneesByTask.set((a as any).task_id, []).get((a as any).task_id)!).push((a as any).profile_id);
+  const compsByTask = new Map<string, { profile_id: string; state: string; updated_at: string }[]>();
+  for (const c of completions ?? []) (compsByTask.get((c as any).task_id) ?? compsByTask.set((c as any).task_id, []).get((c as any).task_id)!).push(c as any);
+
+  // A task's month: its month_label, else its phase title if that's already a
+  // month (so a second run is a no-op), else July.
+  const monthOf = (t: any): string => {
+    const ml = ((t.month_label as string) ?? "").trim();
+    if (ml) return ml;
+    const pt = phaseTitle.get(t.phase_id) ?? "";
+    return PLAYBOOK_MONTH_ORDER.includes(pt) ? pt : "July";
+  };
+
+  const phaseRank = new Map(phases.map((p: any, i: number) => [p.id as string, i]));
+  const ordered = [...tasks].sort((a: any, b: any) => (phaseRank.get(a.phase_id)! - phaseRank.get(b.phase_id)!));
+
+  // month -> normalized text -> tasks (first is canonical, kept)
+  const groups = new Map<string, Map<string, any[]>>();
+  for (const t of ordered) {
+    const m = monthOf(t);
+    if (!groups.has(m)) groups.set(m, new Map());
+    const key = ((t.text as string) ?? "").trim().toLowerCase();
+    const g = groups.get(m)!;
+    (g.get(key) ?? g.set(key, []).get(key)!).push(t);
+  }
+  const months = [...groups.keys()].sort((a, b) => {
+    const ia = PLAYBOOK_MONTH_ORDER.indexOf(a), ib = PLAYBOOK_MONTH_ORDER.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
+  // Reuse a phase already titled exactly the month, else create one.
+  const monthPhaseId = new Map<string, string>();
+  const kept = new Set<string>();
+  for (let i = 0; i < months.length; i++) {
+    const m = months[i];
+    const existing = phases.find((p: any) => ((p.title as string) ?? "").trim() === m && !kept.has(p.id));
+    if (existing) {
+      monthPhaseId.set(m, existing.id);
+      kept.add(existing.id);
+      await db.from("playbook_phases").update({ title: m, label: m, sort_order: i }).eq("id", existing.id);
+    } else {
+      const { data: created } = await db.from("playbook_phases").insert({ school_id: schoolId, title: m, label: m, sort_order: i }).select("id").single();
+      if (created) { monthPhaseId.set(m, (created as any).id); kept.add((created as any).id); }
+    }
+  }
+
+  let merged = 0;
+  const dupTaskIds: string[] = [];
+  for (const m of months) {
+    const phaseId = monthPhaseId.get(m)!;
+    for (const [, groupTasks] of groups.get(m)!) {
+      const canonical = groupTasks[0];
+      const dups = groupTasks.slice(1);
+
+      const mergedAssignees = new Set<string>(assigneesByTask.get(canonical.id) ?? []);
+      const mergedComps = new Map<string, { state: string; updated_at: string }>();
+      for (const c of compsByTask.get(canonical.id) ?? []) mergedComps.set(c.profile_id, { state: c.state, updated_at: c.updated_at });
+      let anyDone = !!canonical.done;
+      let assigneeId: string | null = canonical.assignee_id ?? null;
+
+      for (const d of dups) {
+        for (const pid of assigneesByTask.get(d.id) ?? []) mergedAssignees.add(pid);
+        for (const c of compsByTask.get(d.id) ?? []) {
+          const ex = mergedComps.get(c.profile_id);
+          if (!ex || (ex.state !== "confirmed" && c.state === "confirmed")) mergedComps.set(c.profile_id, { state: c.state, updated_at: c.updated_at });
+        }
+        if (d.done) anyDone = true;
+        if (!assigneeId && d.assignee_id) assigneeId = d.assignee_id;
+        dupTaskIds.push(d.id);
+        merged++;
+      }
+
+      await db.from("playbook_tasks").update({ phase_id: phaseId, month_label: null, done: anyDone, assignee_id: assigneeId }).eq("id", canonical.id);
+      if (mergedAssignees.size) {
+        await db.from("playbook_task_assignees").upsert([...mergedAssignees].map((pid) => ({ task_id: canonical.id, profile_id: pid })), { onConflict: "task_id,profile_id", ignoreDuplicates: true });
+      }
+      if (mergedComps.size) {
+        await db.from("playbook_task_completions").upsert([...mergedComps].map(([pid, v]) => ({ task_id: canonical.id, profile_id: pid, state: v.state, updated_at: v.updated_at })), { onConflict: "task_id,profile_id" });
+      }
+    }
+  }
+
+  // Remove the merged-away duplicates (cascades their now-copied assignees/completions).
+  if (dupTaskIds.length) await db.from("playbook_tasks").delete().in("id", dupTaskIds);
+  // Drop the now-empty old role phases (every task was repointed to a month phase).
+  const oldPhaseIds = phaseIds.filter((id) => !kept.has(id));
+  if (oldPhaseIds.length) await db.from("playbook_phases").delete().in("id", oldPhaseIds);
+
+  return { changed: true, merged };
+}
+
+export async function migratePlaybooksToDates() {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Only a super admin can run this." };
+  const db = createServiceClient();
+  const { data: schools } = await db.from("schools").select("id");
+  let schoolsChanged = 0, merged = 0;
+  for (const s of schools ?? []) {
+    const r = await migrateSchoolPlaybook(db, (s as any).id);
+    if (r.changed) schoolsChanged++;
+    merged += r.merged;
+  }
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true as const, schoolsChanged, merged };
 }
 
 // ---- VIEW AS (admin read-only preview of another person) -------------------
@@ -763,13 +1098,13 @@ export async function getUserSnapshot(userId: string) {
   const { ids: schoolIds } = await getTierSchoolIds(t.school_id);
   const queue: { name: string; why: string }[] = [];
   if (schoolIds.length) {
-    const { data: cands } = await db.from("candidates").select("id, name, stage, point_person_id, not_interested").in("school_id", schoolIds);
-    const list = (cands ?? []) as any[];
+    const cands = await fetchAllRows((from, to) => db.from("candidates").select("id, name, stage, point_person_id, not_interested").in("school_id", schoolIds).range(from, to));
+    const list = cands as any[];
     const ids = list.map((c) => c.id);
     const lastContact: Record<string, string> = {};
     if (ids.length) {
-      const { data: logs } = await db.from("outreach_log").select("candidate_id, created_at").in("candidate_id", ids);
-      for (const l of logs ?? []) { const cid = (l as any).candidate_id, ts = (l as any).created_at; if (!lastContact[cid] || ts > lastContact[cid]) lastContact[cid] = ts; }
+      const logs = await fetchAllRows((from, to) => db.from("outreach_log").select("candidate_id, created_at").in("candidate_id", ids).range(from, to));
+      for (const l of logs) { const cid = (l as any).candidate_id, ts = (l as any).created_at; if (!lastContact[cid] || ts > lastContact[cid]) lastContact[cid] = ts; }
     }
     const now = Date.now();
     const lead = t.role === "team_lead";

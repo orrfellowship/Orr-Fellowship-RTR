@@ -4,10 +4,11 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus } from "@/lib/types";
 import { canAccessWorkspaceSection } from "@/lib/nav/config";
 import {
-  getTierSchoolIds, getSchoolsCached, getGoalsCached, getResourcesCached,
+  getTierSchoolIds, getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
   CAND_COLS_STANDINGS, CAND_COLS_WORKSPACE,
 } from "@/lib/queries";
 import WorkspaceClient from "../WorkspaceClient";
+import { listCandidates, getCandidateFacets } from "../../console/actions";
 
 // slug (URL) → internal tab key used by WorkspaceClient
 const TAB: Record<string, string> = {
@@ -53,15 +54,17 @@ export default async function WorkspaceSection({ params }: { params: { section: 
 
   // Standings only reads id/school_id/stage; every other view needs the full row.
   const allCandSelect = S === "standings" ? CAND_COLS_STANDINGS : CAND_COLS_WORKSPACE;
+  // The Candidates tab (S === "all") is server-paginated; it doesn't load every row.
+  const paginatedList = S === "all";
 
   // Parallel, section-scoped fetches. Reference tables come from the shared
   // Data Cache (getSchoolsCached / getGoalsCached / getResourcesCached).
   const [candidates, favs, team, phases, allCandidates, allProfiles, allSchools, allGoals, resources] = await Promise.all([
-    need.candidates ? serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, source, created_by").in("school_id", tierSchoolIds).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.candidates ? fetchAllRows((from, to) => serviceDb.from("candidates").select("id, jazz_id, name, email, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, source, created_by").in("school_id", tierSchoolIds).order("name").range(from, to)) : Promise.resolve([] as any[]),
     wantFavs ? serviceDb.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.team ? serviceDb.from("profiles").select("id, full_name, role").in("school_id", tierSchoolIds).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.phases ? serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").eq("school_id", playbookSchoolId).order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.allCandidates ? serviceDb.from("candidates").select(allCandSelect).order("name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.allCandidates && !paginatedList ? fetchAllRows((from, to) => serviceDb.from("candidates").select(allCandSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
     need.allProfiles ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.allSchools ? getSchoolsCached() : Promise.resolve([] as any[]),
     need.allGoals ? getGoalsCached() : Promise.resolve([] as any[]),
@@ -93,7 +96,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
   const candidateIds = (candidates ?? []).map((c: any) => c.id);
   const lastContactByCand: Record<string, string> = {};
   if (need.lastContact && candidateIds.length) {
-    const { data: logs } = await serviceDb.from("outreach_log").select("candidate_id, created_at").in("candidate_id", candidateIds);
+    const logs = await fetchAllRows((from, to) => serviceDb.from("outreach_log").select("candidate_id, created_at").in("candidate_id", candidateIds).range(from, to));
     for (const l of logs ?? []) {
       const prev = lastContactByCand[(l as any).candidate_id];
       if (!prev || (l as any).created_at > prev) lastContactByCand[(l as any).candidate_id] = (l as any).created_at;
@@ -140,9 +143,19 @@ export default async function WorkspaceSection({ params }: { params: { section: 
     budgetGuidance = bg ?? [];
   }
 
+  // Candidates tab: first page + count + facets (distinct Major/Stage values and
+  // a slim all-candidates list for the bulk-import dedupe warnings).
+  const PAGE_SIZE = 500;
+  const [allPage, allFacets] = paginatedList
+    ? await Promise.all([
+        listCandidates({ variant: "workspace", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" }),
+        getCandidateFacets(true),
+      ])
+    : [{ rows: [] as any[], total: 0, ai: [] as any[] }, { majors: [] as string[], stages: [] as string[], unroutedCount: 0, slim: [] as any[] }];
+
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
   const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
-  const allEnriched = (allCandidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
+  const allEnriched = paginatedList ? allPage.rows : (allCandidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
 
   return (
     <WorkspaceClient
@@ -154,6 +167,11 @@ export default async function WorkspaceSection({ params }: { params: { section: 
       phases={phasesWithReview}
       allSchools={allSchools ?? []}
       allCandidates={allEnriched}
+      allCandidatesTotal={paginatedList ? allPage.total : undefined}
+      candidatesPageSize={PAGE_SIZE}
+      facetMajors={allFacets.majors}
+      facetStages={allFacets.stages}
+      slimCandidates={allFacets.slim}
       allGoals={allGoals ?? []}
       groupName={groupName}
       lastContactByCand={lastContactByCand}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useTransition, useEffect } from "react";
+import { useState, useMemo, useTransition, useEffect, useRef } from "react";
 import type { Profile, Resource } from "@/lib/types";
 import { canReassign, canEditPlaybook, canManageResources, canEditEvents } from "@/lib/types";
 import {
@@ -9,11 +9,14 @@ import {
   deleteOutreach, deleteConnection, updatePhase, deletePhase,
   requestTaskComplete, confirmTaskComplete, setTaskAssignees,
 } from "./actions";
+import { listCandidates, updateCandidate } from "@/app/(app)/console/actions";
 import { phaseOf } from "@/lib/stages";
 import { evaluateCandidate } from "@/lib/triggers";
 import StandingsClient from "@/components/StandingsClient";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
+import ImportInfoModal from "@/components/ImportInfoModal";
+import PlaybookBoard from "@/components/PlaybookBoard";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
@@ -89,12 +92,18 @@ const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 export default function WorkspaceClient({
   profile, initialSection, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
   budgetEntries = [], budgetSchoolId = null, budgetGuidance = [],
+  allCandidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], slimCandidates = [],
 }: {
   profile: Profile; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
   lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[];
   allProfiles: { id: string; full_name: string }[];
   budgetEntries?: BudgetEntry[]; budgetSchoolId?: string | null; budgetGuidance?: Guidance[];
+  // Candidates tab (S === "all") is server-paginated: `allCandidates` is the
+  // first page; these carry the total + facet dropdowns + slim dedupe list.
+  allCandidatesTotal?: number; candidatesPageSize?: number;
+  facetMajors?: string[]; facetStages?: string[];
+  slimCandidates?: { id: string; name: string; email: string | null }[];
 }) {
   const isMobile = useIsMobile();
   const [tab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources" | "budget">(initialSection as any);
@@ -111,10 +120,16 @@ export default function WorkspaceClient({
   const [boardFavOnly, setBoardFavOnly] = useState(false);
   const [boardOwner, setBoardOwner] = useState("");
   const [allSort, setAllSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
+  // Server-paginated Candidates tab (S === "all"). `allCandidates` is page 0.
+  const [allRows, setAllRows] = useState<AllCand[]>(allCandidates);
+  const [allTotal, setAllTotal] = useState<number>(allCandidatesTotal ?? allCandidates.length);
+  const [allPageNum, setAllPageNum] = useState(0);
+  const [allLoading, setAllLoading] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const canEdit = canEditPlaybook(profile.role);
@@ -132,9 +147,33 @@ export default function WorkspaceClient({
   // (logging outreach, flags, warm intros) is limited to the assigned point
   // person — or team leads/admins, who manage their whole school.
   const openFromSchool = candidates.find((c) => c.id === openId) ?? null;
-  const openFromAll = allCandidates.find((c) => c.id === openId) ?? null;
+  const openFromAll = allRows.find((c) => c.id === openId) ?? null;
   const open: Cand | null = openFromSchool ?? (openFromAll as Cand | null);
   const openCanEdit = open ? (canAssign || open.point_person_id === profile.id) : false;
+
+  // Fetch one page of the org-wide Candidates list with current filters applied.
+  const ALL_PAGE_SIZE = candidatesPageSize;
+  const loadAllPage = async (page: number) => {
+    setAllLoading(true);
+    const res = await listCandidates({
+      variant: "workspace", page, pageSize: ALL_PAGE_SIZE,
+      scope: allSchool, q: allSearch, major: allMajor, stage: allStage, minGpa: allMinGpa,
+      favOnly: allFavOnly, mineOnly: allMineOnly,
+      sortKey: allSort.key, sortDir: allSort.dir,
+    });
+    setAllRows(res.rows as AllCand[]);
+    setAllTotal(res.total);
+    setAllPageNum(page);
+    setAllLoading(false);
+  };
+  const allMounted = useRef(false);
+  useEffect(() => {
+    if (tab !== "all") return;
+    if (!allMounted.current) { allMounted.current = true; return; }
+    const t = setTimeout(() => { loadAllPage(0); }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allSearch, allSchool, allMajor, allStage, allMinGpa, allFavOnly, allMineOnly, allSort]);
 
   const PHASE_ORDER_PIPELINE = ["sourced", "contacted", "applied"] as const;
   const PHASE_LABEL: Record<string, string> = { sourced: "Sourced", contacted: "Contacted", applied: "Applied" };
@@ -160,11 +199,9 @@ export default function WorkspaceClient({
 
   const pipelineBoard = useMemo(() => {
     const sourced   = candidates.filter((c) => c.stage && SOURCED.has(c.stage)).length;
-    const contacted = candidates.filter((c) => c.stage && CONTACTD.has(c.stage)).length;
     const applied   = candidates.filter((c) => c.stage && APPLIED.has(c.stage)).length;
     return [
       { label: "Sourced",   actual: sourced,   goal: schoolGoal?.goal_sourced   ?? 0 },
-      { label: "Contacted", actual: contacted, goal: schoolGoal?.goal_contacted ?? 0 },
       { label: "Applied",   actual: applied,   goal: schoolGoal?.goal_applied   ?? 0 },
     ];
   }, [candidates, schoolGoal]);
@@ -172,12 +209,10 @@ export default function WorkspaceClient({
   // Org-wide breakdown (toggle on the Weekly Snapshot).
   const orgPipelineBoard = useMemo(() => {
     const sourced   = allCandidates.filter((c) => c.stage && SOURCED.has(c.stage)).length;
-    const contacted = allCandidates.filter((c) => c.stage && CONTACTD.has(c.stage)).length;
     const applied   = allCandidates.filter((c) => c.stage && APPLIED.has(c.stage)).length;
-    const sum = (k: "goal_sourced" | "goal_contacted" | "goal_applied") => allGoals.reduce((s, g) => s + (g[k] ?? 0), 0);
+    const sum = (k: "goal_sourced" | "goal_applied") => allGoals.reduce((s, g) => s + (g[k] ?? 0), 0);
     return [
       { label: "Sourced",   actual: sourced,   goal: sum("goal_sourced") },
-      { label: "Contacted", actual: contacted, goal: sum("goal_contacted") },
       { label: "Applied",   actual: applied,   goal: sum("goal_applied") },
     ];
   }, [allCandidates, allGoals]);
@@ -225,8 +260,6 @@ export default function WorkspaceClient({
     return results;
   }, [phases, profile.id]);
 
-  const MONTHS = ["July", "August", "September", "Oct/Nov"];
-
   return (
     <>
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: isMobile ? "20px 14px 60px" : "30px 28px 80px", opacity: pending ? 0.7 : 1 }}>
@@ -235,7 +268,7 @@ export default function WorkspaceClient({
         {tab === "plan" && (
           <>
             <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Weekly Snapshot</h1>
-            <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{plan.length} move{plan.length !== 1 ? "s" : ""} queued · {totalActive} active candidates</p>
+            <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{plan.length} move{plan.length !== 1 ? "s" : ""} queued · {totalActive.toLocaleString()} active candidates</p>
 
             {/* Pipeline breakdown — toggle between your team and the whole org */}
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
@@ -248,7 +281,7 @@ export default function WorkspaceClient({
                 ))}
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginTop: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 14, marginTop: 8 }}>
               {activeBoard.map((b) => {
                 const hasGoal = b.goal > 0;
                 const pct = hasGoal ? (b.actual / b.goal) * 100 : 0;
@@ -257,11 +290,11 @@ export default function WorkspaceClient({
                   <div key={b.label} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
                     <div style={{ background: C.navy, color: "#fff", padding: "12px 18px", textAlign: "center" }}>
                       <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", opacity: 0.8 }}>{b.label}</div>
-                      <div style={{ fontFamily: HEAD, fontSize: 32, fontWeight: 700, marginTop: 2, lineHeight: 1 }}>{b.actual}</div>
+                      <div style={{ fontFamily: HEAD, fontSize: 32, fontWeight: 700, marginTop: 2, lineHeight: 1 }}>{b.actual.toLocaleString()}</div>
                     </div>
                     {hasGoal ? (
                       <div style={{ padding: "8px 18px", textAlign: "center", background: `${tone}14` }}>
-                        <div style={{ fontSize: 11, color: C.grayMute, fontWeight: 600 }}>Goal {b.goal} · {Math.round(pct)}%</div>
+                        <div style={{ fontSize: 11, color: C.grayMute, fontWeight: 600 }}>Goal {b.goal.toLocaleString()} · {Math.round(pct)}%</div>
                         <div style={{ marginTop: 5, height: 5, borderRadius: 99, background: C.line, overflow: "hidden" }}>
                           <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: tone, borderRadius: 99 }} />
                         </div>
@@ -324,14 +357,14 @@ export default function WorkspaceClient({
                 </h2>
                 {myTasks.length === 0 ? (
                   <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12 }}>No tasks assigned to you.</div>
-                ) : MONTHS.map((month) => {
-                  const monthTasks = myTasks.filter((m) => m.task.month_label === month);
-                  if (!monthTasks.length) return null;
+                ) : phases.map((p) => {
+                  const dateTasks = p.playbook_tasks.filter((t) => effAssignees(t).includes(profile.id));
+                  if (!dateTasks.length) return null;
                   return (
-                    <div key={month} style={{ marginBottom: 16 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 8 }}>{month}</div>
+                    <div key={p.id} style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.8, marginBottom: 8 }}>{p.title}</div>
                       <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
-                        {monthTasks.map(({ task: t, roleTitle }) => {
+                        {dateTasks.map((t) => {
                           const myState = compStateOf(t, profile.id);
                           const confirmed = myState === "confirmed";
                           const pending = myState === "pending_review";
@@ -348,7 +381,6 @@ export default function WorkspaceClient({
                                 <span style={{ fontSize: 13.5, color: C.gray, textDecoration: confirmed ? "line-through" : "none" }}>{t.text}</span>
                                 {pending && <div style={{ fontSize: 11, color: "#8A6D0E", fontWeight: 600 }}>Completed · waiting on team-lead review to count</div>}
                               </div>
-                              <span style={{ fontSize: 11, color: C.grayMute, flexShrink: 0 }}>{roleTitle}</span>
                             </div>
                           );
                         })}
@@ -384,7 +416,7 @@ export default function WorkspaceClient({
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>My School Board</h1>
-                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardVisible.length}{boardFiltersActive ? ` of ${candidates.length}` : ""} candidate{candidates.length !== 1 ? "s" : ""}.</p>
+                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardVisible.length.toLocaleString()}{boardFiltersActive ? ` of ${candidates.length.toLocaleString()}` : ""} candidate{candidates.length !== 1 ? "s" : ""}.</p>
               </div>
               {canAssign && team.length > 0 && (
                 <button onClick={() => setAssignOpen(true)}
@@ -486,7 +518,7 @@ export default function WorkspaceClient({
 
         {/* ---- PLAYBOOK ---- */}
         {tab === "playbook" && (
-          <PlaybookTab phases={phases} profile={profile} canEdit={canEdit} team={team} nameOf={nameOf} accent={accent} startTransition={startTransition} />
+          <PlaybookTab phases={phases} schoolId={budgetSchoolId ?? school?.id ?? ""} profile={profile} canEdit={canEdit} team={team} accent={accent} startTransition={startTransition} />
         )}
 
         {/* ---- STANDINGS ---- */}
@@ -496,38 +528,11 @@ export default function WorkspaceClient({
 
         {/* ---- APPLICANTS ---- */}
         {tab === "all" && (() => {
-          const schoolNameOf = (c: AllCand) => allSchools.find((s) => s.id === c.school_id)?.name ?? "";
-          const stageRank: Record<string, number> = { Sourced: 0, Contacted: 1, Applied: 2, Advanced: 3, Finalist: 4, Fellow: 5 };
-          const distinctMajors = Array.from(new Set(allCandidates.map((c) => c.area_of_study).filter((m): m is string => !!m))).sort((a, b) => a.localeCompare(b));
-          const distinctStages = Array.from(new Set(allCandidates.map((c) => c.stage).filter((s): s is string => !!s))).sort((a, b) => a.localeCompare(b));
-
-          const q = allSearch.trim().toLowerCase();
-          const minGpa = parseFloat(allMinGpa);
-          let visible = allCandidates.filter((c) => {
-            if (!matchesSchoolFilter(allSchool, c.school_id, allSchools)) return false;
-            if (q && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(q))) return false;
-            if (allMajor !== "All majors" && c.area_of_study !== allMajor) return false;
-            if (allStage !== "All stages" && c.stage !== allStage) return false;
-            if (allFavOnly && !c.is_favorite) return false;
-            if (allMineOnly && c.point_person_id !== profile.id) return false;
-            if (!isNaN(minGpa)) { const g = parseFloat(c.gpa ?? ""); if (isNaN(g) || g < minGpa) return false; }
-            return true;
-          });
-
-          const dir = allSort.dir === "asc" ? 1 : -1;
-          visible = [...visible].sort((a, b) => {
-            let av: number | string, bv: number | string;
-            switch (allSort.key) {
-              case "school": av = schoolNameOf(a) || "~"; bv = schoolNameOf(b) || "~"; break;
-              case "major":  av = a.area_of_study ?? "~"; bv = b.area_of_study ?? "~"; break;
-              case "gpa":    av = parseFloat(a.gpa ?? "") || -1; bv = parseFloat(b.gpa ?? "") || -1; break;
-              case "stage":  av = stageRank[PHASE_OF[a.stage ?? ""] ?? ""] ?? -1; bv = stageRank[PHASE_OF[b.stage ?? ""] ?? ""] ?? -1; break;
-              default:       av = a.name.toLowerCase(); bv = b.name.toLowerCase();
-            }
-            if (av < bv) return -1 * dir;
-            if (av > bv) return 1 * dir;
-            return 0;
-          });
+          // Server provides the filtered/sorted page; dropdowns read the facets.
+          const distinctMajors = facetMajors;
+          const distinctStages = facetStages;
+          const visible = allRows;
+          const totalPages = Math.max(1, Math.ceil(allTotal / ALL_PAGE_SIZE));
 
           const toggleSort = (key: typeof allSort.key) =>
             setAllSort((p) => p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
@@ -535,16 +540,32 @@ export default function WorkspaceClient({
           const SortHead = ({ k, label }: { k: typeof allSort.key; label: string }) => (
             <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: allSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
           );
-          const filtersActive = q || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMineOnly || allMinGpa.trim() !== "" || allSchool !== "all";
+          const filtersActive = allSearch.trim() !== "" || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMineOnly || allMinGpa.trim() !== "" || allSchool !== "all";
+
+          // Pagination control — rendered both above and below the table.
+          const pager = () => allTotal > ALL_PAGE_SIZE ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 16 }}>
+              <button onClick={() => loadAllPage(allPageNum - 1)} disabled={allPageNum <= 0 || allLoading}
+                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: allPageNum <= 0 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: allPageNum <= 0 || allLoading ? "default" : "pointer" }}>← Prev</button>
+              <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>
+                Page {(allPageNum + 1).toLocaleString()} of {totalPages.toLocaleString()} · {(allPageNum * ALL_PAGE_SIZE + 1).toLocaleString()}–{Math.min((allPageNum + 1) * ALL_PAGE_SIZE, allTotal).toLocaleString()} of {allTotal.toLocaleString()}
+              </span>
+              <button onClick={() => loadAllPage(allPageNum + 1)} disabled={allPageNum >= totalPages - 1 || allLoading}
+                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: allPageNum >= totalPages - 1 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: allPageNum >= totalPages - 1 || allLoading ? "default" : "pointer" }}>Next →</button>
+            </div>
+          ) : null;
 
           return (
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
                 <div>
                   <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Candidates</h1>
-                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{visible.length} candidates · click a row to view details</p>
+                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{allTotal.toLocaleString()} candidate{allTotal !== 1 ? "s" : ""}{allLoading ? " · loading…" : ""} · click a row to view details</p>
                 </div>
-                <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
+                  <button onClick={() => setInfoOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Import info</button>
+                </div>
               </div>
 
               {/* Filter bar */}
@@ -578,6 +599,8 @@ export default function WorkspaceClient({
                 )}
               </div>
 
+              {pager()}
+
               <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16, ...(isMobile ? { overflowX: "auto" } : {}) }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 80px", minWidth: isMobile ? 620 : undefined, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                   <SortHead k="name" label="Candidate" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" /><div></div>
@@ -610,8 +633,10 @@ export default function WorkspaceClient({
                     </div>
                   );
                 })}
-                {visible.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{filtersActive ? "No candidates match these filters." : "No candidates yet."}</div>}
+                {visible.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{allLoading ? "Loading…" : filtersActive ? "No candidates match these filters." : "No candidates yet."}</div>}
               </div>
+
+              {pager()}
             </>
           );
         })()}
@@ -632,7 +657,7 @@ export default function WorkspaceClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} allProfiles={allProfiles} onClose={() => setOpenId(null)} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
+        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} allProfiles={allProfiles} onClose={() => { setOpenId(null); if (tab === "all") loadAllPage(allPageNum); }} onSaved={() => { if (tab === "all") loadAllPage(allPageNum); }} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
       )}
       {resumeFor && (
         <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
@@ -641,10 +666,14 @@ export default function WorkspaceClient({
         <BulkImportModal
           schools={allSchools}
           team={team}
-          existingEmails={new Set(allCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
-          existingNames={new Set(allCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
-          onClose={() => setBulkOpen(false)}
+          canAssignPointPerson={canAssign}
+          existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
+          existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
+          onClose={() => { setBulkOpen(false); if (tab === "all") loadAllPage(0); }}
         />
+      )}
+      {infoOpen && (
+        <ImportInfoModal onClose={() => { setInfoOpen(false); if (tab === "all") loadAllPage(allPageNum); }} />
       )}
       {assignOpen && (
         <AssignPointPeopleModal
@@ -854,12 +883,9 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
 }
 
 // ---- PLAYBOOK TAB ----
-const MONTHS = ["July", "August", "September", "Oct/Nov"] as const;
-
-function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTransition }: {
+function PlaybookTab({ phases, schoolId, profile, canEdit, team, accent, startTransition }: {
   phases: { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] }[];
-  profile: Profile; canEdit: boolean; team: { id: string; full_name: string }[];
-  nameOf: (id: string | null, label?: string | null) => string;
+  schoolId: string; profile: Profile; canEdit: boolean; team: { id: string; full_name: string }[];
   accent: string;
   startTransition: (cb: () => void) => void;
 }) {
@@ -915,23 +941,36 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
     return { onTime, late, overdue, perPerson };
   }, [allTasks, team]);
 
-  function makeTask(phaseId: string, monthLabel: string) {
+  // ---- person-centric board data ----
+  const taskMap = new Map(phases.flatMap((p) => p.playbook_tasks.map((t) => [t.id, { t, phaseId: p.id }] as const)));
+  const phaseOpts = phases.map((p) => ({ id: p.id, title: p.title }));
+  const boardTasks = phases
+    .flatMap((p) => p.playbook_tasks.map((t) => ({ id: t.id, phaseId: p.id, phaseTitle: p.title, text: t.text, assigneeId: effAssignees(t)[0] ?? null, dueDate: t.due_date, done: t.done })))
+    .filter((b) => matchesFilter(taskMap.get(b.id)!.t));
+  const onUpdateBoardTask = (taskId: string, patch: { text?: string; phaseId?: string; dueDate?: string | null; assigneeId?: string | null; done?: boolean }) => {
+    const found = taskMap.get(taskId); if (!found) return;
+    const o = found.t;
     startTransition(() => {
-      upsertTask({ phase_id: phaseId, text: "New task", assignee_id: null, assignee_label: null, month_label: monthLabel, notes: null, due_date: null, done: false });
+      upsertTask({
+        id: taskId, phase_id: patch.phaseId ?? found.phaseId, text: patch.text ?? o.text,
+        assignee_id: patch.assigneeId !== undefined ? patch.assigneeId : o.assignee_id,
+        assignee_label: patch.assigneeId !== undefined ? null : o.assignee_label,
+        month_label: o.month_label, notes: o.notes,
+        due_date: patch.dueDate !== undefined ? patch.dueDate : o.due_date,
+        done: patch.done !== undefined ? patch.done : o.done,
+      });
+      // Keep the multi-assignee list in sync so the fellow's snapshot matches.
+      if (patch.assigneeId !== undefined) setTaskAssignees(taskId, patch.assigneeId ? [patch.assigneeId] : []);
     });
-  }
+  };
 
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 6 }}>
         <div>
-          <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Playbook</h1>
-          <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{canEdit ? "Role-based recruitment plan. Edit inline — changes save automatically." : "Your team's recruitment plan."}</p>
+          <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Team Tasks</h1>
+          <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{canEdit ? "Assign and track each fellow's tasks. Changes save automatically." : "Your team's tasks, grouped by person."}</p>
         </div>
-        {canEdit && (
-          <button onClick={() => startTransition(() => { addPhase(profile.school_id ?? "", "Role", `New Role ${phases.length + 1}`, phases.length); })}
-            style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", fontSize: 13.5 }}>+ Add role</button>
-        )}
       </div>
 
       {/* Completion overview */}
@@ -990,105 +1029,48 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
         </div>
       )}
 
-      {/* Filters */}
-      {phases.length > 0 && (
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Filter</span>
-          <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}
-            style={{ padding: "8px 11px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13, background: "#fff", color: C.gray, fontWeight: 600 }}>
-            <option value="all">Anyone</option>
-            <option value="team">Whole team</option>
-            <option value="unassigned">Unassigned</option>
-            {team.map((t) => <option key={t.id} value={t.id}>{t.id === profile.id ? `${t.full_name} (me)` : t.full_name}</option>)}
-          </select>
+      {/* Dates + due-date filter */}
+      {canEdit && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Dates</span>
+          {phases.map((p) => (
+            <span key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 4px 3px 10px", background: C.canvas }}>
+              <button onClick={() => { const v = prompt("Rename date", p.title); if (v && v.trim() && v.trim() !== p.title) startTransition(() => { updatePhase(p.id, v.trim(), v.trim()); }); }}
+                style={{ border: "none", background: "none", color: C.navy, fontWeight: 600, fontSize: 12.5, cursor: "pointer", padding: 0 }}>{p.title}</button>
+              <button onClick={() => { if (confirm(`Delete the date "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }} title="Delete date"
+                style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}>×</button>
+            </span>
+          ))}
+          <button onClick={() => { const v = prompt("New date (e.g. July, or a deadline)"); if (v && v.trim()) startTransition(() => { addPhase(schoolId, "", v.trim(), phases.length); }); }}
+            style={{ border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, fontSize: 12.5, padding: "4px 12px", borderRadius: 999, cursor: "pointer" }}>+ Add date</button>
+          <span style={{ flex: 1 }} />
           <span style={{ fontSize: 12.5, color: C.grayMute }}>Due</span>
-          <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)}
-            style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
+          <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12.5 }} />
           <span style={{ fontSize: 12.5, color: C.grayMute }}>to</span>
-          <input type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)}
-            style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
-          {filtersActive && (
-            <button onClick={() => { setFilterAssignee("all"); setFilterFrom(""); setFilterTo(""); }}
-              style={{ padding: "8px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
+          <input type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12.5 }} />
+          {(filterFrom || filterTo) && (
+            <button onClick={() => { setFilterFrom(""); setFilterTo(""); }} style={{ border: "none", background: "transparent", color: C.navy2, fontSize: 12.5, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
           )}
         </div>
       )}
 
-      {/* Roles */}
-      {phases.length > 0 && (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 2 }}>
-          <button onClick={() => {
-            const allExpanded = phases.every((p) => expandedRoles.has(p.id));
-            setExpandedRoles(allExpanded ? new Set() : new Set(phases.map((p) => p.id)));
-          }} style={{ border: "none", background: "none", color: C.grayMute, fontWeight: 600, fontSize: 12, cursor: "pointer", padding: "4px 2px" }}>
-            {phases.every((p) => expandedRoles.has(p.id)) ? "Collapse all" : "Expand all"}
-          </button>
+      {phases.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14 }}>
+          {canEdit ? "No dates yet — add the first date above to start building your team's tasks." : "No playbook yet."}
         </div>
+      ) : (
+        <PlaybookBoard
+          phases={phaseOpts}
+          members={team}
+          tasks={boardTasks}
+          meId={profile.id}
+          accent={accent}
+          canEdit={canEdit}
+          onAddTask={(assigneeId, phaseId) => startTransition(() => { upsertTask({ phase_id: phaseId, text: "New task", assignee_id: assigneeId, assignee_label: null, month_label: null, notes: null, due_date: null, done: false }); })}
+          onUpdateTask={onUpdateBoardTask}
+          onDeleteTask={(id) => startTransition(() => { deleteTask(id); })}
+        />
       )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {phases.map((p) => {
-          if (filtersActive && !p.playbook_tasks.some(matchesFilter)) return null;
-          const isExpanded = expandedRoles.has(p.id);
-          const roleDone  = p.playbook_tasks.filter((t) => t.done).length;
-          return (
-            <div key={p.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14 }}>
-              {/* Role header */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: isExpanded ? `1px solid ${C.line}` : "none", cursor: "pointer" }}
-                onClick={() => toggleRole(p.id)}>
-                {canEdit ? (
-                  <input defaultValue={p.title} onClick={(e) => e.stopPropagation()}
-                    onBlur={(e) => { if (e.target.value.trim() !== p.title) startTransition(() => { updatePhase(p.id, p.label, e.target.value.trim() || p.title); }); }}
-                    style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.navy, border: "none", background: "transparent", flex: 1, outline: "none", cursor: "text" }} />
-                ) : (
-                  <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.navy, flex: 1 }}>{p.title}</div>
-                )}
-                <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>{roleDone}/{p.playbook_tasks.length}</span>
-                {canEdit && (
-                  <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete role "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
-                    style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, padding: "2px 6px", borderRadius: 6 }}>Delete</button>
-                )}
-                <span style={{ color: C.grayMute, fontSize: 16 }}>{isExpanded ? "▲" : "▼"}</span>
-              </div>
-
-              {/* Month groups */}
-              {isExpanded && (
-                <div style={{ padding: "0 18px 14px" }}>
-                  {MONTHS.map((month) => {
-                    const mTasks = p.playbook_tasks.filter((t) => (t.month_label ?? "July") === month && matchesFilter(t));
-                    if (!mTasks.length && (!canEdit || filtersActive)) return null;
-                    return (
-                      <div key={month} style={{ marginTop: 16 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: accent, letterSpacing: 0.8, flex: 1 }}>{month}</div>
-                          {canEdit && (
-                            <button onClick={() => makeTask(p.id, month)}
-                              style={{ border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, fontSize: 11, padding: "3px 10px", borderRadius: 7, cursor: "pointer" }}>+ Add task</button>
-                          )}
-                        </div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                          {mTasks.map((t) => (
-                            <TaskRow key={t.id} task={t} phase={p} canEdit={canEdit} team={team} profile={profile}
-                              noteOpen={expandedNotes.has(t.id)} onToggleNote={() => toggleNote(t.id)}
-                              accent={accent} startTransition={startTransition} />
-                          ))}
-                          {mTasks.length === 0 && (
-                            <div style={{ fontSize: 12, color: C.grayMute, fontStyle: "italic", padding: "4px 0" }}>No tasks for {month} — add one above.</div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {phases.length === 0 && (
-          <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>
-            {canEdit ? "No roles yet — add the first role above." : "No playbook yet."}
-          </div>
-        )}
-      </div>
     </>
   );
 }
@@ -1225,12 +1207,29 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
 type Connection = { id: string; fellow_id: string; name: string; relationship: string; tagged_profile_id?: string | null };
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
-function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, startTransition, onResume }: {
+function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, onSaved, startTransition, onResume }: {
   c: Cand; canEdit: boolean; profile: Profile; team: TeamMember[];
   allProfiles: { id: string; full_name: string }[];
-  onClose: () => void; startTransition: (cb: () => void) => void;
+  onClose: () => void; onSaved?: () => void; startTransition: (cb: () => void) => void;
   onResume: (jazzId: string, name: string) => void;
 }) {
+  // Editing candidate details is limited to whoever added the candidate.
+  const isCreator = c.created_by === profile.id;
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const blankEdit = { name: c.name, email: c.email ?? "", linkedin: c.linkedin ?? "", gpa: c.gpa ?? "", area_of_study: c.area_of_study ?? "" };
+  const [edit, setEdit] = useState(blankEdit);
+  const startEdit = () => { setEdit({ name: c.name, email: c.email ?? "", linkedin: c.linkedin ?? "", gpa: c.gpa ?? "", area_of_study: c.area_of_study ?? "" }); setEditing(true); };
+  const setEf = (k: keyof typeof blankEdit, v: string) => setEdit((p) => ({ ...p, [k]: v }));
+  const saveEdit = () => {
+    if (!edit.name.trim()) return;
+    setSaving(true);
+    updateCandidate(c.id, { name: edit.name, email: edit.email, linkedin: edit.linkedin, gpa: edit.gpa, area_of_study: edit.area_of_study }).then((r: any) => {
+      setSaving(false);
+      if (r?.error) alert(r.error);
+      else { setEditing(false); onSaved?.(); }
+    });
+  };
   const [draft, setDraft] = useState("");
   const [log, setLog] = useState<{ id: string; body: string; created_at: string; author_id: string | null }[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
@@ -1289,7 +1288,10 @@ function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, star
       <div style={{ position: "relative", width: 440, maxWidth: "93vw", background: C.canvas, height: "100%", overflowY: "auto" }}>
         <div style={{ background: C.navy, color: "#fff", padding: "24px 24px 20px", position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
-          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px" }}>{c.name}</h2>
+          {!editing && isCreator && (
+            <button onClick={startEdit} title="Edit candidate details" style={{ position: "absolute", top: 14, right: 54, background: C.orange, border: "none", color: "#fff", height: 32, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: "0 2px 8px rgba(221,84,52,.4)" }}>✎ Edit details</button>
+          )}
+          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}>{c.name}</h2>
           <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.72)" }}>{c.area_of_study}</div>
           <div style={{ fontSize: 11.5, color: "rgba(255,255,255,.6)", marginTop: 3 }}>Added by {c.created_by ? profileName(c.created_by) : (c.source === "jazzhr" ? "JazzHR sync" : "—")}</div>
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>
@@ -1307,19 +1309,38 @@ function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, star
             </div>
           )}
 
-          {[["Email", c.email], ["GPA", c.gpa]].map(([k, v]) => (
-            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span><span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>
+          {editing ? (
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 16, margin: "4px 0 20px" }}>
+              <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 12, letterSpacing: 0.8 }}>Edit details</div>
+              {([["Name", "name", "Full name"], ["Email", "email", "email@example.com"], ["Major", "area_of_study", "Area of study"], ["GPA", "gpa", "e.g. 3.7"], ["LinkedIn URL", "linkedin", "https://linkedin.com/in/…"]] as [string, keyof typeof blankEdit, string][]).map(([label, key, ph]) => (
+                <div key={key} style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: C.grayMute, display: "block", marginBottom: 5 }}>{label}{key === "name" ? " *" : ""}</label>
+                  <input value={edit[key]} onChange={(e) => setEf(key, e.target.value)} placeholder={ph}
+                    style={{ width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${key === "name" && !edit.name.trim() ? C.orange : C.line}`, fontSize: 13.5, boxSizing: "border-box" }} />
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+                <button onClick={() => setEditing(false)} disabled={saving} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "9px 16px", borderRadius: 9, cursor: saving ? "default" : "pointer" }}>Cancel</button>
+                <button onClick={saveEdit} disabled={saving || !edit.name.trim()} style={{ border: "none", background: edit.name.trim() ? C.navy : "#9AA0B5", color: "#fff", fontWeight: 700, padding: "9px 18px", borderRadius: 9, cursor: saving || !edit.name.trim() ? "default" : "pointer" }}>{saving ? "Saving…" : "Save"}</button>
+              </div>
             </div>
-          ))}
-          <div style={{ display: "flex", gap: 8, margin: "16px 0 20px" }}>
-            <a href={c.linkedin ?? "#"} target="_blank" rel="noopener noreferrer"
-              style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>LinkedIn ↗</a>
-            <button
-              onClick={() => { if (c.jazz_id) onResume(c.jazz_id, c.name); }}
-              disabled={!c.jazz_id}
-              style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>Résumé</button>
-          </div>
+          ) : (
+            <>
+              {[["Email", c.email], ["GPA", c.gpa]].map(([k, v]) => (
+                <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
+                  <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span><span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, margin: "16px 0 20px" }}>
+                <a href={c.linkedin ?? "#"} target="_blank" rel="noopener noreferrer"
+                  style={{ flex: 1, textAlign: "center", textDecoration: "none", border: `1px solid ${C.line}`, background: "#fff", color: c.linkedin ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, pointerEvents: c.linkedin ? "auto" : "none" }}>LinkedIn ↗</a>
+                <button
+                  onClick={() => { if (c.jazz_id) onResume(c.jazz_id, c.name); }}
+                  disabled={!c.jazz_id}
+                  style={{ flex: 1, textAlign: "center", border: `1px solid ${C.line}`, background: "#fff", color: c.jazz_id ? C.navy : C.grayMute, fontWeight: 700, padding: 10, borderRadius: 9, fontSize: 13, cursor: c.jazz_id ? "pointer" : "not-allowed" }}>Résumé</button>
+              </div>
+            </>
+          )}
 
           {/* warm-intro finder */}
           <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "14px 16px", marginBottom: 20 }}>
