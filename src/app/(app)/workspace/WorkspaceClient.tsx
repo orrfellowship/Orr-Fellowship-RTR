@@ -199,11 +199,9 @@ export default function WorkspaceClient({
 
   const pipelineBoard = useMemo(() => {
     const sourced   = candidates.filter((c) => c.stage && SOURCED.has(c.stage)).length;
-    const contacted = candidates.filter((c) => c.stage && CONTACTD.has(c.stage)).length;
     const applied   = candidates.filter((c) => c.stage && APPLIED.has(c.stage)).length;
     return [
       { label: "Sourced",   actual: sourced,   goal: schoolGoal?.goal_sourced   ?? 0 },
-      { label: "Contacted", actual: contacted, goal: schoolGoal?.goal_contacted ?? 0 },
       { label: "Applied",   actual: applied,   goal: schoolGoal?.goal_applied   ?? 0 },
     ];
   }, [candidates, schoolGoal]);
@@ -211,12 +209,10 @@ export default function WorkspaceClient({
   // Org-wide breakdown (toggle on the Weekly Snapshot).
   const orgPipelineBoard = useMemo(() => {
     const sourced   = allCandidates.filter((c) => c.stage && SOURCED.has(c.stage)).length;
-    const contacted = allCandidates.filter((c) => c.stage && CONTACTD.has(c.stage)).length;
     const applied   = allCandidates.filter((c) => c.stage && APPLIED.has(c.stage)).length;
-    const sum = (k: "goal_sourced" | "goal_contacted" | "goal_applied") => allGoals.reduce((s, g) => s + (g[k] ?? 0), 0);
+    const sum = (k: "goal_sourced" | "goal_applied") => allGoals.reduce((s, g) => s + (g[k] ?? 0), 0);
     return [
       { label: "Sourced",   actual: sourced,   goal: sum("goal_sourced") },
-      { label: "Contacted", actual: contacted, goal: sum("goal_contacted") },
       { label: "Applied",   actual: applied,   goal: sum("goal_applied") },
     ];
   }, [allCandidates, allGoals]);
@@ -272,7 +268,7 @@ export default function WorkspaceClient({
         {tab === "plan" && (
           <>
             <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Weekly Snapshot</h1>
-            <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{plan.length} move{plan.length !== 1 ? "s" : ""} queued · {totalActive} active candidates</p>
+            <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{plan.length} move{plan.length !== 1 ? "s" : ""} queued · {totalActive.toLocaleString()} active candidates</p>
 
             {/* Pipeline breakdown — toggle between your team and the whole org */}
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
@@ -285,7 +281,7 @@ export default function WorkspaceClient({
                 ))}
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginTop: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 14, marginTop: 8 }}>
               {activeBoard.map((b) => {
                 const hasGoal = b.goal > 0;
                 const pct = hasGoal ? (b.actual / b.goal) * 100 : 0;
@@ -294,11 +290,11 @@ export default function WorkspaceClient({
                   <div key={b.label} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
                     <div style={{ background: C.navy, color: "#fff", padding: "12px 18px", textAlign: "center" }}>
                       <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", opacity: 0.8 }}>{b.label}</div>
-                      <div style={{ fontFamily: HEAD, fontSize: 32, fontWeight: 700, marginTop: 2, lineHeight: 1 }}>{b.actual}</div>
+                      <div style={{ fontFamily: HEAD, fontSize: 32, fontWeight: 700, marginTop: 2, lineHeight: 1 }}>{b.actual.toLocaleString()}</div>
                     </div>
                     {hasGoal ? (
                       <div style={{ padding: "8px 18px", textAlign: "center", background: `${tone}14` }}>
-                        <div style={{ fontSize: 11, color: C.grayMute, fontWeight: 600 }}>Goal {b.goal} · {Math.round(pct)}%</div>
+                        <div style={{ fontSize: 11, color: C.grayMute, fontWeight: 600 }}>Goal {b.goal.toLocaleString()} · {Math.round(pct)}%</div>
                         <div style={{ marginTop: 5, height: 5, borderRadius: 99, background: C.line, overflow: "hidden" }}>
                           <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: tone, borderRadius: 99 }} />
                         </div>
@@ -420,7 +416,7 @@ export default function WorkspaceClient({
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>My School Board</h1>
-                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardVisible.length}{boardFiltersActive ? ` of ${candidates.length}` : ""} candidate{candidates.length !== 1 ? "s" : ""}.</p>
+                <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardVisible.length.toLocaleString()}{boardFiltersActive ? ` of ${candidates.length.toLocaleString()}` : ""} candidate{candidates.length !== 1 ? "s" : ""}.</p>
               </div>
               {canAssign && team.length > 0 && (
                 <button onClick={() => setAssignOpen(true)}
