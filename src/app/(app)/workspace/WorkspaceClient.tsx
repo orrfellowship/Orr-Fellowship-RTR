@@ -16,6 +16,7 @@ import StandingsClient from "@/components/StandingsClient";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import ImportInfoModal from "@/components/ImportInfoModal";
+import PlaybookBoard from "@/components/PlaybookBoard";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
@@ -521,7 +522,7 @@ export default function WorkspaceClient({
 
         {/* ---- PLAYBOOK ---- */}
         {tab === "playbook" && (
-          <PlaybookTab phases={phases} profile={profile} canEdit={canEdit} team={team} nameOf={nameOf} accent={accent} startTransition={startTransition} />
+          <PlaybookTab phases={phases} schoolId={budgetSchoolId ?? school?.id ?? ""} profile={profile} canEdit={canEdit} team={team} accent={accent} startTransition={startTransition} />
         )}
 
         {/* ---- STANDINGS ---- */}
@@ -886,10 +887,9 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
 }
 
 // ---- PLAYBOOK TAB ----
-function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTransition }: {
+function PlaybookTab({ phases, schoolId, profile, canEdit, team, accent, startTransition }: {
   phases: { id: string; label: string; title: string; sort_order: number; playbook_tasks: Task[] }[];
-  profile: Profile; canEdit: boolean; team: { id: string; full_name: string }[];
-  nameOf: (id: string | null, label?: string | null) => string;
+  schoolId: string; profile: Profile; canEdit: boolean; team: { id: string; full_name: string }[];
   accent: string;
   startTransition: (cb: () => void) => void;
 }) {
@@ -945,23 +945,36 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
     return { onTime, late, overdue, perPerson };
   }, [allTasks, team]);
 
-  function makeTask(phaseId: string, monthLabel: string | null = null) {
+  // ---- person-centric board data ----
+  const taskMap = new Map(phases.flatMap((p) => p.playbook_tasks.map((t) => [t.id, { t, phaseId: p.id }] as const)));
+  const phaseOpts = phases.map((p) => ({ id: p.id, title: p.title }));
+  const boardTasks = phases
+    .flatMap((p) => p.playbook_tasks.map((t) => ({ id: t.id, phaseId: p.id, phaseTitle: p.title, text: t.text, assigneeId: effAssignees(t)[0] ?? null, dueDate: t.due_date, done: t.done })))
+    .filter((b) => matchesFilter(taskMap.get(b.id)!.t));
+  const onUpdateBoardTask = (taskId: string, patch: { text?: string; phaseId?: string; dueDate?: string | null; assigneeId?: string | null; done?: boolean }) => {
+    const found = taskMap.get(taskId); if (!found) return;
+    const o = found.t;
     startTransition(() => {
-      upsertTask({ phase_id: phaseId, text: "New task", assignee_id: null, assignee_label: null, month_label: monthLabel, notes: null, due_date: null, done: false });
+      upsertTask({
+        id: taskId, phase_id: patch.phaseId ?? found.phaseId, text: patch.text ?? o.text,
+        assignee_id: patch.assigneeId !== undefined ? patch.assigneeId : o.assignee_id,
+        assignee_label: patch.assigneeId !== undefined ? null : o.assignee_label,
+        month_label: o.month_label, notes: o.notes,
+        due_date: patch.dueDate !== undefined ? patch.dueDate : o.due_date,
+        done: patch.done !== undefined ? patch.done : o.done,
+      });
+      // Keep the multi-assignee list in sync so the fellow's snapshot matches.
+      if (patch.assigneeId !== undefined) setTaskAssignees(taskId, patch.assigneeId ? [patch.assigneeId] : []);
     });
-  }
+  };
 
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 6 }}>
         <div>
-          <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Playbook</h1>
-          <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{canEdit ? "Recruitment plan organized by date. Edit inline — changes save automatically." : "Your team's recruitment plan."}</p>
+          <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Team Tasks</h1>
+          <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{canEdit ? "Assign and track each fellow's tasks. Changes save automatically." : "Your team's tasks, grouped by person."}</p>
         </div>
-        {canEdit && (
-          <button onClick={() => startTransition(() => { addPhase(profile.school_id ?? "", "", "New date", phases.length); })}
-            style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer", fontSize: 13.5 }}>+ Add date</button>
-        )}
       </div>
 
       {/* Completion overview */}
@@ -1020,97 +1033,48 @@ function PlaybookTab({ phases, profile, canEdit, team, nameOf, accent, startTran
         </div>
       )}
 
-      {/* Filters */}
-      {phases.length > 0 && (
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Filter</span>
-          <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}
-            style={{ padding: "8px 11px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13, background: "#fff", color: C.gray, fontWeight: 600 }}>
-            <option value="all">Anyone</option>
-            <option value="team">Whole team</option>
-            <option value="unassigned">Unassigned</option>
-            {team.map((t) => <option key={t.id} value={t.id}>{t.id === profile.id ? `${t.full_name} (me)` : t.full_name}</option>)}
-          </select>
+      {/* Dates + due-date filter */}
+      {canEdit && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Dates</span>
+          {phases.map((p) => (
+            <span key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 4px 3px 10px", background: C.canvas }}>
+              <button onClick={() => { const v = prompt("Rename date", p.title); if (v && v.trim() && v.trim() !== p.title) startTransition(() => { updatePhase(p.id, v.trim(), v.trim()); }); }}
+                style={{ border: "none", background: "none", color: C.navy, fontWeight: 600, fontSize: 12.5, cursor: "pointer", padding: 0 }}>{p.title}</button>
+              <button onClick={() => { if (confirm(`Delete the date "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }} title="Delete date"
+                style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}>×</button>
+            </span>
+          ))}
+          <button onClick={() => { const v = prompt("New date (e.g. July, or a deadline)"); if (v && v.trim()) startTransition(() => { addPhase(schoolId, "", v.trim(), phases.length); }); }}
+            style={{ border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, fontSize: 12.5, padding: "4px 12px", borderRadius: 999, cursor: "pointer" }}>+ Add date</button>
+          <span style={{ flex: 1 }} />
           <span style={{ fontSize: 12.5, color: C.grayMute }}>Due</span>
-          <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)}
-            style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
+          <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12.5 }} />
           <span style={{ fontSize: 12.5, color: C.grayMute }}>to</span>
-          <input type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)}
-            style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
-          {filtersActive && (
-            <button onClick={() => { setFilterAssignee("all"); setFilterFrom(""); setFilterTo(""); }}
-              style={{ padding: "8px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
+          <input type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12.5 }} />
+          {(filterFrom || filterTo) && (
+            <button onClick={() => { setFilterFrom(""); setFilterTo(""); }} style={{ border: "none", background: "transparent", color: C.navy2, fontSize: 12.5, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
           )}
         </div>
       )}
 
-      {/* Roles */}
-      {phases.length > 0 && (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 2 }}>
-          <button onClick={() => {
-            const allExpanded = phases.every((p) => expandedRoles.has(p.id));
-            setExpandedRoles(allExpanded ? new Set() : new Set(phases.map((p) => p.id)));
-          }} style={{ border: "none", background: "none", color: C.grayMute, fontWeight: 600, fontSize: 12, cursor: "pointer", padding: "4px 2px" }}>
-            {phases.every((p) => expandedRoles.has(p.id)) ? "Collapse all" : "Expand all"}
-          </button>
+      {phases.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14 }}>
+          {canEdit ? "No dates yet — add the first date above to start building your team's tasks." : "No playbook yet."}
         </div>
+      ) : (
+        <PlaybookBoard
+          phases={phaseOpts}
+          members={team}
+          tasks={boardTasks}
+          meId={profile.id}
+          accent={accent}
+          canEdit={canEdit}
+          onAddTask={(assigneeId, phaseId) => startTransition(() => { upsertTask({ phase_id: phaseId, text: "New task", assignee_id: assigneeId, assignee_label: null, month_label: null, notes: null, due_date: null, done: false }); })}
+          onUpdateTask={onUpdateBoardTask}
+          onDeleteTask={(id) => startTransition(() => { deleteTask(id); })}
+        />
       )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {phases.map((p) => {
-          if (filtersActive && !p.playbook_tasks.some(matchesFilter)) return null;
-          const isExpanded = expandedRoles.has(p.id);
-          const roleDone  = p.playbook_tasks.filter((t) => t.done).length;
-          return (
-            <div key={p.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14 }}>
-              {/* Role header */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: isExpanded ? `1px solid ${C.line}` : "none", cursor: "pointer" }}
-                onClick={() => toggleRole(p.id)}>
-                {canEdit ? (
-                  <input defaultValue={p.title} onClick={(e) => e.stopPropagation()}
-                    onBlur={(e) => { if (e.target.value.trim() !== p.title) startTransition(() => { updatePhase(p.id, p.label, e.target.value.trim() || p.title); }); }}
-                    style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.navy, border: "none", background: "transparent", flex: 1, outline: "none", cursor: "text" }} />
-                ) : (
-                  <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, color: C.navy, flex: 1 }}>{p.title}</div>
-                )}
-                <span style={{ fontSize: 12, color: C.grayMute, fontWeight: 600 }}>{roleDone}/{p.playbook_tasks.length}</span>
-                {canEdit && (
-                  <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
-                    style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, padding: "2px 6px", borderRadius: 6 }}>Delete</button>
-                )}
-                <span style={{ color: C.grayMute, fontSize: 16 }}>{isExpanded ? "▲" : "▼"}</span>
-              </div>
-
-              {/* Tasks for this date */}
-              {isExpanded && (() => {
-                const tasks = p.playbook_tasks.filter(matchesFilter);
-                return (
-                  <div style={{ padding: "12px 18px 14px" }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      {tasks.map((t) => (
-                        <TaskRow key={t.id} task={t} phase={p} canEdit={canEdit} team={team} profile={profile}
-                          noteOpen={expandedNotes.has(t.id)} onToggleNote={() => toggleNote(t.id)}
-                          accent={accent} startTransition={startTransition} />
-                      ))}
-                      {tasks.length === 0 && (
-                        <div style={{ fontSize: 12, color: C.grayMute, fontStyle: "italic", padding: "4px 0" }}>{filtersActive ? "No matching tasks." : "No tasks yet."}</div>
-                      )}
-                    </div>
-                    {canEdit && (
-                      <button onClick={() => makeTask(p.id)}
-                        style={{ marginTop: 10, border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, fontSize: 12, padding: "6px 12px", borderRadius: 8, cursor: "pointer" }}>+ Add task</button>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          );
-        })}
-        {phases.length === 0 && (
-          <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>
-            {canEdit ? "No playbook yet — add the first date above." : "No playbook yet."}
-          </div>
-        )}
-      </div>
     </>
   );
 }

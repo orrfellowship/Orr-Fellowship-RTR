@@ -47,7 +47,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
     getSchoolsCached(),
     need.candidates && !paginatedList ? fetchAllRows((from, to) => supabase.from("candidates").select(candSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
     need.favs ? supabase.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.team ? supabase.from("profiles").select("id, full_name").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.team ? supabase.from("profiles").select("id, full_name, school_id, role").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.goals ? getGoalsCached() : Promise.resolve([] as any[]),
     need.phases ? supabase.from("playbook_phases").select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.resources ? getResourcesCached() : Promise.resolve([] as any[]),

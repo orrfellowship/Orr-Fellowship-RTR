@@ -18,6 +18,7 @@ import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import ImportInfoModal from "@/components/ImportInfoModal";
+import PlaybookBoard from "@/components/PlaybookBoard";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
@@ -42,7 +43,7 @@ type Cand = {
   point_person_id: string | null; not_interested: boolean; is_favorite: boolean;
   source: string | null; created_by: string | null;
 };
-type TeamMember = { id: string; full_name: string };
+type TeamMember = { id: string; full_name: string; school_id?: string | null; role?: string | null };
 // Slim full-set projection for the Candidates tab's full-dataset features
 // (duplicate detection, JazzHR match review, import dedupe warnings).
 type SlimCand = { id: string; name: string; email: string | null; school_id: string | null; jazz_id: string | null; source: string | null; stage: string | null; area_of_study: string | null; gpa: string | null; university_raw: string | null };
@@ -293,6 +294,32 @@ export default function ConsoleClient({
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
   const playbookGrouped = playbookSchoolObj?.tier === "satellite" || playbookSchoolObj?.tier === "bonus";
   const playbookLabel = schoolSelectOptions(schools).find((o) => o.value === playbookSchool)?.label ?? playbookSchoolObj?.name ?? "School";
+  // Team members of the selected school (satellite/bonus share one team across the tier).
+  const playbookTierIds = playbookGrouped
+    ? new Set(schools.filter((s) => s.tier === playbookSchoolObj?.tier).map((s) => s.id))
+    : new Set([playbookSchool]);
+  const playbookTeam = team.filter((m) => m.school_id && playbookTierIds.has(m.school_id));
+  // Flatten this school's tasks for the person-grouped board + a lookup for updates.
+  const playbookTaskMap = new Map(playbookPhases.flatMap((p) => p.playbook_tasks.map((t) => [t.id, { t, phaseId: p.id }])));
+  const playbookTasks = playbookPhases
+    .flatMap((p) => p.playbook_tasks.map((t) => ({ id: t.id, phaseId: p.id, phaseTitle: p.title, text: t.text, assigneeId: t.assignee_id, dueDate: t.due_date, done: t.done })))
+    .filter((t) => pbMatches(playbookTaskMap.get(t.id)!.t));
+  const playbookPhaseOpts = playbookPhases.map((p) => ({ id: p.id, title: p.title }));
+  const updatePlaybookTask = (taskId: string, patch: { text?: string; phaseId?: string; dueDate?: string | null; assigneeId?: string | null; done?: boolean }) => {
+    const found = playbookTaskMap.get(taskId); if (!found) return;
+    const o = found.t;
+    startTransition(() => { upsertTask({
+      id: taskId,
+      phase_id: patch.phaseId ?? found.phaseId,
+      text: patch.text ?? o.text,
+      assignee_id: patch.assigneeId !== undefined ? patch.assigneeId : o.assignee_id,
+      assignee_label: o.assignee_label ?? null,
+      month_label: o.month_label ?? null,
+      notes: o.notes ?? null,
+      due_date: patch.dueDate !== undefined ? patch.dueDate : o.due_date,
+      done: patch.done !== undefined ? patch.done : o.done,
+    }); });
+  };
 
   // goal draft state: school_id → {sourced, contacted, applied}
   const [goalDrafts, setGoalDrafts] = useState<Record<string, { sourced: string; contacted: string; applied: string }>>({});
@@ -631,112 +658,54 @@ export default function ConsoleClient({
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
               <div>
-                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>
-                  {!playbookGrouped && playbookSchoolObj?.logo_url && <img src={playbookSchoolObj.logo_url} alt="" style={{ height: 28, width: 28, objectFit: "contain", borderRadius: 5, marginRight: 10, verticalAlign: "middle" }} />}
-                  {playbookLabel} Playbook
-                </h1>
+                <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Team Tasks</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
-                  {playbookGrouped
-                    ? "One shared playbook for all schools in this group. Organized by date. Changes save on blur."
-                    : "Organized by date — edit dates, tasks, assignees, and due dates inline. Changes save on blur."}
+                  Assign and track each fellow&apos;s tasks for {playbookLabel}{playbookGrouped ? " (shared across this group)" : ""}. Changes save automatically.
                 </p>
               </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <select value={playbookSchool} onChange={(e) => setPlaybookSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                  {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-                <button onClick={async () => {
-                  const res = await seedPlaybook(playbookSchool);
-                  if (res.error === "already_seeded") {
-                    if (!confirm("This school already has a playbook. Reseed from defaults? (existing tasks will be deleted)")) return;
-                    await seedPlaybook(playbookSchool, true);
-                  }
-                }} style={{ border: "none", background: C.orange, color: "#fff", fontWeight: 700, fontSize: 13, padding: "10px 16px", borderRadius: 10, cursor: "pointer", whiteSpace: "nowrap" }}>
-                  Seed Defaults
-                </button>
-                {superUser && (
-                  <button disabled={pbMigrating} onClick={async () => {
-                    if (!confirm("Reorganize every school's playbook by date? Existing role-based playbooks are converted in place — tasks are regrouped by month and de-duplicated, keeping assignees and completions. Safe to run once.")) return;
-                    setPbMigrating(true);
-                    const r = await migratePlaybooksToDates();
-                    setPbMigrating(false);
-                    if ("error" in r && r.error) alert(r.error);
-                    else { alert(`Done — reorganized ${("schoolsChanged" in r ? r.schoolsChanged : 0)} school playbook(s) by date; merged ${("merged" in r ? r.merged : 0)} duplicate task(s).`); router.refresh(); }
-                  }} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13, padding: "10px 16px", borderRadius: 10, cursor: pbMigrating ? "default" : "pointer", whiteSpace: "nowrap" }}>
-                    {pbMigrating ? "Reorganizing…" : "Reorganize by date"}
-                  </button>
-                )}
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
-              <button onClick={() => startTransition(() => { addPhase(playbookSchool, "", "New date", playbookPhases.length); })}
-                style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 600, padding: "10px 16px", borderRadius: 10, cursor: "pointer" }}>
-                + Add date
-              </button>
-              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5, marginLeft: 8 }}>Filter</span>
-              <select value={pbAssignee} onChange={(e) => setPbAssignee(e.target.value)}
-                style={{ padding: "8px 11px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13, background: "#fff", color: C.gray, fontWeight: 600 }}>
-                <option value="all">Anyone</option>
-                <option value="team">Whole team</option>
-                <option value="unassigned">Unassigned</option>
-                {team.map((t) => <option key={t.id} value={t.id}>{t.id === profile.id ? `${t.full_name} (me)` : t.full_name}</option>)}
+              <select value={playbookSchool} onChange={(e) => setPlaybookSchool(e.target.value)} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600 }}>
+                {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
+            </div>
+
+            {/* Dates + due-date filter */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 16, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Dates</span>
+              {playbookPhases.map((p) => (
+                <span key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 4px 3px 10px", background: C.canvas }}>
+                  <button onClick={() => { const v = prompt("Rename date", p.title); if (v && v.trim() && v.trim() !== p.title) startTransition(() => { updatePhase(p.id, v.trim(), v.trim()); }); }}
+                    style={{ border: "none", background: "none", color: C.navy, fontWeight: 600, fontSize: 12.5, cursor: "pointer", padding: 0 }}>{p.title}</button>
+                  <button onClick={() => { if (confirm(`Delete the date "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }} title="Delete date"
+                    style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}>×</button>
+                </span>
+              ))}
+              <button onClick={() => { const v = prompt("New date (e.g. July, or a deadline)"); if (v && v.trim()) startTransition(() => { addPhase(playbookSchool, "", v.trim(), playbookPhases.length); }); }}
+                style={{ border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, fontSize: 12.5, padding: "4px 12px", borderRadius: 999, cursor: "pointer" }}>+ Add date</button>
+              <span style={{ flex: 1 }} />
               <span style={{ fontSize: 12.5, color: C.grayMute }}>Due</span>
-              <input type="date" value={pbFrom} onChange={(e) => setPbFrom(e.target.value)} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
+              <input type="date" value={pbFrom} onChange={(e) => setPbFrom(e.target.value)} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12.5 }} />
               <span style={{ fontSize: 12.5, color: C.grayMute }}>to</span>
-              <input type="date" value={pbTo} onChange={(e) => setPbTo(e.target.value)} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13 }} />
-              {pbFiltersActive && (
-                <button onClick={() => { setPbAssignee("all"); setPbFrom(""); setPbTo(""); }}
-                  style={{ padding: "8px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
+              <input type="date" value={pbTo} onChange={(e) => setPbTo(e.target.value)} style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12.5 }} />
+              {(pbFrom || pbTo) && (
+                <button onClick={() => { setPbFrom(""); setPbTo(""); }} style={{ border: "none", background: "transparent", color: C.navy2, fontSize: 12.5, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
               )}
             </div>
-            <div style={{ display: "grid", gap: 14, marginTop: 14 }}>
-              {playbookPhases.map((p) => {
-                if (pbFiltersActive && !p.playbook_tasks.some(pbMatches)) return null;
-                const visibleTasks = pbFiltersActive ? p.playbook_tasks.filter(pbMatches) : p.playbook_tasks;
-                return (
-                <div key={p.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22 }}>
-                  <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}>
-                    <input defaultValue={p.label}
-                      onBlur={(e) => { if (e.target.value.trim() !== p.label) startTransition(() => { updatePhase(p.id, e.target.value.trim() || p.label, p.title); }); }}
-                      style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 11, color: C.orange, textTransform: "uppercase", border: "none", background: "transparent", width: 90, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
-                    <input defaultValue={p.title}
-                      onBlur={(e) => { if (e.target.value.trim() !== p.title) startTransition(() => { updatePhase(p.id, p.label, e.target.value.trim() || p.title); }); }}
-                      style={{ fontFamily: HEAD, fontSize: 18, fontWeight: 700, color: C.navy, border: "none", background: "transparent", flex: 1, outline: "none", borderBottom: `1px solid ${C.line}`, padding: "2px 0" }} />
-                    <button onClick={() => { if (confirm(`Delete "${p.title}" and all its tasks?`)) startTransition(() => { deletePhase(p.id); }); }}
-                      style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6, whiteSpace: "nowrap" }}>
-                      Delete date
-                    </button>
-                  </div>
-                  {visibleTasks.map((t) => (
-                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${C.line}88` }}>
-                      <input type="checkbox" defaultChecked={t.done}
-                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: e.target.checked }); })}
-                        style={{ accentColor: C.orange, flexShrink: 0 }} />
-                      <input defaultValue={t.text}
-                        onBlur={(e) => { if (e.target.value.trim() !== t.text) startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: e.target.value.trim() || t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: t.done }); }); }}
-                        style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, color: t.done ? C.grayMute : C.gray, textDecoration: t.done ? "line-through" : "none", outline: "none", minWidth: 0 }} />
-                      <select value={t.assignee_id ?? ""}
-                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: e.target.value || null, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: t.due_date, done: t.done }); })}
-                        style={{ fontSize: 12, fontWeight: 600, color: t.assignee_id ? C.navy2 : C.orange, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }}>
-                        <option value="">Unassigned</option>
-                        {team.map((tm) => <option key={tm.id} value={tm.id}>{tm.id === profile.id ? `${tm.full_name} (me)` : tm.full_name}</option>)}
-                      </select>
-                      <input type="date" value={t.due_date ?? ""}
-                        onChange={(e) => startTransition(() => { upsertTask({ id: t.id, phase_id: p.id, text: t.text, assignee_id: t.assignee_id, assignee_label: t.assignee_label ?? null, month_label: t.month_label ?? null, notes: t.notes ?? null, due_date: e.target.value || null, done: t.done }); })}
-                        style={{ fontSize: 12, color: C.grayMute, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 6px", background: "#fff", flexShrink: 0 }} />
-                      <button onClick={() => startTransition(() => { deleteTask(t.id); })} style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>
-                    </div>
-                  ))}
-                  <button onClick={() => startTransition(() => { upsertTask({ phase_id: p.id, text: "New task", assignee_id: null, assignee_label: null, month_label: null, notes: null, due_date: null, done: false }); })}
-                    style={{ marginTop: 10, border: `1px dashed ${C.line}`, background: "transparent", color: C.navy2, fontWeight: 600, padding: "8px 14px", borderRadius: 9, cursor: "pointer", width: "100%" }}>
-                    + Add task
-                  </button>
-                  {p.playbook_tasks.length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic", marginTop: 8 }}>No tasks yet.</div>}
-                </div>
-                );
-              })}
-              {playbookPhases.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No playbook yet for this school — seed the defaults or add the first date.</div>}
+
+            <div style={{ marginTop: 14 }}>
+              {playbookPhases.length === 0 ? (
+                <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14 }}>No dates yet — add the first date above to start building this team&apos;s tasks.</div>
+              ) : (
+                <PlaybookBoard
+                  phases={playbookPhaseOpts}
+                  members={playbookTeam.map((m) => ({ id: m.id, full_name: m.full_name }))}
+                  tasks={playbookTasks}
+                  meId={profile.id}
+                  accent={C.orange}
+                  onAddTask={(assigneeId, phaseId) => startTransition(() => { upsertTask({ phase_id: phaseId, text: "New task", assignee_id: assigneeId, assignee_label: null, month_label: null, notes: null, due_date: null, done: false }); })}
+                  onUpdateTask={updatePlaybookTask}
+                  onDeleteTask={(id) => startTransition(() => { deleteTask(id); })}
+                />
+              )}
             </div>
           </>
         )}
