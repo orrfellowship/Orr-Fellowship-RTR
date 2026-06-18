@@ -263,10 +263,7 @@ export function BudgetAnalysis({ entries, schools }: {
     const spent = es.filter((e) => e.kind === "expense").reduce((s, e) => s + Number(e.amount || 0), 0);
     return { label, alloc, spent, remaining: alloc - spent };
   };
-  const rows = [
-    rowFor("Organization-wide", [null]),
-    ...schools.map((s) => rowFor(s.name, [s.id])),
-  ];
+  const rows = schools.map((s) => rowFor(s.name, [s.id]));
   const total = {
     alloc: entries.filter((e) => e.kind === "allocation").reduce((s, e) => s + Number(e.amount || 0), 0),
     spent: entries.filter((e) => e.kind === "expense").reduce((s, e) => s + Number(e.amount || 0), 0),
@@ -277,6 +274,13 @@ export function BudgetAnalysis({ entries, schools }: {
       <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr", padding: "12px 18px", borderBottom: `1px solid ${C.line}`, background: C.canvas, fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute }}>
         <div>Scope</div><div style={{ textAlign: "right" }}>Allocated</div><div style={{ textAlign: "right" }}>Spent</div><div style={{ textAlign: "right" }}>Remaining</div>
       </div>
+      {/* Total up top so the org-wide picture is the first thing you see. */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr", padding: "13px 18px", borderBottom: `2px solid ${C.line}`, background: "#FAFBFE", alignItems: "center", fontFamily: HEAD }}>
+        <div style={{ fontWeight: 700, color: C.navy, fontSize: 14 }}>Total</div>
+        <div style={{ textAlign: "right", color: C.navy2, fontWeight: 700 }}>{usd(total.alloc)}</div>
+        <div style={{ textAlign: "right", color: C.orange, fontWeight: 700 }}>{usd(total.spent)}</div>
+        <div style={{ textAlign: "right", color: total.alloc - total.spent < 0 ? C.orange : C.good, fontWeight: 700 }}>{usd(total.alloc - total.spent)}</div>
+      </div>
       {rows.map((r) => (
         <div key={r.label} style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr", padding: "11px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center" }}>
           <div style={{ fontWeight: 600, color: C.gray, fontSize: 13.5 }}>{r.label}</div>
@@ -285,12 +289,6 @@ export function BudgetAnalysis({ entries, schools }: {
           <div style={{ textAlign: "right", color: r.remaining < 0 ? C.orange : C.good, fontWeight: 700 }}>{usd(r.remaining)}</div>
         </div>
       ))}
-      <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr", padding: "12px 18px", background: "#FAFBFE", alignItems: "center", fontFamily: HEAD }}>
-        <div style={{ fontWeight: 700, color: C.navy }}>Total</div>
-        <div style={{ textAlign: "right", color: C.navy2, fontWeight: 700 }}>{usd(total.alloc)}</div>
-        <div style={{ textAlign: "right", color: C.orange, fontWeight: 700 }}>{usd(total.spent)}</div>
-        <div style={{ textAlign: "right", color: total.alloc - total.spent < 0 ? C.orange : C.good, fontWeight: 700 }}>{usd(total.alloc - total.spent)}</div>
-      </div>
     </div>
   );
 }

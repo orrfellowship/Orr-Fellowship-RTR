@@ -253,7 +253,7 @@ export async function deleteCandidate(id: string) {
 }
 
 export async function bulkImportCandidates(
-  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null }[]
+  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null }[]
 ) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
@@ -609,6 +609,7 @@ async function sendInvite(
   // New invite. If the user already exists (e.g. a prior invite created them but
   // the email failed), fall back to a recovery link so they can still set their
   // password — re-running an invite is therefore idempotent.
+  let kind: "invite" | "recovery" = "invite";
   let res = await db.auth.admin.generateLink({
     type: "invite",
     email,
@@ -618,6 +619,7 @@ async function sendInvite(
     },
   });
   if (res.error && /regist|already|exist/i.test(res.error.message)) {
+    kind = "recovery";
     res = await db.auth.admin.generateLink({
       type: "recovery",
       email,
@@ -625,8 +627,16 @@ async function sendInvite(
     });
   }
   if (res.error) return { error: res.error.message };
-  const link = res.data?.properties?.action_link;
   const user = res.data?.user;
+  // Build our OWN link carrying the hashed token, which the callback verifies
+  // with verifyOtp(). Admin-generated links can't use the PKCE code-exchange
+  // flow (there's no code_verifier cookie in the recipient's browser), which is
+  // what left users with "Auth session missing" on the set-password screen.
+  const tokenHash = (res.data?.properties as any)?.hashed_token as string | undefined;
+  const callbackPath = kind === "recovery" ? "reset-callback" : "invite-callback";
+  const link = tokenHash
+    ? `${siteUrlForInvite()}/auth/${callbackPath}?token_hash=${encodeURIComponent(tokenHash)}&type=${kind}`
+    : undefined;
   if (!link || !user) return { error: "Could not generate an invite link." };
 
   await db.from("profiles").upsert(

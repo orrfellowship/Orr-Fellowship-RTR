@@ -119,7 +119,7 @@ export default function ConsoleClient({
   const [scope, setScope] = useState<string>("all"); // SchoolFilter value: all | id | tier:satellite | tier:bonus
   const [appSchool, setAppSchool] = useState<string>("all");
   const [obExpand, setObExpand] = useState<Record<string, boolean>>({}); // overview "By school" tier expand
-  const [budgetView, setBudgetView] = useState<"manage" | "analysis">("manage");
+  const [budgetView, setBudgetView] = useState<"manage" | "analysis">("analysis");
   const [snapshotUser, setSnapshotUser] = useState<UserProfile | null>(null);
   const [usrSearch, setUsrSearch] = useState("");
   const [usrRole, setUsrRole] = useState("all");
@@ -612,9 +612,9 @@ export default function ConsoleClient({
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>You set allocations; team leads log expenses with receipts.</p>
               </div>
               <div style={{ display: "flex", gap: 4, background: C.canvas, borderRadius: 10, padding: 4 }}>
-                {(["manage", "analysis"] as const).map((v) => (
+                {([["analysis", "Overview"], ["manage", "Manage"]] as const).map(([v, label]) => (
                   <button key={v} onClick={() => setBudgetView(v)}
-                    style={{ border: "none", background: budgetView === v ? "#fff" : "transparent", color: budgetView === v ? C.navy : C.grayMute, fontWeight: 700, fontSize: 13, padding: "7px 16px", borderRadius: 8, cursor: "pointer", boxShadow: budgetView === v ? "0 1px 4px rgba(17,18,62,.1)" : "none", textTransform: "capitalize" }}>{v}</button>
+                    style={{ border: "none", background: budgetView === v ? "#fff" : "transparent", color: budgetView === v ? C.navy : C.grayMute, fontWeight: 700, fontSize: 13, padding: "7px 16px", borderRadius: 8, cursor: "pointer", boxShadow: budgetView === v ? "0 1px 4px rgba(17,18,62,.1)" : "none" }}>{label}</button>
                 ))}
               </div>
             </div>

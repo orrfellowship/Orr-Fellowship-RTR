@@ -17,11 +17,11 @@ const C = {
 const HEAD = "'Cabin', sans-serif";
 
 // Stage, GPA and major are intentionally NOT imported here — those flow in from
-// JazzHR. We only seed the candidate's name, email, school, and point person.
+// JazzHR. We seed name, email, school, LinkedIn, and point person.
 // `point_person` is free text (a typed name); it's resolved to a team-member id
 // at import time, so an unmatched name simply imports as unassigned.
-type Row = { name: string; email: string; school: string; point_person: string };
-const emptyRow = (): Row => ({ name: "", email: "", school: "", point_person: "" });
+type Row = { name: string; email: string; school: string; linkedin: string; point_person: string };
+const emptyRow = (): Row => ({ name: "", email: "", school: "", linkedin: "", point_person: "" });
 
 function parseRows(text: string): Row[] {
   const lines = text.trim().split(/\r?\n/).filter((l) => l.trim());
@@ -38,9 +38,10 @@ function parseRows(text: string): Row[] {
   const iName = idx(["name"], 0);
   const iEmail = idx(["email"], 1);
   const iSchool = idx(["school"], 2);
-  // Point person is only read from a named header — never a positional fallback,
-  // so a stray 4th column isn't misread as an owner. The text is kept as typed
-  // and matched to a team member when the rows are imported.
+  // LinkedIn and point person are only read from a named header — never a
+  // positional fallback — so stray columns aren't misread.
+  const headerHas = (keys: string[]) => hasHeader ? Math.max(...keys.map((k) => header.findIndex((h) => h.includes(k)))) : -1;
+  const iLink = headerHas(["linkedin", "linked in"]);
   const iPerson = hasHeader ? Math.max(...["point person", "point_person", "owner", "assignee"].map((k) => header.indexOf(k))) : -1;
   return data
     .filter((r) => (r[iName] ?? "").trim())
@@ -48,6 +49,7 @@ function parseRows(text: string): Row[] {
       name: r[iName] ?? "",
       email: r[iEmail] ?? "",
       school: r[iSchool] ?? "",
+      linkedin: iLink >= 0 ? (r[iLink] ?? "") : "",
       point_person: iPerson >= 0 ? (r[iPerson] ?? "") : "",
     }));
 }
@@ -135,6 +137,7 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
       stage: null,
       gpa: null,
       area_of_study: null,
+      linkedin: r.linkedin.trim() || null,
       point_person_id: showPP ? resolvePerson(r.point_person) || null : null,
     };
   });
@@ -188,24 +191,26 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
           <colgroup>
             {showPP ? (
               <>
-                <col style={{ width: "27%" }} />
-                <col style={{ width: "27%" }} />
                 <col style={{ width: "22%" }} />
+                <col style={{ width: "22%" }} />
+                <col style={{ width: "17%" }} />
                 <col style={{ width: "19%" }} />
+                <col style={{ width: "15%" }} />
                 <col style={{ width: "5%" }} />
               </>
             ) : (
               <>
-                <col style={{ width: "33%" }} />
-                <col style={{ width: "33%" }} />
-                <col style={{ width: "29%" }} />
+                <col style={{ width: "26%" }} />
+                <col style={{ width: "26%" }} />
+                <col style={{ width: "22%" }} />
+                <col style={{ width: "21%" }} />
                 <col style={{ width: "5%" }} />
               </>
             )}
           </colgroup>
           <thead>
             <tr style={{ background: C.canvas, borderBottom: `2px solid ${C.line}` }}>
-              {(showPP ? ["Name *", "Email", "School", "Point Person"] : ["Name *", "Email", "School"]).map((h) => (
+              {(showPP ? ["Name *", "Email", "School", "LinkedIn", "Point Person"] : ["Name *", "Email", "School", "LinkedIn"]).map((h) => (
                 <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.6, borderRight: `1px solid ${C.line}` }}>{h}</th>
               ))}
               <th />
@@ -229,6 +234,11 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
                     <input list="import-schools" value={row.school} onChange={(e) => update(i, { school: e.target.value })}
                       placeholder="School (or type any)"
                       style={{ ...inp, color: row.school ? C.gray : C.grayMute }} />
+                  </td>
+                  <td style={cell}>
+                    <input value={row.linkedin} onChange={(e) => update(i, { linkedin: e.target.value })}
+                      placeholder="linkedin.com/in/…"
+                      style={{ ...inp, color: row.linkedin ? C.gray : C.grayMute }} />
                   </td>
                   {showPP && (
                     <td style={cell}>
