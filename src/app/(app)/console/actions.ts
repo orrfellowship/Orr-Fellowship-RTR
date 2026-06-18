@@ -855,6 +855,135 @@ export async function seedPlaybook(schoolId: string, force = false) {
   return { ok: true };
 }
 
+// One-time, non-destructive migration: convert existing ROLE-based playbooks to
+// DATE-based ones in place. Tasks are regrouped under month phases and de-duped
+// within a month; assignees and completions on the duplicates are merged onto
+// the kept task first, so nothing is lost. Idempotent — re-running is a no-op.
+const PLAYBOOK_MONTH_ORDER = ["July", "August", "September", "Oct/Nov"];
+
+async function migrateSchoolPlaybook(
+  db: ReturnType<typeof createServiceClient>, schoolId: string,
+): Promise<{ changed: boolean; merged: number }> {
+  const { data: phases } = await db.from("playbook_phases").select("id, title, sort_order").eq("school_id", schoolId).order("sort_order");
+  if (!phases || phases.length === 0) return { changed: false, merged: 0 };
+  const phaseTitle = new Map(phases.map((p: any) => [p.id as string, ((p.title as string) ?? "").trim()]));
+  const phaseIds = phases.map((p: any) => p.id as string);
+
+  const { data: tasks } = await db.from("playbook_tasks").select("id, phase_id, text, month_label, assignee_id, due_date, notes, done").in("phase_id", phaseIds);
+  if (!tasks || tasks.length === 0) return { changed: false, merged: 0 };
+  const taskIds = tasks.map((t: any) => t.id as string);
+
+  const { data: assignees } = await db.from("playbook_task_assignees").select("task_id, profile_id").in("task_id", taskIds);
+  const { data: completions } = await db.from("playbook_task_completions").select("task_id, profile_id, state, updated_at").in("task_id", taskIds);
+  const assigneesByTask = new Map<string, string[]>();
+  for (const a of assignees ?? []) (assigneesByTask.get((a as any).task_id) ?? assigneesByTask.set((a as any).task_id, []).get((a as any).task_id)!).push((a as any).profile_id);
+  const compsByTask = new Map<string, { profile_id: string; state: string; updated_at: string }[]>();
+  for (const c of completions ?? []) (compsByTask.get((c as any).task_id) ?? compsByTask.set((c as any).task_id, []).get((c as any).task_id)!).push(c as any);
+
+  // A task's month: its month_label, else its phase title if that's already a
+  // month (so a second run is a no-op), else July.
+  const monthOf = (t: any): string => {
+    const ml = ((t.month_label as string) ?? "").trim();
+    if (ml) return ml;
+    const pt = phaseTitle.get(t.phase_id) ?? "";
+    return PLAYBOOK_MONTH_ORDER.includes(pt) ? pt : "July";
+  };
+
+  const phaseRank = new Map(phases.map((p: any, i: number) => [p.id as string, i]));
+  const ordered = [...tasks].sort((a: any, b: any) => (phaseRank.get(a.phase_id)! - phaseRank.get(b.phase_id)!));
+
+  // month -> normalized text -> tasks (first is canonical, kept)
+  const groups = new Map<string, Map<string, any[]>>();
+  for (const t of ordered) {
+    const m = monthOf(t);
+    if (!groups.has(m)) groups.set(m, new Map());
+    const key = ((t.text as string) ?? "").trim().toLowerCase();
+    const g = groups.get(m)!;
+    (g.get(key) ?? g.set(key, []).get(key)!).push(t);
+  }
+  const months = [...groups.keys()].sort((a, b) => {
+    const ia = PLAYBOOK_MONTH_ORDER.indexOf(a), ib = PLAYBOOK_MONTH_ORDER.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
+  // Reuse a phase already titled exactly the month, else create one.
+  const monthPhaseId = new Map<string, string>();
+  const kept = new Set<string>();
+  for (let i = 0; i < months.length; i++) {
+    const m = months[i];
+    const existing = phases.find((p: any) => ((p.title as string) ?? "").trim() === m && !kept.has(p.id));
+    if (existing) {
+      monthPhaseId.set(m, existing.id);
+      kept.add(existing.id);
+      await db.from("playbook_phases").update({ title: m, label: m, sort_order: i }).eq("id", existing.id);
+    } else {
+      const { data: created } = await db.from("playbook_phases").insert({ school_id: schoolId, title: m, label: m, sort_order: i }).select("id").single();
+      if (created) { monthPhaseId.set(m, (created as any).id); kept.add((created as any).id); }
+    }
+  }
+
+  let merged = 0;
+  const dupTaskIds: string[] = [];
+  for (const m of months) {
+    const phaseId = monthPhaseId.get(m)!;
+    for (const [, groupTasks] of groups.get(m)!) {
+      const canonical = groupTasks[0];
+      const dups = groupTasks.slice(1);
+
+      const mergedAssignees = new Set<string>(assigneesByTask.get(canonical.id) ?? []);
+      const mergedComps = new Map<string, { state: string; updated_at: string }>();
+      for (const c of compsByTask.get(canonical.id) ?? []) mergedComps.set(c.profile_id, { state: c.state, updated_at: c.updated_at });
+      let anyDone = !!canonical.done;
+      let assigneeId: string | null = canonical.assignee_id ?? null;
+
+      for (const d of dups) {
+        for (const pid of assigneesByTask.get(d.id) ?? []) mergedAssignees.add(pid);
+        for (const c of compsByTask.get(d.id) ?? []) {
+          const ex = mergedComps.get(c.profile_id);
+          if (!ex || (ex.state !== "confirmed" && c.state === "confirmed")) mergedComps.set(c.profile_id, { state: c.state, updated_at: c.updated_at });
+        }
+        if (d.done) anyDone = true;
+        if (!assigneeId && d.assignee_id) assigneeId = d.assignee_id;
+        dupTaskIds.push(d.id);
+        merged++;
+      }
+
+      await db.from("playbook_tasks").update({ phase_id: phaseId, month_label: null, done: anyDone, assignee_id: assigneeId }).eq("id", canonical.id);
+      if (mergedAssignees.size) {
+        await db.from("playbook_task_assignees").upsert([...mergedAssignees].map((pid) => ({ task_id: canonical.id, profile_id: pid })), { onConflict: "task_id,profile_id", ignoreDuplicates: true });
+      }
+      if (mergedComps.size) {
+        await db.from("playbook_task_completions").upsert([...mergedComps].map(([pid, v]) => ({ task_id: canonical.id, profile_id: pid, state: v.state, updated_at: v.updated_at })), { onConflict: "task_id,profile_id" });
+      }
+    }
+  }
+
+  // Remove the merged-away duplicates (cascades their now-copied assignees/completions).
+  if (dupTaskIds.length) await db.from("playbook_tasks").delete().in("id", dupTaskIds);
+  // Drop the now-empty old role phases (every task was repointed to a month phase).
+  const oldPhaseIds = phaseIds.filter((id) => !kept.has(id));
+  if (oldPhaseIds.length) await db.from("playbook_phases").delete().in("id", oldPhaseIds);
+
+  return { changed: true, merged };
+}
+
+export async function migratePlaybooksToDates() {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Only a super admin can run this." };
+  const db = createServiceClient();
+  const { data: schools } = await db.from("schools").select("id");
+  let schoolsChanged = 0, merged = 0;
+  for (const s of schools ?? []) {
+    const r = await migrateSchoolPlaybook(db, (s as any).id);
+    if (r.changed) schoolsChanged++;
+    merged += r.merged;
+  }
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true as const, schoolsChanged, merged };
+}
+
 // ---- VIEW AS (admin read-only preview of another person) -------------------
 export async function setViewAs(userId: string | null) {
   const me = await getCurrentProfile();

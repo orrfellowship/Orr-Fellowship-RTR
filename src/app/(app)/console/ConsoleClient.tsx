@@ -9,7 +9,7 @@ import {
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
-  unlinkJazzCandidate, getUserSnapshot, listCandidates,
+  unlinkJazzCandidate, getUserSnapshot, listCandidates, migratePlaybooksToDates,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
@@ -130,6 +130,8 @@ export default function ConsoleClient({
   const [pbAssignee, setPbAssignee] = useState<string>("all");
   const [pbFrom, setPbFrom] = useState<string>("");
   const [pbTo, setPbTo] = useState<string>("");
+  const [pbMigrating, setPbMigrating] = useState(false);
+  const router = useRouter();
   const pbFiltersActive = pbAssignee !== "all" || pbFrom !== "" || pbTo !== "";
   const pbMatches = (t: Task): boolean => {
     if (pbAssignee === "team" && t.assignee_label !== "team") return false;
@@ -652,6 +654,18 @@ export default function ConsoleClient({
                 }} style={{ border: "none", background: C.orange, color: "#fff", fontWeight: 700, fontSize: 13, padding: "10px 16px", borderRadius: 10, cursor: "pointer", whiteSpace: "nowrap" }}>
                   Seed Defaults
                 </button>
+                {superUser && (
+                  <button disabled={pbMigrating} onClick={async () => {
+                    if (!confirm("Reorganize every school's playbook by date? Existing role-based playbooks are converted in place — tasks are regrouped by month and de-duplicated, keeping assignees and completions. Safe to run once.")) return;
+                    setPbMigrating(true);
+                    const r = await migratePlaybooksToDates();
+                    setPbMigrating(false);
+                    if ("error" in r && r.error) alert(r.error);
+                    else { alert(`Done — reorganized ${("schoolsChanged" in r ? r.schoolsChanged : 0)} school playbook(s) by date; merged ${("merged" in r ? r.merged : 0)} duplicate task(s).`); router.refresh(); }
+                  }} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13, padding: "10px 16px", borderRadius: 10, cursor: pbMigrating ? "default" : "pointer", whiteSpace: "nowrap" }}>
+                    {pbMigrating ? "Reorganizing…" : "Reorganize by date"}
+                  </button>
+                )}
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
