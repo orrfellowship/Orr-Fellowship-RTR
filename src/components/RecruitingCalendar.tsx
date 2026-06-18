@@ -15,9 +15,20 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export type EventNote = { id: string; school_id: string; body: string; created_by: string | null };
 export type CalEvent = {
   id: string; title: string; description: string | null; address: string | null; event_date: string;
-  event_type: "attend" | "info"; school_id: string | null; created_by: string | null;
+  event_type: EventType; school_id: string | null; created_by: string | null;
   going: string[]; not_going: string[]; my_status: "going" | "not_going" | null;
   notes?: EventNote[];
+};
+export type EventType = "attend" | "info" | "deadline";
+
+const EVENT_TYPES: { key: EventType; label: string; tone: string; fill: (accent: string) => string }[] = [
+  { key: "attend", label: "Show-up event", tone: C.orange, fill: (accent) => `${accent}1a` },
+  { key: "info", label: "Info", tone: C.navy2, fill: () => "#fff" },
+  { key: "deadline", label: "Deadline", tone: C.gold, fill: () => "#fff" },
+];
+const eventMeta = (type: EventType, accent: string) => {
+  const meta = EVENT_TYPES.find((t) => t.key === type) ?? EVENT_TYPES[1];
+  return { ...meta, tone: type === "attend" ? accent : meta.tone, fillColor: meta.fill(accent) };
 };
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -100,14 +111,14 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
               <div className="orr-cal-events" style={{ display: "flex", flexDirection: "column", gap: 3, overflowY: "auto", flex: 1, minHeight: 0 }}>
                 {dayEvents.map((e) => {
                   const attend = e.event_type === "attend";
-                  const tone = attend ? accent : C.navy2;
+                  const meta = eventMeta(e.event_type, accent);
                   return (
                     <button key={e.id} onClick={(ev) => { ev.stopPropagation(); setSelected(e); }}
                       title={e.title}
                       style={{ display: "flex", alignItems: "center", gap: 4, border: "none", textAlign: "left", width: "100%", flexShrink: 0,
-                        background: attend ? `${tone}1a` : "#fff", borderLeft: `3px solid ${tone}`, color: C.gray,
+                        background: meta.fillColor, borderLeft: `3px solid ${meta.tone}`, color: C.gray,
                         fontSize: 10.5, fontWeight: 600, padding: "2px 5px", borderRadius: 4, cursor: "pointer", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                      {attend && <span style={{ fontSize: 9, color: e.my_status === "going" ? C.good : e.my_status === "not_going" ? C.grayMute : tone }}>{e.my_status === "going" ? "✓" : "●"}</span>}
+                      {attend && <span style={{ fontSize: 9, color: e.my_status === "going" ? C.good : e.my_status === "not_going" ? C.grayMute : meta.tone }}>{e.my_status === "going" ? "✓" : "●"}</span>}
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{e.title}</span>
                     </button>
                   );
@@ -119,9 +130,15 @@ export default function RecruitingCalendar({ events, canEdit, profileId, schoolI
       </div>
 
       {/* legend */}
-      <div style={{ display: "flex", gap: 16, padding: "10px 18px", fontSize: 11.5, color: C.grayMute }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: accent }} /> Show-up event (RSVP)</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: C.navy2 }} /> Info / deadline</span>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "10px 18px", fontSize: 11.5, color: C.grayMute }}>
+        {EVENT_TYPES.map((t) => {
+          const meta = eventMeta(t.key, accent);
+          return (
+            <span key={t.key} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: meta.tone }} /> {t.label}{t.key === "attend" ? " (RSVP)" : ""}
+            </span>
+          );
+        })}
       </div>
 
       {selected && (
@@ -156,6 +173,7 @@ function EventModal({ e, canEdit, accent, nameOf, schools, canManageNotes, onClo
   onAddNote: (eventId: string, schoolId: string, body: string) => void; onDeleteNote: (id: string) => void;
 }) {
   const attend = e.event_type === "attend";
+  const meta = eventMeta(e.event_type, accent);
   const dateLabel = parseYmd(e.event_date).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   const [notes, setNotes] = useState<EventNote[]>(e.notes ?? []);
   const [noteSchool, setNoteSchool] = useState<string>(e.school_id ?? (schools[0]?.id ?? ""));
@@ -171,8 +189,8 @@ function EventModal({ e, canEdit, accent, nameOf, schools, canManageNotes, onClo
   return (
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: attend ? accent : C.navy2, background: attend ? `${accent}18` : `${C.navy2}18`, padding: "2px 8px", borderRadius: 999 }}>
-          {attend ? "Show-up event" : "Info / deadline"}
+        <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: meta.tone, background: `${meta.tone}18`, padding: "2px 8px", borderRadius: 999 }}>
+          {meta.label}
         </span>
       </div>
       <h3 style={{ fontFamily: HEAD, fontSize: 20, color: C.navy, margin: "0 0 4px" }}>{e.title}</h3>
@@ -241,7 +259,7 @@ function AddEventModal({ date, schoolId, accent, schools, scopePicker, editing, 
 }) {
   const [title, setTitle] = useState(editing?.title ?? "");
   const [eventDate, setEventDate] = useState(editing?.event_date ?? date);
-  const [type, setType] = useState<"attend" | "info">(editing?.event_type ?? "attend");
+  const [type, setType] = useState<EventType>(editing?.event_type ?? "attend");
   const [description, setDescription] = useState(editing?.description ?? "");
   const [address, setAddress] = useState(editing?.address ?? "");
   // "" = org-wide; otherwise a school id. Non-picker callers always use schoolId.
@@ -274,9 +292,12 @@ function AddEventModal({ date, schoolId, accent, schools, scopePicker, editing, 
         </select>
       )}
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        {([["attend", "Show-up event"], ["info", "Info / deadline"]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setType(k)} style={{ flex: 1, border: `1px solid ${type === k ? accent : C.line}`, background: type === k ? `${accent}12` : "#fff", color: type === k ? accent : C.gray, fontWeight: 700, padding: "9px", borderRadius: 9, cursor: "pointer", fontSize: 12.5 }}>{label}</button>
-        ))}
+        {EVENT_TYPES.map(({ key, label }) => {
+          const meta = eventMeta(key, accent);
+          return (
+            <button key={key} onClick={() => setType(key)} style={{ flex: 1, border: `1px solid ${type === key ? meta.tone : C.line}`, background: type === key ? `${meta.tone}12` : "#fff", color: type === key ? meta.tone : C.gray, fontWeight: 700, padding: "9px", borderRadius: 9, cursor: "pointer", fontSize: 12.5 }}>{label}</button>
+          );
+        })}
       </div>
       <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Address / location (optional)" style={input} />
       <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description (optional)" rows={3} style={{ ...input, resize: "vertical", fontFamily: "inherit" }} />

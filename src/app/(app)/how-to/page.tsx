@@ -127,10 +127,11 @@ Jane Doe,jane@example.com,Purdue`}
         </Section>
 
         <Section title="Recruiting calendar & events">
-          <p style={{ marginTop: 0 }}>Your <b>Weekly Snapshot</b> shows a calendar of your school's events plus any organization-wide events. There are two kinds:</p>
+          <p style={{ marginTop: 0 }}>Your <b>Weekly Snapshot</b> shows a calendar of your school's events plus any organization-wide events. There are three kinds:</p>
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             <Step><b>Show-up events</b> — things to attend. You'll be asked to <b>RSVP</b> (Going / Can't make it).</Step>
-            <Step><b>Info / deadlines</b> — dates to know about; no RSVP.</Step>
+            <Step><b>Info</b> — dates when people just need information; no RSVP.</Step>
+            <Step><b>Deadlines</b> — dates when something is due; no RSVP.</Step>
           </ul>
           <p style={{ marginBottom: 0, marginTop: 12 }}>Click any event to see its <b>date, address</b> (with a map link), <b>description</b>, and who's going.</p>
           {(admin || profile.role === "team_lead") && (

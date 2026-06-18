@@ -46,7 +46,7 @@ create table if not exists public.events (
   title       text not null,
   description text,
   event_date  date not null,
-  event_type  text not null check (event_type in ('attend','info')),
+  event_type  text not null check (event_type in ('attend','info','deadline')),
   created_by  uuid references public.profiles(id) on delete set null,
   created_at  timestamptz not null default now()
 );

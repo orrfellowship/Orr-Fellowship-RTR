@@ -7,6 +7,7 @@ import { canEditPlaybook, canEditEvents, isAdminPlus } from "@/lib/types";
 import { queueNotification, supersedePending } from "@/lib/notify";
 
 const CLAIM_DELAY_MS = 30 * 60 * 1000;
+type CalendarEventType = "attend" | "info" | "deadline";
 
 // Toggle a favorite for the current user (favorites table is per-user via RLS).
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
@@ -379,7 +380,7 @@ export async function markNotificationsRead(ids: string[]) {
 // ---- RECRUITING CALENDAR EVENTS (team_lead+ create/edit; everyone RSVPs) ----
 export async function addEvent(e: {
   title: string; description: string | null; address?: string | null; event_date: string;
-  event_type: "attend" | "info"; school_id: string | null;
+  event_type: CalendarEventType; school_id: string | null;
 }) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
@@ -402,7 +403,7 @@ export async function addEvent(e: {
 
 export async function updateEvent(id: string, patch: {
   title?: string; description?: string | null; address?: string | null;
-  event_date?: string; event_type?: "attend" | "info";
+  event_date?: string; event_type?: CalendarEventType;
 }) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
