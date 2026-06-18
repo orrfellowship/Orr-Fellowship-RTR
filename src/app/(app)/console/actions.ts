@@ -252,6 +252,26 @@ export async function deleteCandidate(id: string) {
   return { ok: true };
 }
 
+// Delete many candidates at once (admin+). Used to clean up a bad import.
+export async function bulkDeleteCandidates(ids: string[]): Promise<{ ok?: true; deleted: number; error?: string }> {
+  if (isPreviewing()) return { error: "Exit preview to make changes.", deleted: 0 };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden", deleted: 0 };
+  if (!ids.length) return { ok: true, deleted: 0 };
+  const db = createServiceClient();
+  let deleted = 0;
+  const CHUNK = 200;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const { error } = await db.from("candidates").delete().in("id", slice);
+    if (error) { revalidatePath("/console"); revalidatePath("/workspace"); return { error: error.message, deleted }; }
+    deleted += slice.length;
+  }
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true, deleted };
+}
+
 export async function bulkImportCandidates(
   rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null }[]
 ) {

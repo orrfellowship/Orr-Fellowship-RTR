@@ -18,6 +18,7 @@ import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import ResumeModal from "@/components/ResumeModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import ImportInfoModal from "@/components/ImportInfoModal";
+import BulkDeleteCandidatesModal from "@/components/BulkDeleteCandidatesModal";
 import PlaybookBoard from "@/components/PlaybookBoard";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
@@ -148,6 +149,7 @@ export default function ConsoleClient({
   const [addOpen, setAddOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [bulkDelOpen, setBulkDelOpen] = useState(false);
   // Applicants filters + sort
   const [appSearch, setAppSearch] = useState("");
   const [appMajor, setAppMajor] = useState("All majors");
@@ -469,6 +471,7 @@ export default function ConsoleClient({
                 <button onClick={() => setAddOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add</button>
                 <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
                 <button onClick={() => setInfoOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Import info</button>
+                {adminPlus && <button onClick={() => setBulkDelOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.orange}`, background: "#fff", color: C.orange, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk delete</button>}
               </div>
             </div>
 
@@ -1090,6 +1093,9 @@ export default function ConsoleClient({
       )}
       {infoOpen && (
         <ImportInfoModal onClose={() => { setInfoOpen(false); loadAppPage(appPage); }} />
+      )}
+      {bulkDelOpen && (
+        <BulkDeleteCandidatesModal schools={schools.map((s) => ({ id: s.id, name: s.name }))} onClose={() => { setBulkDelOpen(false); loadAppPage(appPage); }} />
       )}
       {inviteOpen && (
         <InviteUserModal schools={schools} onClose={() => setInviteOpen(false)} startTransition={startTransition} />
