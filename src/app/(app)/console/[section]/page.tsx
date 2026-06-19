@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { resolveViewer } from "@/lib/auth";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
-import { isSuper, isAdminPlus } from "@/lib/types";
+import { isAdminPlus } from "@/lib/types";
 import { canAccessConsoleSection } from "@/lib/nav/config";
 import {
   getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
@@ -17,7 +17,6 @@ export default async function ConsoleSection({ params }: { params: { section: st
   if (!isAdminPlus(profile.role)) redirect("/workspace/snapshot");
   if (!canAccessConsoleSection(profile.role, params.section)) redirect("/console/overview");
   const S = params.section;
-  const sup = isSuper(profile.role);
 
   const need = {
     candidates: ["overview", "applicants", "standings", "schools", "sync", "review"].includes(S),
@@ -26,7 +25,6 @@ export default async function ConsoleSection({ params }: { params: { section: st
     phases: S === "playbook",
     resources: S === "resources",
     reviews: ["applicants", "sync", "review"].includes(S),
-    ai: S === "applicants" && sup,
     users: S === "users" || S === "schools", // schools tab needs profiles for per-school teammate counts
     favs: S === "applicants",
     calendar: S === "calendar",
@@ -43,7 +41,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
   const paginatedList = S === "applicants";
 
   // Reference tables (schools/goals/resources) come from the shared Data Cache.
-  const [schools, candidates, favs, team, goals, phases, resources, reviewData, aiData, usersData, people, budgetEntries, budgetGuidance] = await Promise.all([
+  const [schools, candidates, favs, team, goals, phases, resources, reviewData, usersData, people, budgetEntries, budgetGuidance] = await Promise.all([
     getSchoolsCached(),
     need.candidates && !paginatedList ? fetchAllRows((from, to) => supabase.from("candidates").select(candSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
     need.favs ? supabase.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
@@ -52,7 +50,6 @@ export default async function ConsoleSection({ params }: { params: { section: st
     need.phases ? supabase.from("playbook_phases").select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.resources ? getResourcesCached() : Promise.resolve([] as any[]),
     need.reviews ? serviceDb.from("jazz_match_review").select("id, jazz_snapshot, candidate_id, reason").eq("status", "pending").order("created_at", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.ai && !paginatedList ? fetchAllRows((from, to) => supabase.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").range(from, to)) : Promise.resolve([] as any[]),
     need.users ? supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.calendar ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.budget ? serviceDb.from("budget_entries").select("id, school_id, kind, label, amount, notes, receipt_url, created_by").order("created_at", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
@@ -64,10 +61,10 @@ export default async function ConsoleSection({ params }: { params: { section: st
   const PAGE_SIZE = 500;
   const [candPage, facets] = paginatedList
     ? await Promise.all([
-        listCandidates({ variant: "console", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc", withAi: sup }),
+        listCandidates({ variant: "console", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" }),
         getCandidateFacets(true),
       ])
-    : [{ rows: [] as any[], total: 0, ai: [] as any[] }, { majors: [] as string[], stages: [] as string[], unroutedCount: 0, slim: [] as any[] }];
+    : [{ rows: [] as any[], total: 0 }, { majors: [] as string[], stages: [] as string[], unroutedCount: 0, slim: [] as any[] }];
 
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
   const enriched = paginatedList ? candPage.rows : (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
@@ -119,7 +116,6 @@ export default async function ConsoleSection({ params }: { params: { section: st
       slimCandidates={facets.slim}
       team={team ?? []}
       goals={goals ?? []}
-      ai={paginatedList ? candPage.ai : (aiData ?? [])}
       phases={phases ?? []}
       users={usersWithAuth}
       reviews={reviewData ?? []}

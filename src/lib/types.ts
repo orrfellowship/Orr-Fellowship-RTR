@@ -40,21 +40,11 @@ export interface Candidate {
   not_interested: boolean;
 }
 
-// AI signal — only ever fetched server-side for super-admins.
-export interface CandidateAI {
-  candidate_id: string;
-  resume_score: number | null;
-  summary: string | null;
-  flags: { text: string; kind: "standout" | "concern" | "info" }[];
-  analyzed_at: string | null;
-}
-
 // ---- role capability helpers (mirror the RLS, for UI gating) ----
 export const isAdminPlus = (r: AppRole) => r === "admin" || r === "super_admin";
 export const isSuper = (r: AppRole) => r === "super_admin";
 export const canEditPlaybook = (r: AppRole) => isAdminPlus(r) || r === "team_lead";
 export const canReassign = (r: AppRole) => isAdminPlus(r) || r === "team_lead";
-export const canSeeAiScore = (r: AppRole) => isSuper(r);
 export const canManageResources = (r: AppRole) => isAdminPlus(r);
 export const canReviewMatches = (r: AppRole) => isAdminPlus(r);
 export const canEditEvents = (r: AppRole) => canEditPlaybook(r);

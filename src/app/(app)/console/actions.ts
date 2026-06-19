@@ -343,13 +343,12 @@ export type CandidatePageParams = {
   creator?: string;             // "anyone" | "jazzhr" | <profile_id>
   sortKey?: "name" | "school" | "major" | "gpa" | "stage";
   sortDir?: "asc" | "desc";
-  withAi?: boolean;             // super-admin AI scores for the page
 };
 export async function listCandidates(
   p: CandidatePageParams,
-): Promise<{ rows: any[]; total: number; ai: any[] }> {
+): Promise<{ rows: any[]; total: number }> {
   const profile = await getCurrentProfile();
-  if (!profile) return { rows: [], total: 0, ai: [] };
+  if (!profile) return { rows: [], total: 0 };
   const db = createServiceClient();
 
   // This user's favorites — drives the favOnly filter and the per-row star.
@@ -389,16 +388,9 @@ export async function listCandidates(
 
   const from = Math.max(0, p.page) * p.pageSize;
   const { data, count, error } = await qb.range(from, from + p.pageSize - 1);
-  if (error) return { rows: [], total: 0, ai: [] };
+  if (error) return { rows: [], total: 0 };
   const rows = (data ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
-
-  let ai: any[] = [];
-  if (p.withAi && isSuper(profile.role) && rows.length) {
-    const ids = rows.map((r: any) => r.id);
-    const { data: aiRows } = await db.from("candidate_ai").select("candidate_id, resume_score, summary, flags, analyzed_at").in("candidate_id", ids);
-    ai = aiRows ?? [];
-  }
-  return { rows, total: count ?? rows.length, ai };
+  return { rows, total: count ?? rows.length };
 }
 
 // Lightweight, full-set data the candidate pages still need even when the table
