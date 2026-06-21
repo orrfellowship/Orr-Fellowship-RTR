@@ -8,9 +8,14 @@ export type NotificationType =
   | "claim_followup"   // 30-min nudge after a candidate is assigned to you
   | "no_contact"       // daily digest: candidate you own has gone quiet
   | "applied"          // daily digest: a candidate you own applied
+  | "finalist"         // daily digest: a candidate you own is a finalist
+  | "next_step"        // daily digest: log your first outreach
+  | "rapport"          // daily digest: warm now — quick intro message
   | "weekly_snapshot"  // weekly nudge to check your snapshot
   | "tagged"           // someone tagged you on a warm intro (Phase 4)
-  | "event_reminder";  // day-before reminder for an "attend" event
+  | "event_reminder"   // day-before reminder for an "attend" event
+  | "help_request"     // a fellow/lead asked an admin for help
+  | "missing_linkedin"; // admin nudge: active candidates missing a LinkedIn
 
 export async function queueNotification(n: {
   recipientId: string;

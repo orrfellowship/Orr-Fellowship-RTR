@@ -728,6 +728,40 @@ export async function sendTestNotification() {
   return { ok: true, email };
 }
 
+// Admin sets a candidate's LinkedIn URL from the snapshot flashcard. Unlike
+// updateCandidate (which restricts edits to the candidate's creator), this is
+// gated to admins and writes via the service client to any candidate.
+export async function setCandidateLinkedin(id: string, url: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const linkedin = (url ?? "").trim();
+  if (!linkedin) return { error: "Enter a LinkedIn URL (or skip)." };
+  const db = createServiceClient();
+  const { error } = await db.from("candidates").update({ linkedin }).eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/console/snapshot");
+  return { ok: true };
+}
+
+// Admin marks a help request handled. Supersedes every admin's copy of the
+// request (matched by its shared dedupe_key) so it clears for the whole team.
+export async function resolveHelpRequest(dedupeKey: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!dedupeKey?.startsWith("help:")) return { error: "Invalid request." };
+  const db = createServiceClient();
+  const { error } = await db
+    .from("notifications")
+    .update({ superseded: true })
+    .eq("type", "help_request")
+    .eq("dedupe_key", dedupeKey);
+  if (error) return { error: error.message };
+  revalidatePath("/console/snapshot");
+  return { ok: true };
+}
+
 export async function bulkInviteUsers(
   rows: { email: string; full_name: string; role: string; school_id: string | null }[]
 ) {

@@ -8,6 +8,8 @@ import {
   CAND_COLS_STANDINGS, CAND_COLS_CONSOLE,
 } from "@/lib/queries";
 import ConsoleClient from "../ConsoleClient";
+import AdminSnapshotClient from "../AdminSnapshotClient";
+import { isActive } from "@/lib/stages";
 import { listCandidates, getCandidateFacets } from "../actions";
 
 // Each route renders one section → only fetch what that section reads.
@@ -17,6 +19,28 @@ export default async function ConsoleSection({ params }: { params: { section: st
   if (!isAdminPlus(profile.role)) redirect("/workspace/snapshot");
   if (!canAccessConsoleSection(profile.role, params.section)) redirect("/console/overview");
   const S = params.section;
+
+  // Admin Weekly Snapshot: categorized tasks (open help requests + candidates
+  // missing a LinkedIn). Fetched on its own — it doesn't need the big section load.
+  if (S === "snapshot") {
+    const db = createServiceClient();
+    const [helpRes, candRows, schools] = await Promise.all([
+      db.from("notifications")
+        .select("id, title, body, dedupe_key, created_at")
+        .eq("recipient_id", profile.id).eq("type", "help_request").eq("superseded", false)
+        .order("created_at", { ascending: false }),
+      fetchAllRows<{ id: string; name: string; email: string | null; school_id: string | null; area_of_study: string | null; gpa: string | null; linkedin: string | null; stage: string | null; not_interested: boolean }>(
+        (from, to) => db.from("candidates").select("id, name, email, school_id, area_of_study, gpa, linkedin, stage, not_interested").order("name").range(from, to),
+      ),
+      getSchoolsCached(),
+    ]);
+    const schoolName = new Map((schools ?? []).map((s: any) => [s.id, s.name as string]));
+    const missingLinkedin = (candRows ?? [])
+      .filter((c) => isActive(c.stage) && !c.not_interested && (!c.linkedin || c.linkedin.trim() === ""))
+      .map((c) => ({ id: c.id, name: c.name, email: c.email, school: c.school_id ? (schoolName.get(c.school_id) ?? null) : null, area_of_study: c.area_of_study, gpa: c.gpa }));
+    const helpRequests = (helpRes.data ?? []).map((h: any) => ({ id: h.id, title: h.title, body: h.body, dedupeKey: h.dedupe_key, created_at: h.created_at }));
+    return <AdminSnapshotClient helpRequests={helpRequests} missingLinkedin={missingLinkedin} />;
+  }
 
   const need = {
     candidates: ["overview", "applicants", "standings", "schools", "sync", "review"].includes(S),

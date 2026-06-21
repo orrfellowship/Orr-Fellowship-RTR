@@ -36,7 +36,7 @@ export function accentFor(role: Role, school?: string): string {
 
 // ---- access (single source of truth for sidebar + route guards) ------------
 export const WORKSPACE_SECTIONS = ["snapshot", "my-school", "standings", "applicants", "playbook", "resources", "budget"] as const;
-export const CONSOLE_SECTIONS = ["overview", "applicants", "standings", "schools", "calendar", "budget", "users", "sync", "review", "playbook", "resources"] as const;
+export const CONSOLE_SECTIONS = ["snapshot", "overview", "applicants", "standings", "schools", "calendar", "budget", "users", "sync", "review", "playbook", "resources"] as const;
 
 export function canAccessWorkspaceSection(role: Role, section: string): boolean {
   if (isAdminPlus(role)) return false; // admins/super use the console
@@ -64,7 +64,10 @@ function consoleNav(role: Role): NavGroup[] {
       : [{ id: "review", label: "Review Sync", href: "/console/review", icon: ClipboardCheck, hint: "Match JazzHR ↔ sourced" }]),
   ];
   return [
-    { group: null, items: [{ id: "overview", label: "Overview", href: "/console/overview", icon: LayoutDashboard, hint: "Dashboard & KPIs" }] },
+    { group: null, items: [
+      { id: "snapshot", label: "Weekly Snapshot", href: "/console/snapshot", icon: CalendarCheck, hint: "Tasks needing you" },
+      { id: "overview", label: "Overview", href: "/console/overview", icon: LayoutDashboard, hint: "Dashboard & KPIs" },
+    ] },
     { group: "Recruiting", items: [
       { id: "applicants", label: "Candidates", href: "/console/applicants", icon: UserSearch, hint: "Candidate pipeline", badgeKey: "applicants" },
       { id: "standings", label: "Standings", href: "/console/standings", icon: Trophy, hint: "School leaderboard" },

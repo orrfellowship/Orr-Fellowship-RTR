@@ -47,5 +47,7 @@ export function evaluateCandidate(
   return null;
 }
 
-// Kinds that warrant a daily email digest to the candidate's owner.
-export const DIGEST_KINDS: TriggerKind[] = ["applied", "follow_up"];
+// Kinds that warrant a daily email digest to the candidate's owner. All of these
+// require an owner (`mine`); `claim` (unclaimed) is intentionally excluded, so a
+// digest item always has a recipient.
+export const DIGEST_KINDS: TriggerKind[] = ["applied", "follow_up", "finalist", "next_step", "rapport"];

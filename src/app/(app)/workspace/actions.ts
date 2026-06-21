@@ -377,6 +377,43 @@ export async function markNotificationsRead(ids: string[]) {
   return { ok: true };
 }
 
+// A fellow / team lead asks their admins for help. We fan the question out as a
+// notification (bell + email via the cron flush) to every active admin, and it
+// also surfaces as an open task on the admin Weekly Snapshot. A shared dedupe_key
+// (`help:<id>`) lets an admin resolve it for everyone at once (see
+// resolveHelpRequest). Admins use the snapshot, not this button.
+export async function requestHelp(question: string) {
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated" };
+  if (isAdminPlus(profile.role)) return { error: "Admins manage requests from the snapshot." };
+  const q = (question ?? "").trim();
+  if (!q) return { error: "Please type your question first." };
+  if (q.length > 2000) return { error: "Please keep your question under 2000 characters." };
+
+  const db = createServiceClient();
+  const { data: admins } = await db
+    .from("profiles")
+    .select("id")
+    .in("role", ["admin", "super_admin"])
+    .eq("is_active", true);
+  if (!admins || admins.length === 0) return { error: "No admins are available right now — try again later." };
+
+  const requestId = crypto.randomUUID();
+  await Promise.all(
+    admins.map((a: any) =>
+      queueNotification({
+        recipientId: a.id,
+        type: "help_request",
+        title: `Help request from ${profile.full_name}`,
+        body: q,
+        link: "/console/snapshot",
+        dedupeKey: `help:${requestId}`,
+      }),
+    ),
+  );
+  return { ok: true };
+}
+
 // ---- RECRUITING CALENDAR EVENTS (team_lead+ create/edit; everyone RSVPs) ----
 export async function addEvent(e: {
   title: string; description: string | null; address?: string | null; event_date: string;

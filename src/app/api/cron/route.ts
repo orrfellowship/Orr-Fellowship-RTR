@@ -3,6 +3,13 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
 import { evaluateCandidate, DIGEST_KINDS } from "@/lib/triggers";
 import { fetchAllRows } from "@/lib/queries";
+import { phaseOf } from "@/lib/stages";
+
+// A candidate is "active" for nudging if they haven't been marked not-interested
+// and aren't in a terminal stage. Shared by the missing-LinkedIn admin nudge.
+const isActiveCandidate = (c: any) =>
+  !c.not_interested && phaseOf(c.stage) !== "rejected" && phaseOf(c.stage) !== "moved";
+const missingLinkedin = (c: any) => !c.linkedin || String(c.linkedin).trim() === "";
 
 // Scheduled worker. Protected by CRON_SECRET. Call it from Supabase pg_cron +
 // pg_net (see db/phase3.sql):
@@ -105,7 +112,7 @@ async function runDigests(db: Db) {
   const [{ data: profiles }, { data: candidates }, { data: logs }, { data: events }] = await Promise.all([
     db.from("profiles").select("id, email, full_name, role, school_id, is_active"),
     // Paged so nudges/digests cover every candidate, not just the first 1000.
-    fetchAllRows((from, to) => db.from("candidates").select("id, name, stage, point_person_id, not_interested, school_id").range(from, to)).then((data) => ({ data })),
+    fetchAllRows((from, to) => db.from("candidates").select("id, name, stage, point_person_id, not_interested, school_id, linkedin").range(from, to)).then((data) => ({ data })),
     fetchAllRows((from, to) => db.from("outreach_log").select("candidate_id, created_at").range(from, to)).then((data) => ({ data })),
     db.from("events").select("id, title, event_date, event_type, school_id").eq("event_type", "attend").eq("event_date", tomorrow),
   ]);
@@ -128,14 +135,22 @@ async function runDigests(db: Db) {
     arr.push(item);
   };
 
+  // Per-kind email title for a candidate digest item; the in-app row reuses the
+  // trigger kind as its notification `type` (free-text column, no enum).
+  const titleFor = (kind: string, name: string) =>
+    kind === "applied" ? `${name} applied`
+    : kind === "finalist" ? `Finalist prep: ${name}`
+    : kind === "next_step" ? `Next step: ${name}`
+    : kind === "rapport" ? `Build rapport: ${name}`
+    : `Follow up: ${name}`; // follow_up
   for (const c of candidates ?? []) {
     const owner = (c as any).point_person_id as string | null;
     if (!owner) continue;
     const t = evaluateCandidate(c as any, { profileId: owner, lastContactISO: lastContact[(c as any).id], now });
     if (!t || !DIGEST_KINDS.includes(t.kind)) continue;
     push(owner, {
-      kind: t.kind === "applied" ? "applied" : "no_contact",
-      title: t.kind === "applied" ? `${(c as any).name} applied` : `Follow up: ${(c as any).name}`,
+      kind: t.kind,
+      title: titleFor(t.kind, (c as any).name),
       line: `<b>${escapeHtml((c as any).name)}</b> — ${escapeHtml(t.why)}`,
       candidateId: (c as any).id,
     });
@@ -146,6 +161,20 @@ async function runDigests(db: Db) {
     for (const p of activeProfiles) {
       if (p.role === "admin" || p.role === "super_admin") continue;
       push(p.id, { kind: "weekly_snapshot", title: "Check your Weekly Snapshot", line: "Start the week by reviewing your snapshot and action queue." });
+    }
+  }
+
+  // Missing-LinkedIn nudge to admins — one grouped line (never one per candidate),
+  // pointing at the admin snapshot where they can fill them in via the flashcard.
+  const missingLinkedinCount = (candidates ?? []).filter((c: any) => isActiveCandidate(c) && missingLinkedin(c)).length;
+  if (missingLinkedinCount > 0) {
+    for (const p of activeProfiles) {
+      if (p.role !== "admin" && p.role !== "super_admin") continue;
+      push(p.id, {
+        kind: "missing_linkedin",
+        title: `${missingLinkedinCount} candidate${missingLinkedinCount === 1 ? "" : "s"} need a LinkedIn`,
+        line: `<b>${missingLinkedinCount}</b> active candidate${missingLinkedinCount === 1 ? " is" : "s are"} missing a LinkedIn — add them from your Weekly Snapshot.`,
+      });
     }
   }
 
@@ -177,11 +206,16 @@ async function runDigests(db: Db) {
     if (fresh.length === 0) continue;
     recipients++;
 
+    // Admin-only items (missing LinkedIn) deep-link to the console snapshot;
+    // everything else lands a fellow on their workspace.
+    const linkFor = (kind: string) => (kind === "missing_linkedin" ? "/console/snapshot" : "/workspace");
+    const ctaPath = fresh.every((it) => it.kind === "missing_linkedin") ? "/console/snapshot" : "/workspace";
+
     // in-app rows (pre-marked emailed so the flusher won't re-send them individually)
     const nowIso = new Date().toISOString();
     await db.from("notifications").insert(fresh.map((it) => ({
       recipient_id: rid, type: it.kind, title: it.title, body: stripHtml(it.line),
-      link: "/workspace", candidate_id: it.candidateId ?? null,
+      link: linkFor(it.kind), candidate_id: it.candidateId ?? null,
       send_after: nowIso, emailed_at: nowIso, dedupe_key: `${it.kind}:${it.candidateId ?? dayKey}:${dayKey}`,
     })));
 
@@ -191,7 +225,7 @@ async function runDigests(db: Db) {
     const res = await sendEmail({
       to: prof.email,
       subject: `Your recruiting digest · ${fresh.length} item${fresh.length === 1 ? "" : "s"}`,
-      html: emailLayout({ heading: "Your recruiting digest", intro: `Hi ${escapeHtml((prof.full_name ?? "").split(" ")[0] || "there")}, here's what needs you:`, bodyHtml, ctaLabel: "Open workspace", ctaUrl: `${siteUrl()}/workspace` }),
+      html: emailLayout({ heading: "Your recruiting digest", intro: `Hi ${escapeHtml((prof.full_name ?? "").split(" ")[0] || "there")}, here's what needs you:`, bodyHtml, ctaLabel: ctaPath === "/console/snapshot" ? "Open snapshot" : "Open workspace", ctaUrl: `${siteUrl()}${ctaPath}` }),
     });
     if (res.ok) emailed++;
   }

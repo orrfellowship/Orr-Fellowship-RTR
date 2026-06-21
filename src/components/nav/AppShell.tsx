@@ -11,6 +11,7 @@ import { setViewAs } from "@/app/(app)/console/actions";
 import Sidebar from "./Sidebar";
 import CommandPalette from "./CommandPalette";
 import NotificationBell, { type AppNotification } from "@/components/NotificationBell";
+import HelpButton from "@/components/HelpButton";
 
 const C = { bg: "#F7F8FB", card: "#ffffff", cardLine: "#eceaf2", ink: "#211d44", inkLo: "#938fad", inkMid: "#5c5878" };
 const FM = "'JetBrains Mono', ui-monospace, monospace";
@@ -91,6 +92,7 @@ export default function AppShell({
               <Search size={15} /> <span className="orr-hide-sm">Search</span> <kbd style={{ fontFamily: FM, fontSize: 10.5, padding: "2px 6px", borderRadius: 6, background: C.bg, color: C.inkLo, border: `1px solid ${C.cardLine}` }}>⌘K</kbd>
             </button>
             {viewAs?.canViewAs && <ViewAsControl people={viewAs.people} previewing={!!viewAs.previewing} />}
+            {!isAdminPlus(role) && <HelpButton />}
             <NotificationBell notifications={notifications} canTest={isAdminPlus(role)} />
           </div>
         </header>
