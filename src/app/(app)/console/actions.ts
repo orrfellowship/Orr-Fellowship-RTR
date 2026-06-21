@@ -645,9 +645,11 @@ async function sendInvite(
   // flow (there's no code_verifier cookie in the recipient's browser), which is
   // what left users with "Auth session missing" on the set-password screen.
   const tokenHash = (res.data?.properties as any)?.hashed_token as string | undefined;
-  const callbackPath = kind === "recovery" ? "reset-callback" : "invite-callback";
+  // Link points at the /auth/confirm interstitial, which only verifies the
+  // single-use token on an explicit click (POST) — keeps email scanners from
+  // burning it first. `type` mirrors the generated link kind.
   const link = tokenHash
-    ? `${siteUrlForInvite()}/auth/${callbackPath}?token_hash=${encodeURIComponent(tokenHash)}&type=${kind}`
+    ? `${siteUrlForInvite()}/auth/confirm?token_hash=${encodeURIComponent(tokenHash)}&type=${kind}`
     : undefined;
   if (!link || !user) return { error: "Could not generate an invite link." };
 

@@ -13,10 +13,18 @@ export async function GET(request: NextRequest) {
   const code = params.get("code");
 
   const supabase = createServerSupabase();
+  let error = null;
   if (token_hash) {
-    await supabase.auth.verifyOtp({ type, token_hash });
+    ({ error } = await supabase.auth.verifyOtp({ type, token_hash }));
   } else if (code) {
-    await supabase.auth.exchangeCodeForSession(code);
+    ({ error } = await supabase.auth.exchangeCodeForSession(code));
+  } else {
+    error = new Error("missing token");
+  }
+  // Don't drop a failed verify on set-password (no session -> "Auth session
+  // missing"); send them somewhere that explains how to get a fresh link.
+  if (error) {
+    return NextResponse.redirect(new URL(`/auth/link-expired?type=${type}`, request.url));
   }
   return NextResponse.redirect(new URL("/auth/set-password", request.url));
 }

@@ -11,10 +11,18 @@ export async function GET(request: NextRequest) {
   const code = params.get("code");
 
   const supabase = createServerSupabase();
+  let error = null;
   if (token_hash) {
-    await supabase.auth.verifyOtp({ type, token_hash });
+    ({ error } = await supabase.auth.verifyOtp({ type, token_hash }));
   } else if (code) {
-    await supabase.auth.exchangeCodeForSession(code);
+    ({ error } = await supabase.auth.exchangeCodeForSession(code));
+  } else {
+    error = new Error("missing token");
+  }
+  // A failed verify (expired/used token) would otherwise land on set-password
+  // with no session -> "Auth session missing". Redirect to a recoverable page.
+  if (error) {
+    return NextResponse.redirect(new URL(`/auth/link-expired?type=${type}`, request.url));
   }
   return NextResponse.redirect(new URL("/auth/set-password", request.url));
 }

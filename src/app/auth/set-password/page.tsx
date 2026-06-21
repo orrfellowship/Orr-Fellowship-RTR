@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -11,6 +11,16 @@ export default function SetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+
+  // The confirm flow should have established a session before we land here. If
+  // it didn't (link expired/consumed, direct navigation), bounce to the
+  // recoverable page rather than letting updateUser throw "Auth session missing".
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data }) => {
+      if (!data.session) router.replace("/auth/link-expired");
+    });
+  }, [router]);
 
   async function submit() {
     setError(null);
