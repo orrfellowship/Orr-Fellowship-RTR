@@ -17,7 +17,7 @@ import { getCurrentProfile, isPreviewing, VIEW_AS_COOKIE } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources, canReassign } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
-import { sendEmail, emailLayout } from "@/lib/email";
+import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
 import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
@@ -680,6 +680,52 @@ export async function inviteUser(email: string, full_name: string, role: string,
   if ("error" in res) return { error: res.error };
   revalidatePath("/console");
   return { ok: true };
+}
+
+// Self-service notification test. Inserts a real in-app notification for the
+// caller (so it shows in their own bell) and immediately emails it through the
+// same SMTP path the cron flush uses — so one click exercises both channels
+// end-to-end without waiting for the scheduled job. Only notifies the caller.
+export async function sendTestNotification() {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+
+  const db = createServiceClient();
+  const nowIso = new Date().toISOString();
+  const { data: inserted, error } = await db
+    .from("notifications")
+    .insert({
+      recipient_id: profile.id,
+      type: "weekly_snapshot", // reuse a valid type so the DB check constraint passes
+      title: "Test notification",
+      body: "You triggered this test. Seeing it in your bell and inbox means notifications are working.",
+      link: "/workspace",
+      send_after: nowIso,
+    })
+    .select("id")
+    .single();
+  if (error || !inserted) return { error: error?.message ?? "Could not create the notification." };
+
+  // Email it now via the same path the flusher uses, then mark it emailed so the
+  // next cron flush won't send a duplicate.
+  let email: { ok: boolean; configured: boolean; error?: string } = { ok: false, configured: emailConfigured() };
+  if (profile.email) {
+    const res = await sendEmail({
+      to: profile.email,
+      subject: "Orr Recruiting — test notification",
+      html: emailLayout({
+        heading: "Test notification",
+        bodyHtml: "<div>You triggered this from the app. If you're reading it, the in-app bell and email path are both wired up.</div>",
+        ctaLabel: "Open workspace",
+        ctaUrl: `${siteUrlForInvite()}/workspace`,
+      }),
+    });
+    email = { ok: res.ok, configured: emailConfigured(), error: res.ok ? undefined : res.error };
+    if (res.ok) await db.from("notifications").update({ emailed_at: new Date().toISOString() }).eq("id", inserted.id);
+  }
+
+  revalidatePath("/workspace");
+  return { ok: true, email };
 }
 
 export async function bulkInviteUsers(

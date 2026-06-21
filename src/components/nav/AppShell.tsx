@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Search, Eye } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { navForRole, flatNav, type Role, type BadgeKey } from "@/lib/nav/config";
+import { isAdminPlus } from "@/lib/types";
 import type { ThisWeek } from "@/lib/nav/thisWeek";
 import { setViewAs } from "@/app/(app)/console/actions";
 import Sidebar from "./Sidebar";
@@ -90,7 +91,7 @@ export default function AppShell({
               <Search size={15} /> <span className="orr-hide-sm">Search</span> <kbd style={{ fontFamily: FM, fontSize: 10.5, padding: "2px 6px", borderRadius: 6, background: C.bg, color: C.inkLo, border: `1px solid ${C.cardLine}` }}>⌘K</kbd>
             </button>
             {viewAs?.canViewAs && <ViewAsControl people={viewAs.people} previewing={!!viewAs.previewing} />}
-            <NotificationBell notifications={notifications} />
+            <NotificationBell notifications={notifications} canTest={isAdminPlus(role)} />
           </div>
         </header>
 

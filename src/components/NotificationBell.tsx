@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Bell } from "lucide-react";
 import { markNotificationsRead } from "@/app/(app)/workspace/actions";
+import { sendTestNotification } from "@/app/(app)/console/actions";
 
 const C = {
   navy: "#11123E", orange: "#DD5434", gray: "#303333", grayMute: "#6E7385",
@@ -24,12 +25,32 @@ function timeAgo(iso: string): string {
   const d = Math.floor(h / 24); return d === 1 ? "yesterday" : `${d}d ago`;
 }
 
-export default function NotificationBell({ notifications }: { notifications: AppNotification[] }) {
+export default function NotificationBell({ notifications, canTest = false }: { notifications: AppNotification[]; canTest?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [, startTransition] = useTransition();
+  const [testing, setTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const unread = notifications.filter((n) => !n.read).length;
+
+  const sendTest = async () => {
+    setTesting(true);
+    setTestMsg(null);
+    const res = await sendTestNotification();
+    setTesting(false);
+    if ("error" in res && res.error) {
+      setTestMsg(res.error);
+    } else {
+      const email = "email" in res ? res.email : undefined;
+      setTestMsg(
+        !email?.configured ? "Added to your bell. Email isn't configured, so none was sent."
+        : email.ok ? "Sent — check your bell and inbox."
+        : `Added to your bell, but the email failed: ${email.error ?? "unknown error"}.`
+      );
+      router.refresh();
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -81,6 +102,15 @@ export default function NotificationBell({ notifications }: { notifications: App
               </div>
             ))}
           </div>
+          {canTest && (
+            <div style={{ padding: "10px 16px", borderTop: `1px solid ${C.line}`, background: C.canvas }}>
+              <button onClick={sendTest} disabled={testing}
+                style={{ width: "100%", border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontSize: 12.5, fontWeight: 700, padding: "8px 10px", borderRadius: 8, cursor: testing ? "default" : "pointer", opacity: testing ? 0.6 : 1 }}>
+                {testing ? "Sending…" : "Send myself a test notification"}
+              </button>
+              {testMsg && <div style={{ fontSize: 11.5, color: C.grayMute, marginTop: 7, lineHeight: 1.35 }}>{testMsg}</div>}
+            </div>
+          )}
         </div>
       )}
     </div>
