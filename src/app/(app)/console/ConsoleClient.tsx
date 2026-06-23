@@ -99,6 +99,30 @@ function fmtPct(actual: number, goal: number) {
   return (p > 999 ? ">999" : p.toFixed(0)) + "%";
 }
 
+function sumGoalsForScope(scope: string, goals: Goal[], schools: School[], field: "goal_sourced" | "goal_applied") {
+  const goalMap = new Map(goals.map((g) => [g.school_id, g]));
+
+  if (scope !== "all" && !scope.startsWith("tier:")) {
+    return goalMap.get(scope)?.[field] ?? 0;
+  }
+
+  const scopedSchools = scope === "all"
+    ? schools
+    : schools.filter((s) => s.tier === scope.slice("tier:".length));
+  const countedGroupTiers = new Set<string>();
+
+  return scopedSchools.reduce((sum, school) => {
+    if (school.tier === "satellite" || school.tier === "bonus") {
+      if (countedGroupTiers.has(school.tier)) return sum;
+      countedGroupTiers.add(school.tier);
+      const tierSchoolIds = new Set(schools.filter((s) => s.tier === school.tier).map((s) => s.id));
+      const groupGoal = goals.find((g) => tierSchoolIds.has(g.school_id));
+      return sum + (groupGoal?.[field] ?? 0);
+    }
+    return sum + (goalMap.get(school.id)?.[field] ?? 0);
+  }, 0);
+}
+
 export default function ConsoleClient({
   profile, initialSection, schools, candidates, team, goals, phases, users, reviews, resources,
   events = [], people = [], budgetEntries = [], budgetGuidance = [],
@@ -250,10 +274,9 @@ export default function ConsoleClient({
   // scoreboard totals
   const board = useMemo(() => {
     const cands = candidates.filter((c) => matchesSchoolFilter(scope, c.school_id, schools));
-    const scopeGoals = goals.filter((g) => matchesSchoolFilter(scope, g.school_id, schools));
     return [
-      { label: "Sourced", actual: cands.filter((c) => c.stage && SOURCED.has(c.stage)).length, goal: scopeGoals.reduce((a, g) => a + g.goal_sourced, 0) },
-      { label: "Applied", actual: cands.filter((c) => c.stage && APPLIED.has(c.stage)).length, goal: scopeGoals.reduce((a, g) => a + g.goal_applied, 0) },
+      { label: "Sourced", actual: cands.filter((c) => c.stage && SOURCED.has(c.stage)).length, goal: sumGoalsForScope(scope, goals, schools, "goal_sourced") },
+      { label: "Applied", actual: cands.filter((c) => c.stage && APPLIED.has(c.stage)).length, goal: sumGoalsForScope(scope, goals, schools, "goal_applied") },
     ];
   }, [scope, candidates, goals, schools]);
 
