@@ -407,7 +407,8 @@ export default function WorkspaceClient({
             if (boardQ && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(boardQ))) return false;
             if (boardStage !== "All stages" && c.stage !== boardStage) return false;
             if (boardFavOnly && !c.is_favorite) return false;
-            if (boardOwner && c.point_person_id !== (boardOwner === "__me__" ? profile.id : boardOwner)) return false;
+            if (boardOwner === "__unassigned__" && c.point_person_id) return false;
+            if (boardOwner && boardOwner !== "__unassigned__" && c.point_person_id !== (boardOwner === "__me__" ? profile.id : boardOwner)) return false;
             return true;
           });
           const boardFiltersActive = boardQ || boardStage !== "All stages" || boardFavOnly || boardOwner;
@@ -436,6 +437,7 @@ export default function WorkspaceClient({
               </select>
               <select value={boardOwner} onChange={(e) => setBoardOwner(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${boardOwner ? accent : C.line}`, fontSize: 13.5, background: boardOwner ? `${accent}10` : "#fff", color: boardOwner ? accent : C.gray, fontWeight: 600 }}>
                 <option value="">All owners</option>
+                <option value="__unassigned__">Unassigned</option>
                 <option value="__me__">Mine</option>
                 {team.filter((t) => t.id !== profile.id).map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
               </select>
@@ -483,6 +485,26 @@ export default function WorkspaceClient({
                   <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Team · {team.length}</div>
                   {boardOwner && <button onClick={() => setBoardOwner("")} style={{ border: "none", background: "none", color: C.navy2, fontSize: 11, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}>Show all</button>}
                 </div>
+                {(() => {
+                  const unassigned = candidates.filter((c) => !c.point_person_id && !c.not_interested).length;
+                  const selected = boardOwner === "__unassigned__";
+                  return (
+                    <div onClick={() => setBoardOwner(selected ? "" : "__unassigned__")} title="Show unassigned candidates"
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: `1px solid ${C.line}`, cursor: "pointer",
+                        background: selected ? `${accent}14` : "#fff", borderLeft: `3px solid ${selected ? accent : "transparent"}` }}
+                      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = C.canvas; }}
+                      onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "#fff"; }}>
+                      <div style={{ width: 30, height: 30, borderRadius: "50%", background: C.orange, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: HEAD, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+                        -
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: selected ? accent : C.gray }}>Unassigned</div>
+                        <div style={{ fontSize: 11, color: C.grayMute }}>{unassigned} candidate{unassigned !== 1 ? "s" : ""}</div>
+                      </div>
+                      <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: selected ? accent : C.grayMute }}>{unassigned}</div>
+                    </div>
+                  );
+                })()}
                 {team.map((t) => {
                   const owned = candidates.filter((c) => c.point_person_id === t.id && !c.not_interested).length;
                   const isMe = t.id === profile.id;
