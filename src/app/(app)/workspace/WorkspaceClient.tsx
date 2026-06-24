@@ -141,8 +141,18 @@ export default function WorkspaceClient({
     if (label === "team") return "Team";
     if (!id) return "Unassigned";
     if (id === profile.id) return "You";
-    return team.find((t) => t.id === id)?.full_name ?? "—";
+    return team.find((t) => t.id === id)?.full_name ?? allProfiles.find((p) => p.id === id)?.full_name ?? "—";
   };
+  const pointPersonOptions = useMemo(() => {
+    const byId = new Map<string, TeamMember>();
+    for (const member of team) byId.set(member.id, member);
+    for (const candidate of candidates) {
+      if (!candidate.point_person_id || byId.has(candidate.point_person_id)) continue;
+      const profile = allProfiles.find((p) => p.id === candidate.point_person_id);
+      if (profile) byId.set(profile.id, { ...profile, role: "former_team" });
+    }
+    return Array.from(byId.values());
+  }, [team, candidates, allProfiles]);
   // Everyone can OPEN any candidate and read its notes/warm-intros. Editing
   // (logging outreach, flags, warm intros) is limited to the assigned point
   // person — or team leads/admins, who manage their whole school.
@@ -466,7 +476,7 @@ export default function WorkspaceClient({
                     <div><StagePill stage={c.stage} /></div>
                     <div onClick={(e) => e.stopPropagation()}>
                       {canAssign ? (
-                        <PersonPicker value={c.point_person_id} options={team} meId={profile.id} accent={accent} compact
+                        <PersonPicker value={c.point_person_id} options={pointPersonOptions} meId={profile.id} accent={accent} compact
                           placeholder="Search your school…"
                           onChange={(v) => startTransition(() => { reassignPointPerson(c.id, v); })} />
                       ) : (
@@ -700,7 +710,7 @@ export default function WorkspaceClient({
       {assignOpen && (
         <AssignPointPeopleModal
           candidates={candidates}
-          team={team}
+          team={pointPersonOptions}
           meId={profile.id}
           accent={accent}
           onClose={() => setAssignOpen(false)}

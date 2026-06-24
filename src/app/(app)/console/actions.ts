@@ -465,9 +465,18 @@ export async function updateUser(user_id: string, role: string, school_id: strin
   if (!isSuper(profile.role) && role === "super_admin") return { error: "Only a super admin can grant super-admin access." };
   const guard = await guardSuperTarget(db, profile.role, user_id);
   if (guard) return { error: guard };
+  const assignedCandidates = await fetchAllRows<{ id: string }>((from, to) =>
+    db.from("candidates").select("id").eq("point_person_id", user_id).range(from, to));
   const { error } = await db.from("profiles").update({ role, school_id }).eq("id", user_id);
   if (error) return { error: error.message };
+  if (assignedCandidates.length) {
+    const { error: restoreError } = await db.from("candidates")
+      .update({ point_person_id: user_id })
+      .in("id", assignedCandidates.map((c) => c.id));
+    if (restoreError) return { error: restoreError.message };
+  }
   revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true };
 }
 
