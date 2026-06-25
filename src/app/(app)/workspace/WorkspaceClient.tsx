@@ -352,6 +352,12 @@ export default function WorkspaceClient({
                     <div key={a.id} onClick={() => setOpenId(a.cand.id)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 12, padding: "15px 18px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }}>
                       <span style={{ width: 92, fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: accent, flexShrink: 0 }}>{a.type}</span>
                       <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, color: C.gray }}>{a.cand.name}</div><div style={{ fontSize: 13, color: C.grayMute }}>{a.why}</div></div>
+                      {a.type === "Claim" && (
+                        <button onClick={(e) => { e.stopPropagation(); startTransition(() => { reassignPointPerson(a.cand.id, profile.id); }); }}
+                          style={{ border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 12.5, padding: "7px 12px", borderRadius: 8, cursor: "pointer", flexShrink: 0 }}>
+                          Claim
+                        </button>
+                      )}
                       <StagePill stage={a.cand.stage} />
                     </div>
                   ))}
@@ -479,6 +485,11 @@ export default function WorkspaceClient({
                         <PersonPicker value={c.point_person_id} options={pointPersonOptions} meId={profile.id} accent={accent} compact
                           placeholder="Search your school…"
                           onChange={(v) => startTransition(() => { reassignPointPerson(c.id, v); })} />
+                      ) : !c.point_person_id ? (
+                        <button onClick={() => startTransition(() => { reassignPointPerson(c.id, profile.id); })}
+                          style={{ border: `1px solid ${accent}`, background: `${accent}12`, color: accent, fontWeight: 700, fontSize: 12.5, padding: "5px 9px", borderRadius: 7, cursor: "pointer" }}>
+                          Claim
+                        </button>
                       ) : (
                         <span style={{ fontSize: 13, color: c.point_person_id ? C.grayMute : C.orange, fontWeight: 600 }}>{nameOf(c.point_person_id)}</span>
                       )}

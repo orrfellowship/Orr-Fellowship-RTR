@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile, isPreviewing } from "@/lib/auth";
-import { canEditPlaybook, canEditEvents, isAdminPlus } from "@/lib/types";
+import { canEditPlaybook, canEditEvents, canReassign, isAdminPlus } from "@/lib/types";
 import { queueNotification, supersedePending } from "@/lib/notify";
+import { getTierSchoolIds } from "@/lib/queries";
 
 const CLAIM_DELAY_MS = 30 * 60 * 1000;
 type CalendarEventType = "attend" | "info" | "deadline";
@@ -52,11 +53,29 @@ export async function logOutreach(candidateId: string, body: string) {
   return { ok: true };
 }
 
-// ---- POINT PERSON (team_lead+ only; DB trigger also enforces this) ----
+// ---- POINT PERSON ----
 export async function reassignPointPerson(candidateId: string, ownerId: string | null) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
-  const { error } = await supabase
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated" };
+  const db = createServiceClient();
+
+  if (!canReassign(profile.role)) {
+    if (ownerId !== profile.id) return { error: "You can only assign yourself as point person." };
+    const { ids: schoolIds } = await getTierSchoolIds(profile.school_id);
+    if (schoolIds.length === 0) return { error: "No school assigned." };
+    const { data: candidate, error: loadError } = await db
+      .from("candidates")
+      .select("school_id, point_person_id")
+      .eq("id", candidateId)
+      .maybeSingle();
+    if (loadError) return { error: loadError.message };
+    if (!candidate || !schoolIds.includes((candidate as any).school_id)) return { error: "Forbidden" };
+    const currentOwner = (candidate as any).point_person_id as string | null;
+    if (currentOwner && currentOwner !== profile.id) return { error: "Only a team lead can reassign a point person." };
+  }
+
+  const { error } = await db
     .from("candidates")
     .update({ point_person_id: ownerId })
     .eq("id", candidateId);
