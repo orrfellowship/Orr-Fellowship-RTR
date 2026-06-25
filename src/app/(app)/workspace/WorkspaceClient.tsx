@@ -429,7 +429,7 @@ export default function WorkspaceClient({
                 <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>My School Board</h1>
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardVisible.length.toLocaleString()}{boardFiltersActive ? ` of ${candidates.length.toLocaleString()}` : ""} candidate{candidates.length !== 1 ? "s" : ""}.</p>
               </div>
-              {canAssign && team.length > 0 && (
+              {canAssign && pointPersonOptions.length > 0 && (
                 <button onClick={() => setAssignOpen(true)}
                   style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>
                   ⚡ Assign Point People
@@ -449,7 +449,7 @@ export default function WorkspaceClient({
                 <option value="">All owners</option>
                 <option value="__unassigned__">Unassigned</option>
                 <option value="__me__">Mine</option>
-                {team.filter((t) => t.id !== profile.id).map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                {pointPersonOptions.filter((t) => t.id !== profile.id).map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
               </select>
               <button onClick={() => setBoardFavOnly((v) => !v)}
                 style={{ padding: "9px 14px", borderRadius: 9, border: `1px solid ${boardFavOnly ? C.gold : C.line}`, fontSize: 13.5, background: boardFavOnly ? "#FBF3D6" : "#fff", color: boardFavOnly ? "#8A6D0E" : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
@@ -492,7 +492,7 @@ export default function WorkspaceClient({
               {/* Team panel — click a member to see only their applicants */}
               <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
                 <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.line}`, background: "#FAFBFE", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Team · {team.length}</div>
+                  <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Owners · {pointPersonOptions.length}</div>
                   {boardOwner && <button onClick={() => setBoardOwner("")} style={{ border: "none", background: "none", color: C.navy2, fontSize: 11, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}>Show all</button>}
                 </div>
                 {(() => {
@@ -515,7 +515,7 @@ export default function WorkspaceClient({
                     </div>
                   );
                 })()}
-                {team.map((t) => {
+                {pointPersonOptions.map((t) => {
                   const owned = candidates.filter((c) => c.point_person_id === t.id && !c.not_interested).length;
                   const isMe = t.id === profile.id;
                   const ownerVal = isMe ? "__me__" : t.id;
