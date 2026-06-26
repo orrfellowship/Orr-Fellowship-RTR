@@ -137,7 +137,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
   if (need.budget) {
     const [{ data: be }, { data: bg }] = await Promise.all([
       serviceDb.from("budget_entries").select("id, school_id, kind, label, amount, notes, receipt_url, created_by").in("school_id", tierSchoolIds).order("created_at", { ascending: false }),
-      serviceDb.from("budget_guidance").select("id, category, pct").order("sort_order"),
+      serviceDb.from("budget_guidance").select("id, school_id, category, pct").order("sort_order"),
     ]);
     budgetEntries = be ?? [];
     budgetGuidance = bg ?? [];

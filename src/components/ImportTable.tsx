@@ -162,7 +162,11 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
   return (
     <>
       {/* Suggestions for the per-row inputs (you can also type freely). */}
-      <datalist id="import-schools">{schools.map((s) => <option key={s.id} value={s.name} />)}</datalist>
+      <datalist id="import-schools">
+        {schools.some((s) => s.tier === "satellite") && <option value="Satellite School" />}
+        {schools.some((s) => s.tier === "bonus") && <option value="Bonus School" />}
+        {schools.map((s) => <option key={s.id} value={s.name} />)}
+      </datalist>
       {showPP && <datalist id="import-people">{team.map((m) => <option key={m.id} value={m.full_name} />)}</datalist>}
 
       {/* Upload / hint toolbar */}

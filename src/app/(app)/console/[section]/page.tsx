@@ -77,7 +77,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
     need.users ? supabase.from("profiles").select("id, full_name, email, role, school_id, is_active").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.calendar ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.budget ? serviceDb.from("budget_entries").select("id, school_id, kind, label, amount, notes, receipt_url, created_by").order("created_at", { ascending: false }).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.budget ? serviceDb.from("budget_guidance").select("id, category, pct").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.budget ? serviceDb.from("budget_guidance").select("id, school_id, category, pct").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
   ]);
 
   // Candidates tab: first page + count + the full-set facets/slim list that the

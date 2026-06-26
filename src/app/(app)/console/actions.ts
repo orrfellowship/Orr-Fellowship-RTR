@@ -1215,14 +1215,22 @@ export async function getUserSnapshot(userId: string) {
   return { ok: true as const, name: t.full_name, isAdmin: false, queue, tasksDone, tasksTotal };
 }
 
-// Admin's recommended spending split by category (org-wide guidance).
-export async function setBudgetGuidance(items: { category: string; pct: number }[]) {
+// Admin's recommended spending split by category for one budget scope.
+export async function setBudgetGuidance(school_id: string | null, items: { category: string; pct: number }[]) {
   if (isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
-  await db.from("budget_guidance").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-  const rows = items.filter((i) => i.category.trim()).map((i, idx) => ({ category: i.category.trim(), pct: Number(i.pct) || 0, sort_order: idx, created_by: profile.id }));
+  const del = db.from("budget_guidance").delete();
+  const { error: deleteError } = school_id ? await del.eq("school_id", school_id) : await del.is("school_id", null);
+  if (deleteError) return { error: deleteError.message };
+  const rows = items.filter((i) => i.category.trim()).map((i, idx) => ({
+    school_id,
+    category: i.category.trim(),
+    pct: Number(i.pct) || 0,
+    sort_order: idx,
+    created_by: profile.id,
+  }));
   if (rows.length) { const { error } = await db.from("budget_guidance").insert(rows); if (error) return { error: error.message }; }
   bustCache([], ["/console", "/workspace"]);
   return { ok: true };

@@ -205,6 +205,14 @@ export function resolveCandidateSchool(
   if (!t) return { school_id: null, university_raw: null };
   const lc = t.toLowerCase();
   const isCoreOrSat = (s: SchoolLite) => s.tier === "core" || s.tier === "satellite";
+  const firstByTier = (tier: string) => schools.filter((s) => s.tier === tier).sort((a, b) => a.name.localeCompare(b.name))[0];
+
+  if (lc === "satellite" || lc === "satellite school" || lc === "satellite schools") {
+    return { school_id: firstByTier("satellite")?.id ?? null, university_raw: null };
+  }
+  if (lc === "bonus" || lc === "bonus school" || lc === "bonus schools") {
+    return { school_id: firstByTier("bonus")?.id ?? null, university_raw: null };
+  }
 
   const exact = schools.find((s) => s.name.toLowerCase() === lc);
   if (exact && isCoreOrSat(exact)) return { school_id: exact.id, university_raw: null };
@@ -216,6 +224,6 @@ export function resolveCandidateSchool(
     }
   }
   // Not Core/Satellite (or unknown) → Bonus group; keep what they typed.
-  const bonus = schools.filter((s) => s.tier === "bonus").sort((a, b) => a.name.localeCompare(b.name))[0];
+  const bonus = firstByTier("bonus");
   return { school_id: bonus?.id ?? null, university_raw: t };
 }

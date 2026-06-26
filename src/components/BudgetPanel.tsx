@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useTransition } from "react";
+import { useState, useMemo, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { addBudgetEntry, deleteBudgetEntry, uploadReceipt, signedReceiptUrl, setBudgetGuidance } from "@/app/(app)/console/actions";
 
@@ -17,7 +17,7 @@ export type BudgetEntry = {
 };
 // `pct` is the legacy DB column name; it now holds a recommended DOLLAR amount
 // per category (not a percentage). Kept as-is to avoid a destructive rename.
-export type Guidance = { id?: string; category: string; pct: number | string };
+export type Guidance = { id?: string; school_id: string | null; category: string; pct: number | string };
 
 const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
@@ -50,6 +50,10 @@ export default function BudgetPanel({
   const remaining = allocated - spent;
   const sorted = [...scoped].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "allocation" ? -1 : 1));
   const scopeName = activeScope ? (schools.find((s) => s.id === activeScope)?.name ?? "School") : "Organization-wide";
+  const scopedGuidance = useMemo(
+    () => guidance.filter((g) => activeScope ? g.school_id === activeScope : g.school_id == null),
+    [guidance, activeScope],
+  );
 
   const openReceipt = (path: string) => startTransition(() => { signedReceiptUrl(path).then((r) => { if ("url" in r) window.open(r.url, "_blank"); else alert(r.error); }); });
   const remove = (id: string) => { if (confirm("Delete this entry?")) startTransition(() => { deleteBudgetEntry(id).then(() => router.refresh()); }); };
@@ -77,8 +81,8 @@ export default function BudgetPanel({
         ))}
       </div>
 
-      <GuidanceSection guidance={guidance} allocated={allocated} canManage={canManage} pending={pending}
-        onSave={(items) => startTransition(() => { setBudgetGuidance(items).then(() => router.refresh()); })} />
+      <GuidanceSection guidance={scopedGuidance} allocated={allocated} canManage={canManage} pending={pending}
+        onSave={(items) => startTransition(() => { setBudgetGuidance(activeScope || null, items).then(() => router.refresh()); })} />
 
       {/* Add forms */}
       {canAllocate && <EntryForm kind="allocation" schoolId={activeScope || null} accent={accent} pending={pending}
@@ -131,6 +135,11 @@ function GuidanceSection({ guidance, allocated, canManage, pending, onSave }: {
     guidance.length ? guidance.map((g) => ({ category: g.category, pct: String(g.pct) })) : [{ category: "", pct: "" }],
   );
   const inp: React.CSSProperties = { padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 13.5, boxSizing: "border-box" };
+
+  useEffect(() => {
+    setEditing(false);
+    setRows(guidance.length ? guidance.map((g) => ({ category: g.category, pct: String(g.pct) })) : [{ category: "", pct: "" }]);
+  }, [guidance]);
 
   if (guidance.length === 0 && !canManage) return null;
 
