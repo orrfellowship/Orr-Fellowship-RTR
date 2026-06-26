@@ -24,7 +24,7 @@ import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
 import DuplicateReview, { findDuplicateGroups } from "@/components/DuplicateReview";
-import { phaseOf, routeToSchoolNameByEmail } from "@/lib/stages";
+import { phaseOf, routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -121,6 +121,25 @@ function sumGoalsForScope(scope: string, goals: Goal[], schools: School[], field
     }
     return sum + (goalMap.get(school.id)?.[field] ?? 0);
   }, 0);
+}
+
+function overviewSchoolKey(candidate: Pick<Cand, "school_id" | "university_raw">, schools: School[]): string | null {
+  if (!candidate.school_id) return null;
+  const school = schools.find((s) => s.id === candidate.school_id);
+  if (!school || (school.tier !== "satellite" && school.tier !== "bonus")) return candidate.school_id;
+
+  const tierSchools = schools.filter((s) => s.tier === school.tier).sort((a, b) => a.name.localeCompare(b.name));
+  const raw = (candidate.university_raw ?? "").trim();
+  if (raw) {
+    const exact = tierSchools.find((s) => s.name.toLowerCase() === raw.toLowerCase());
+    if (exact) return exact.id;
+    const routed = routeToSchoolName(raw);
+    const routedSchool = routed ? tierSchools.find((s) => s.name.toLowerCase() === routed.toLowerCase()) : null;
+    if (routedSchool) return routedSchool.id;
+  }
+
+  const representative = tierSchools[0];
+  return representative?.id === candidate.school_id ? `tier:${school.tier}` : candidate.school_id;
 }
 
 export default function ConsoleClient({
@@ -420,8 +439,12 @@ export default function ConsoleClient({
                 <div>School</div><div>Sourced</div><div>Applied</div>
               </div>
               {(() => {
-                const cnt = (ids: string[]) => {
-                  const sc = candidates.filter((c) => c.school_id && ids.includes(c.school_id));
+                const cnt = (keys: string[]) => {
+                  const keySet = new Set(keys);
+                  const sc = candidates.filter((c) => {
+                    const key = overviewSchoolKey(c, schools);
+                    return !!key && keySet.has(key);
+                  });
                   return { sourced: sc.filter((c) => c.stage && SOURCED.has(c.stage)).length, applied: sc.filter((c) => c.stage && APPLIED.has(c.stage)).length };
                 };
                 const row = (key: string, name: string, sub: string, ids: string[], accent: string, opts: { logo?: string | null; indent?: boolean; expandKey?: string } = {}) => {
@@ -446,9 +469,11 @@ export default function ConsoleClient({
                 return (
                   <>
                     {core.map((s) => row(s.id, s.name, "core", [s.id], s.color_primary ?? C.navy2, { logo: s.logo_url }))}
-                    {sat.length > 0 && row("g-sat", "Satellite School", `${sat.length} schools`, sat.map((s) => s.id), C.navy2, { expandKey: "satellite" })}
+                    {sat.length > 0 && row("g-sat", "Satellite School", `${sat.length} schools`, [...sat.map((s) => s.id), "tier:satellite"], C.navy2, { expandKey: "satellite" })}
+                    {obExpand.satellite && row("g-sat-general", "Satellite School", "group-routed", ["tier:satellite"], C.navy2, { indent: true })}
                     {obExpand.satellite && sat.map((s) => row(s.id, s.name, "satellite", [s.id], s.color_primary ?? C.navy2, { logo: s.logo_url, indent: true }))}
-                    {bon.length > 0 && row("g-bon", "Bonus School", `${bon.length} schools`, bon.map((s) => s.id), C.navy2, { expandKey: "bonus" })}
+                    {bon.length > 0 && row("g-bon", "Bonus School", `${bon.length} schools`, [...bon.map((s) => s.id), "tier:bonus"], C.navy2, { expandKey: "bonus" })}
+                    {obExpand.bonus && row("g-bon-general", "Bonus School", "group-routed", ["tier:bonus"], C.navy2, { indent: true })}
                     {obExpand.bonus && bon.map((s) => row(s.id, s.name, "bonus", [s.id], s.color_primary ?? C.navy2, { logo: s.logo_url, indent: true }))}
                   </>
                 );
