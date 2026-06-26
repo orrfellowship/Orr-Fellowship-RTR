@@ -34,6 +34,10 @@ export default function AppShell({
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shellBadges, setShellBadges] = useState(badges);
+  const [shellThisWeek, setShellThisWeek] = useState(thisWeek);
+  const [shellNotifications, setShellNotifications] = useState(notifications);
+  const [shellPeople, setShellPeople] = useState(viewAs?.people ?? []);
 
   // Build nav client-side (Lucide icon components aren't serializable as props).
   const groups = useMemo(() => navForRole(role), [role]);
@@ -48,6 +52,21 @@ export default function AppShell({
     } catch {}
   }, []);
   const toggleCollapse = () => setCollapsed((v) => { const n = !v; try { localStorage.setItem(STORAGE_KEY, n ? "1" : "0"); } catch {} return n; });
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/shell-data", { credentials: "same-origin" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!active || !data) return;
+        setShellBadges(data.badges ?? {});
+        setShellThisWeek(data.thisWeek ?? null);
+        setShellNotifications(data.notifications ?? []);
+        setShellPeople(data.viewAsPeople ?? []);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [pathname]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -71,7 +90,7 @@ export default function AppShell({
     <div style={{ ["--accent" as any]: accent, display: "flex", minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Open Sans', sans-serif" }}>
       <NavStyles />
       <Sidebar
-        groups={groups} accent={accent} brand={brand} user={user} badges={badges} thisWeek={thisWeek}
+        groups={groups} accent={accent} brand={brand} user={user} badges={shellBadges} thisWeek={shellThisWeek}
         collapsed={collapsed} onToggleCollapse={toggleCollapse} onOpenPalette={() => setPaletteOpen(true)} onSignOut={signOut}
       />
 
@@ -91,9 +110,9 @@ export default function AppShell({
             <button onClick={() => setPaletteOpen(true)} className="orr-lift" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 13px", borderRadius: 10, border: `1px solid ${C.cardLine}`, background: C.card, color: C.inkMid, cursor: "pointer", fontSize: 13 }}>
               <Search size={15} /> <span className="orr-hide-sm">Search</span> <kbd style={{ fontFamily: FM, fontSize: 10.5, padding: "2px 6px", borderRadius: 6, background: C.bg, color: C.inkLo, border: `1px solid ${C.cardLine}` }}>⌘K</kbd>
             </button>
-            {viewAs?.canViewAs && <ViewAsControl people={viewAs.people} previewing={!!viewAs.previewing} />}
+            {viewAs?.canViewAs && <ViewAsControl people={shellPeople} previewing={!!viewAs.previewing} />}
             {!isAdminPlus(role) && <HelpButton />}
-            <NotificationBell notifications={notifications} canTest={isAdminPlus(role)} />
+            <NotificationBell notifications={shellNotifications} canTest={isAdminPlus(role)} />
           </div>
         </header>
 

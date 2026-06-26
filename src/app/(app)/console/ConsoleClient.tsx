@@ -9,7 +9,7 @@ import {
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
-  unlinkJazzCandidate, getUserSnapshot, listCandidates, migratePlaybooksToDates,
+  unlinkJazzCandidate, getUserSnapshot, listCandidates, getCandidateFacets, migratePlaybooksToDates,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
@@ -186,6 +186,12 @@ export default function ConsoleClient({
   const [appTotal, setAppTotal] = useState<number>(candidatesTotal ?? candidates.length);
   const [appPage, setAppPage] = useState(0);
   const [appLoading, setAppLoading] = useState(false);
+  const [candidateFacets, setCandidateFacets] = useState({
+    majors: facetMajors,
+    stages: facetStages,
+    unroutedCount: facetUnrouted,
+    slim: slimCandidates,
+  });
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dupOpen, setDupOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -309,6 +315,17 @@ export default function ConsoleClient({
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appSearch, appSchool, appMajor, appStage, appMinGpa, appFavOnly, appCreator, appSort, showUnrouted]);
+
+  const facetsLoaded = useRef(candidateFacets.slim.length > 0 || candidateFacets.majors.length > 0 || candidateFacets.stages.length > 0 || candidateFacets.unroutedCount > 0);
+  useEffect(() => {
+    if (tab !== "applicants" || facetsLoaded.current) return;
+    facetsLoaded.current = true;
+    getCandidateFacets(true)
+      .then((f) => setCandidateFacets(f))
+      .catch(() => {
+        facetsLoaded.current = false;
+      });
+  }, [tab]);
   const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
   const playbookGrouped = playbookSchoolObj?.tier === "satellite" || playbookSchoolObj?.tier === "bonus";
@@ -444,9 +461,10 @@ export default function ConsoleClient({
         {tab === "applicants" && (() => {
           // Rows are filtered/sorted/paginated by the server (loadAppPage); the
           // dropdowns + full-set widgets read the facets/slim list passed in.
-          const distinctMajors = facetMajors;
-          const distinctStages = facetStages;
-          const unroutedCount = facetUnrouted;
+          const distinctMajors = candidateFacets.majors;
+          const distinctStages = candidateFacets.stages;
+          const unroutedCount = candidateFacets.unroutedCount;
+          const slimCandidateRows = candidateFacets.slim;
           const visible = appRows;
           const totalPages = Math.max(1, Math.ceil(appTotal / APP_PAGE_SIZE));
 
@@ -502,7 +520,7 @@ export default function ConsoleClient({
                 </button>
                 {reviewOpen && (
                   <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                    <MatchReview reviews={reviews} candidates={slimCandidates} schools={schools} />
+                    <MatchReview reviews={reviews} candidates={slimCandidateRows} schools={schools} />
                   </div>
                 )}
               </div>
@@ -510,7 +528,7 @@ export default function ConsoleClient({
 
             {/* Duplicate candidates — any source (manual, import, JazzHR) */}
             {adminPlus && (() => {
-              const dupCount = findDuplicateGroups(slimCandidates).length;
+              const dupCount = findDuplicateGroups(slimCandidateRows).length;
               if (dupCount === 0) return null;
               return (
                 <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
@@ -524,7 +542,7 @@ export default function ConsoleClient({
                   </button>
                   {dupOpen && (
                     <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                      <DuplicateReview candidates={slimCandidates} schools={schools} />
+                      <DuplicateReview candidates={slimCandidateRows} schools={schools} />
                     </div>
                   )}
                 </div>
@@ -1096,10 +1114,10 @@ export default function ConsoleClient({
         <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => { setOpenId(null); if (tab === "applicants") loadAppPage(appPage); }} onSaved={() => loadAppPage(appPage)} startTransition={startTransition} superUser={superUser} />
       )}
       {addOpen && (
-        <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setAddOpen(false); loadAppPage(0); }} startTransition={startTransition} />
+        <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(candidateFacets.slim.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidateFacets.slim.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setAddOpen(false); loadAppPage(0); }} startTransition={startTransition} />
       )}
       {bulkOpen && (
-        <BulkImportModal schools={schools} team={team} canAssignPointPerson existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setBulkOpen(false); loadAppPage(0); }} />
+        <BulkImportModal schools={schools} team={team} canAssignPointPerson existingEmails={new Set(candidateFacets.slim.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidateFacets.slim.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setBulkOpen(false); loadAppPage(0); }} />
       )}
       {infoOpen && (
         <ImportInfoModal onClose={() => { setInfoOpen(false); loadAppPage(appPage); }} />

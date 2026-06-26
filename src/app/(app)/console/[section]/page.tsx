@@ -10,7 +10,7 @@ import {
 import ConsoleClient from "../ConsoleClient";
 import AdminSnapshotClient from "../AdminSnapshotClient";
 import { isActive } from "@/lib/stages";
-import { listCandidates, getCandidateFacets } from "../actions";
+import { listCandidates } from "../actions";
 
 // Each route renders one section → only fetch what that section reads.
 export default async function ConsoleSection({ params }: { params: { section: string } }) {
@@ -80,15 +80,13 @@ export default async function ConsoleSection({ params }: { params: { section: st
     need.budget ? serviceDb.from("budget_guidance").select("id, school_id, category, pct").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
   ]);
 
-  // Candidates tab: first page + count + the full-set facets/slim list that the
-  // duplicate review, match review and import dedupe warnings still need.
+  // Candidates tab: first page + count. Full-set facets/slim data hydrate on
+  // the client after paint so the route does not block TTFB on every candidate.
   const PAGE_SIZE = 500;
-  const [candPage, facets] = paginatedList
-    ? await Promise.all([
-        listCandidates({ variant: "console", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" }),
-        getCandidateFacets(true),
-      ])
-    : [{ rows: [] as any[], total: 0 }, { majors: [] as string[], stages: [] as string[], unroutedCount: 0, slim: [] as any[] }];
+  const candPage = paginatedList
+    ? await listCandidates({ variant: "console", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" })
+    : { rows: [] as any[], total: 0 };
+  const facets = { majors: [] as string[], stages: [] as string[], unroutedCount: 0, slim: [] as any[] };
 
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
   const enriched = paginatedList ? candPage.rows : (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));

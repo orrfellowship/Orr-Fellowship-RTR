@@ -9,7 +9,7 @@ import {
   deleteOutreach, deleteConnection, updatePhase, deletePhase,
   requestTaskComplete, confirmTaskComplete, setTaskAssignees,
 } from "./actions";
-import { listCandidates, updateCandidate } from "@/app/(app)/console/actions";
+import { getCandidateFacets, listCandidates, updateCandidate } from "@/app/(app)/console/actions";
 import { phaseOf } from "@/lib/stages";
 import { evaluateCandidate } from "@/lib/triggers";
 import StandingsClient from "@/components/StandingsClient";
@@ -125,6 +125,11 @@ export default function WorkspaceClient({
   const [allTotal, setAllTotal] = useState<number>(allCandidatesTotal ?? allCandidates.length);
   const [allPageNum, setAllPageNum] = useState(0);
   const [allLoading, setAllLoading] = useState(false);
+  const [candidateFacets, setCandidateFacets] = useState({
+    majors: facetMajors,
+    stages: facetStages,
+    slim: slimCandidates,
+  });
   const [openId, setOpenId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
@@ -184,6 +189,17 @@ export default function WorkspaceClient({
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allSearch, allSchool, allMajor, allStage, allMinGpa, allFavOnly, allMineOnly, allSort]);
+
+  const facetsLoaded = useRef(candidateFacets.slim.length > 0 || candidateFacets.majors.length > 0 || candidateFacets.stages.length > 0);
+  useEffect(() => {
+    if (tab !== "all" || facetsLoaded.current) return;
+    facetsLoaded.current = true;
+    getCandidateFacets(true)
+      .then((f) => setCandidateFacets({ majors: f.majors, stages: f.stages, slim: f.slim }))
+      .catch(() => {
+        facetsLoaded.current = false;
+      });
+  }, [tab]);
 
   const PHASE_ORDER_PIPELINE = ["sourced", "contacted", "applied"] as const;
   const PHASE_LABEL: Record<string, string> = { sourced: "Sourced", contacted: "Contacted", applied: "Applied" };
@@ -572,8 +588,8 @@ export default function WorkspaceClient({
         {/* ---- APPLICANTS ---- */}
         {tab === "all" && (() => {
           // Server provides the filtered/sorted page; dropdowns read the facets.
-          const distinctMajors = facetMajors;
-          const distinctStages = facetStages;
+          const distinctMajors = candidateFacets.majors;
+          const distinctStages = candidateFacets.stages;
           const visible = allRows;
           const totalPages = Math.max(1, Math.ceil(allTotal / ALL_PAGE_SIZE));
 
@@ -710,8 +726,8 @@ export default function WorkspaceClient({
           schools={allSchools}
           team={team}
           canAssignPointPerson={canAssign}
-          existingEmails={new Set(slimCandidates.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
-          existingNames={new Set(slimCandidates.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
+          existingEmails={new Set(candidateFacets.slim.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
+          existingNames={new Set(candidateFacets.slim.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
           onClose={() => { setBulkOpen(false); if (tab === "all") loadAllPage(0); }}
         />
       )}

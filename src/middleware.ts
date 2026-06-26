@@ -55,6 +55,7 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // protect everything except static assets and the API sync route's own auth
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Public auth pages do not need the auth gate; app routes still verify on
+  // the server before exposing sensitive data.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|login|auth).*)"],
 };

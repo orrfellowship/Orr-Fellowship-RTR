@@ -8,7 +8,7 @@ import {
   CAND_COLS_STANDINGS, CAND_COLS_WORKSPACE,
 } from "@/lib/queries";
 import WorkspaceClient from "../WorkspaceClient";
-import { listCandidates, getCandidateFacets } from "../../console/actions";
+import { listCandidates } from "../../console/actions";
 
 // slug (URL) → internal tab key used by WorkspaceClient
 const TAB: Record<string, string> = {
@@ -143,15 +143,13 @@ export default async function WorkspaceSection({ params }: { params: { section: 
     budgetGuidance = bg ?? [];
   }
 
-  // Candidates tab: first page + count + facets (distinct Major/Stage values and
-  // a slim all-candidates list for the bulk-import dedupe warnings).
+  // Candidates tab: first page + count. Full-set facets/slim data hydrate on
+  // the client after paint so the route does not block TTFB on every candidate.
   const PAGE_SIZE = 500;
-  const [allPage, allFacets] = paginatedList
-    ? await Promise.all([
-        listCandidates({ variant: "workspace", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" }),
-        getCandidateFacets(true),
-      ])
-    : [{ rows: [] as any[], total: 0, ai: [] as any[] }, { majors: [] as string[], stages: [] as string[], unroutedCount: 0, slim: [] as any[] }];
+  const allPage = paginatedList
+    ? await listCandidates({ variant: "workspace", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" })
+    : { rows: [] as any[], total: 0, ai: [] as any[] };
+  const allFacets = { majors: [] as string[], stages: [] as string[], unroutedCount: 0, slim: [] as any[] };
 
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
   const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
