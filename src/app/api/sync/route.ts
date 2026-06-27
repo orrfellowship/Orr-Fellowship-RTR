@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { isSuper } from "@/lib/types";
 import { mostAdvancedStage, routeToSchoolName } from "@/lib/stages";
 import { fetchAllRows } from "@/lib/queries";
+import { representativeSchoolId } from "@/lib/candidateSchool";
 
 const JAZZ_BASE = "https://api.resumatorapi.com/v1";
 const TARGET_JOB = "job_20260522153804_UPQZOUKTV6TQ5UB5"; // Orr Fellowship 2027 — Early Career Dev Program
@@ -173,10 +174,20 @@ export async function POST(request: NextRequest) {
   //    local data (owner, notes, favorites, outreach, connections) is preserved.
   // Page through every candidate — the matching index must be complete or
   // JazzHR applicants past the 1000th row would be re-created as duplicates.
-  const allCands = await fetchAllRows((from, to) => db.from("candidates").select("id, jazz_id, email, phone, name, school_id").range(from, to));
-  const { data: schoolsData } = await db.from("schools").select("id, name");
+  const allCands = await fetchAllRows((from, to) => db.from("candidates").select("id, jazz_id, email, phone, name, school_id, university_raw").range(from, to));
+  const { data: schoolsData } = await db.from("schools").select("id, name, tier");
+  const schools = schoolsData ?? [];
   const schoolNameById = new Map((schoolsData ?? []).map((s: any) => [s.id, s.name as string]));
   const schoolIdByName = new Map((schoolsData ?? []).map((s: any) => [s.name as string, s.id as string]));
+  const routeSchoolForStorage = (schoolName: string | null) => {
+    if (!schoolName) return null;
+    const matched = schools.find((s: any) => String(s.name).toLowerCase() === schoolName.toLowerCase());
+    if (!matched) return null;
+    if (matched.tier === "satellite" || matched.tier === "bonus") {
+      return representativeSchoolId(schools as any[], matched.tier) ?? matched.id;
+    }
+    return schoolIdByName.get(matched.name) ?? null;
+  };
   const { data: reviewRows } = await db.from("jazz_match_review").select("jazz_applicant_id").eq("status", "pending");
   const reviewExisting = new Set((reviewRows ?? []).map((r: any) => String(r.jazz_applicant_id)));
 
@@ -185,10 +196,12 @@ export async function POST(request: NextRequest) {
   const unlinked: U[] = [];
   for (const c of allCands ?? []) {
     if (c.jazz_id) { linkedByJazz.set(String(c.jazz_id), c.id); continue; }
+    const storedSchool = c.school_id ? schools.find((s: any) => s.id === c.school_id) : null;
+    const storedGroup = storedSchool?.tier === "satellite" || storedSchool?.tier === "bonus";
     unlinked.push({
       id: c.id, email: normEmail(c.email), phone: normPhone(c.phone),
       canon: canonName(c.name), nick: nickKey(c.name),
-      schoolName: c.school_id ? (schoolNameById.get(c.school_id) ?? "") : "",
+      schoolName: storedGroup ? (routeToSchoolName(c.university_raw) ?? c.university_raw ?? "") : c.school_id ? (schoolNameById.get(c.school_id) ?? "") : "",
     });
   }
   const consume = (id: string) => { const i = unlinked.findIndex((u) => u.id === id); if (i >= 0) unlinked.splice(i, 1); };
@@ -221,7 +234,7 @@ export async function POST(request: NextRequest) {
       const m = mapDetail(d);
       const jid = String(m.jazz_id);
       const routedSchool = routeToSchoolName(m.university_raw);
-      const routedSchoolId = routedSchool ? (schoolIdByName.get(routedSchool) ?? null) : null;
+      const routedSchoolId = routeSchoolForStorage(routedSchool);
       const factual = factualFromMapped(m, routedSchoolId);
 
       // a) already linked → refresh factual fields + stage
@@ -294,13 +307,19 @@ export async function PUT(_request: NextRequest) {
     (from, to) => db.from("candidates").select("id, university_raw").is("school_id", null).not("university_raw", "is", null).range(from, to),
   );
 
-  const { data: schools } = await db.from("schools").select("id, name");
-  const schoolMap = new Map((schools ?? []).map((s: any) => [s.name, s.id]));
+  const { data: schools } = await db.from("schools").select("id, name, tier");
+  const schoolRows = schools ?? [];
+  const schoolMap = new Map(schoolRows.map((s: any) => [s.name, s.id]));
 
   let matched = 0, still_unrouted = 0;
   for (const c of unrouted ?? []) {
     const schoolName = routeToSchoolName(c.university_raw);
-    const school_id = schoolName ? schoolMap.get(schoolName) ?? null : null;
+    const matchedSchool = schoolName ? schoolRows.find((s: any) => String(s.name).toLowerCase() === schoolName.toLowerCase()) : null;
+    const school_id = matchedSchool
+      ? matchedSchool.tier === "satellite" || matchedSchool.tier === "bonus"
+        ? representativeSchoolId(schoolRows as any[], matchedSchool.tier) ?? matchedSchool.id
+        : schoolMap.get(matchedSchool.name) ?? null
+      : null;
     if (school_id) {
       await db.from("candidates").update({ school_id }).eq("id", c.id);
       matched++;

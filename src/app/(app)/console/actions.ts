@@ -21,6 +21,7 @@ import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
 import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
+import { representativeSchoolId } from "@/lib/candidateSchool";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -120,21 +121,24 @@ export async function deleteTask(taskId: string) {
   return { ok: true };
 }
 
-// Resolve a school NAME (from one of the routing tables) to its school_id.
-async function schoolIdByName(db: ReturnType<typeof createServiceClient>, name: string | null) {
-  if (!name) return null;
-  const { data } = await db.from("schools").select("id").eq("name", name).maybeSingle();
-  return data?.id ?? null;
-}
-
 // Fallback routing for manually-entered candidates: if no school was chosen but
 // the candidate has a recognizable school email (e.g. @purdue.edu), send them to
-// that school. Returns the school_id to use (possibly the original, possibly null).
-async function routeSchoolIdByEmail(
+// that school. Satellite/bonus domains still route to the grouped tier and keep
+// the specific school name separately.
+async function routeSchoolByEmail(
   db: ReturnType<typeof createServiceClient>, school_id: string | null, email: string | null,
-) {
-  if (school_id) return school_id; // only fill in when the person didn't pick a school
-  return schoolIdByName(db, routeToSchoolNameByEmail(email));
+): Promise<{ school_id: string | null; university_raw: string | null }> {
+  if (school_id) return { school_id, university_raw: null }; // only fill in when the person didn't pick a school
+  const name = routeToSchoolNameByEmail(email);
+  if (!name) return { school_id: null, university_raw: null };
+  const { data: rows } = await db.from("schools").select("id, name, tier");
+  const schools = rows ?? [];
+  const matched = schools.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
+  if (!matched) return { school_id: null, university_raw: null };
+  if (matched.tier === "satellite" || matched.tier === "bonus") {
+    return { school_id: representativeSchoolId(schools as any[], matched.tier) ?? matched.id, university_raw: matched.name };
+  }
+  return { school_id: matched.id, university_raw: null };
 }
 
 export async function addCandidate(data: {
@@ -147,12 +151,14 @@ export async function addCandidate(data: {
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may add
   const db = createServiceClient();
   // No school selected? Route off a school email address if we recognize it.
-  const school_id = await routeSchoolIdByEmail(db, data.school_id, data.email);
+  const routed = await routeSchoolByEmail(db, data.school_id, data.email);
+  const school_id = data.school_id || routed.school_id;
+  const university_raw = data.university_raw ?? routed.university_raw;
   // Only team leads / admins may assign a point person; ignore it from anyone else.
   const point_person_id = canReassign(profile.role) ? (data.point_person_id ?? null) : null;
   // Manually-entered candidates start in the "sourced" phase (stage key "new");
   // JazzHR advances them from there. Respect an explicit stage if one is given.
-  const { error } = await db.from("candidates").insert({ ...data, school_id, point_person_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
+  const { error } = await db.from("candidates").insert({ ...data, school_id, university_raw, point_person_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
   if (error) return { error: error.message };
   revalidatePath("/console");
   revalidatePath("/workspace");
@@ -284,22 +290,36 @@ export async function bulkImportCandidates(
   // Build a name→id map ONCE so email-based routing needs no per-row query. The
   // previous version issued one DB lookup per emailed row, which made big imports
   // crawl (and could time out) — the real cap on import size.
-  const { data: schoolRows } = await db.from("schools").select("id, name");
-  const idByName = new Map<string, string>((schoolRows ?? []).map((s: any) => [s.name, s.id]));
+  const { data: schoolRows } = await db.from("schools").select("id, name, tier");
+  const schools = schoolRows ?? [];
+  const idByName = new Map<string, string>(schools.map((s: any) => [s.name, s.id]));
   const routeByEmail = (email: string | null) => {
     const name = routeToSchoolNameByEmail(email);
-    return name ? idByName.get(name) ?? null : null;
+    if (!name) return { school_id: null as string | null, university_raw: null as string | null };
+    const matched = schools.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
+    if (!matched) return { school_id: null as string | null, university_raw: null as string | null };
+    if (matched.tier === "satellite" || matched.tier === "bonus") {
+      return {
+        school_id: representativeSchoolId(schools as any[], matched.tier) ?? matched.id,
+        university_raw: matched.name as string,
+      };
+    }
+    return { school_id: idByName.get(name) ?? null, university_raw: null as string | null };
   };
 
   // Only team leads / admins may assign point people on import.
   const allowPP = canReassign(profile.role);
-  const prepared = rows.map((r) => ({
-    ...r,
-    // No school chosen for this row? Route off a recognized school email.
-    school_id: r.school_id || routeByEmail(r.email),
-    point_person_id: allowPP ? (r.point_person_id ?? null) : null,
-    stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id,
-  }));
+  const prepared = rows.map((r) => {
+    const routed = r.school_id ? { school_id: r.school_id, university_raw: null } : routeByEmail(r.email);
+    return {
+      ...r,
+      // No school chosen for this row? Route off a recognized school email.
+      school_id: r.school_id || routed.school_id,
+      university_raw: r.university_raw ?? routed.university_raw,
+      point_person_id: allowPP ? (r.point_person_id ?? null) : null,
+      stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id,
+    };
+  });
 
   // Insert in chunks so there's no practical cap on import size — a single giant
   // insert can blow past request/statement limits. If a chunk fails, stop and
@@ -808,7 +828,16 @@ function factualFromSnapshot(m: any, school_id: string | null) {
 }
 
 async function routeSchoolId(db: ReturnType<typeof createServiceClient>, universityRaw: string | null) {
-  return schoolIdByName(db, routeToSchoolName(universityRaw));
+  const name = routeToSchoolName(universityRaw);
+  if (!name) return null;
+  const { data: rows } = await db.from("schools").select("id, name, tier");
+  const schools = rows ?? [];
+  const matched = schools.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
+  if (!matched) return null;
+  if (matched.tier === "satellite" || matched.tier === "bonus") {
+    return representativeSchoolId(schools as any[], matched.tier) ?? matched.id;
+  }
+  return matched.id;
 }
 
 // Approve a name-only match: link the JazzHR applicant to the suspected candidate.

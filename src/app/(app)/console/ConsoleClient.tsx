@@ -24,7 +24,8 @@ import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
 import DuplicateReview, { findDuplicateGroups } from "@/components/DuplicateReview";
-import { phaseOf, routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
+import { phaseOf, routeToSchoolNameByEmail } from "@/lib/stages";
+import { candidateSchoolDisplay, candidateSchoolKey } from "@/lib/candidateSchool";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -124,22 +125,7 @@ function sumGoalsForScope(scope: string, goals: Goal[], schools: School[], field
 }
 
 function overviewSchoolKey(candidate: Pick<Cand, "school_id" | "university_raw">, schools: School[]): string | null {
-  if (!candidate.school_id) return null;
-  const school = schools.find((s) => s.id === candidate.school_id);
-  if (!school || (school.tier !== "satellite" && school.tier !== "bonus")) return candidate.school_id;
-
-  const tierSchools = schools.filter((s) => s.tier === school.tier).sort((a, b) => a.name.localeCompare(b.name));
-  const raw = (candidate.university_raw ?? "").trim();
-  if (raw) {
-    const exact = tierSchools.find((s) => s.name.toLowerCase() === raw.toLowerCase());
-    if (exact) return exact.id;
-    const routed = routeToSchoolName(raw);
-    const routedSchool = routed ? tierSchools.find((s) => s.name.toLowerCase() === routed.toLowerCase()) : null;
-    if (routedSchool) return routedSchool.id;
-  }
-
-  const representative = tierSchools[0];
-  return representative?.id === candidate.school_id ? `tier:${school.tier}` : candidate.school_id;
+  return candidateSchoolKey(candidate, schools);
 }
 
 export default function ConsoleClient({
@@ -466,15 +452,28 @@ export default function ConsoleClient({
                 const core = schools.filter((s) => s.tier === "core").sort(byName);
                 const sat = schools.filter((s) => s.tier === "satellite").sort(byName);
                 const bon = schools.filter((s) => s.tier === "bonus").sort(byName);
+                const rawRows = (tier: string) => {
+                  const byKey = new Map<string, string>();
+                  for (const c of candidates) {
+                    const key = overviewSchoolKey(c, schools);
+                    if (!key?.startsWith(`raw:${tier}:`)) continue;
+                    byKey.set(key, candidateSchoolDisplay(c, schools).specificLabel ?? candidateSchoolDisplay(c, schools).label);
+                  }
+                  return Array.from(byKey, ([key, name]) => ({ key, name })).sort((a, b) => a.name.localeCompare(b.name));
+                };
+                const satRaw = rawRows("satellite");
+                const bonRaw = rawRows("bonus");
                 return (
                   <>
                     {core.map((s) => row(s.id, s.name, "core", [s.id], s.color_primary ?? C.navy2, { logo: s.logo_url }))}
-                    {sat.length > 0 && row("g-sat", "Satellite School", `${sat.length} schools`, [...sat.map((s) => s.id), "tier:satellite"], C.navy2, { expandKey: "satellite" })}
+                    {sat.length > 0 && row("g-sat", "Satellite School", `${sat.length + satRaw.length} schools`, [...sat.map((s) => s.id), "tier:satellite", ...satRaw.map((r) => r.key)], C.navy2, { expandKey: "satellite" })}
                     {obExpand.satellite && row("g-sat-general", "Satellite School", "group-routed", ["tier:satellite"], C.navy2, { indent: true })}
                     {obExpand.satellite && sat.map((s) => row(s.id, s.name, "satellite", [s.id], s.color_primary ?? C.navy2, { logo: s.logo_url, indent: true }))}
-                    {bon.length > 0 && row("g-bon", "Bonus School", `${bon.length} schools`, [...bon.map((s) => s.id), "tier:bonus"], C.navy2, { expandKey: "bonus" })}
+                    {obExpand.satellite && satRaw.map((s) => row(s.key, s.name, "satellite", [s.key], C.navy2, { indent: true }))}
+                    {bon.length > 0 && row("g-bon", "Bonus School", `${bon.length + bonRaw.length} schools`, [...bon.map((s) => s.id), "tier:bonus", ...bonRaw.map((r) => r.key)], C.navy2, { expandKey: "bonus" })}
                     {obExpand.bonus && row("g-bon-general", "Bonus School", "group-routed", ["tier:bonus"], C.navy2, { indent: true })}
                     {obExpand.bonus && bon.map((s) => row(s.id, s.name, "bonus", [s.id], s.color_primary ?? C.navy2, { logo: s.logo_url, indent: true }))}
+                    {obExpand.bonus && bonRaw.map((s) => row(s.key, s.name, "bonus", [s.key], C.navy2, { indent: true }))}
                   </>
                 );
               })()}
@@ -617,7 +616,7 @@ export default function ConsoleClient({
                 <SortHead k="name" label="Candidate" /><SortHead k="school" label="School" /><SortHead k="major" label="Major" /><SortHead k="gpa" label="GPA" /><SortHead k="stage" label="Stage" /><div></div>
               </div>
               {visible.map((c) => {
-                  const schoolName = schools.find((s) => s.id === c.school_id)?.name;
+                  const schoolDisplay = candidateSchoolDisplay(c, schools);
                   return (
                     <div key={c.id} onClick={() => setOpenId(c.id)}
                       style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 1fr 0.6fr 1fr 40px", minWidth: isMobile ? 640 : undefined, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", cursor: "pointer", opacity: c.not_interested ? 0.5 : 1 }}
@@ -632,14 +631,18 @@ export default function ConsoleClient({
                           <select
                             value={schoolOptionValue(schools, c.school_id)}
                             onChange={(e) => { const v = e.target.value || null; reassignSchool(c.id, v).then(() => loadAppPage(appPage)); }}
+                            title={schoolDisplay.label}
                             style={{ fontSize: 12, fontWeight: 600, color: c.school_id ? C.navy2 : C.orange, border: `1px solid ${c.school_id ? C.line : C.orange}`, borderRadius: 7, padding: "4px 6px", background: "#fff", maxWidth: "100%", cursor: "pointer" }}>
                             <option value="">— Unrouted —</option>
                             {schoolSelectOptions(schools).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
                         ) : (
-                          schoolName
-                            ? <span style={{ color: C.navy2, fontWeight: 600 }}>{schoolName}</span>
-                            : <span style={{ color: C.orange, fontStyle: "italic", fontSize: 12 }}>{c.university_raw ?? "Unrouted"}</span>
+                          !schoolDisplay.isUnrouted
+                            ? <span style={{ color: C.navy2, fontWeight: 600 }}>{schoolDisplay.label}</span>
+                            : <span style={{ color: C.orange, fontStyle: "italic", fontSize: 12 }}>{schoolDisplay.label}</span>
+                        )}
+                        {adminPlus && schoolDisplay.isGrouped && schoolDisplay.specificLabel && (
+                          <div style={{ marginTop: 3, fontSize: 11, color: C.grayMute, fontWeight: 500 }}>{schoolDisplay.specificLabel}</div>
                         )}
                       </div>
                       <div style={{ fontSize: 13.5 }}>{c.area_of_study}</div>
@@ -1232,6 +1235,7 @@ function CandidateDrawer({ c, profile, team, schools, onClose, onSaved, startTra
   const [delOpen, setDelOpen] = useState(false);
   const [delText, setDelText] = useState("");
   const QUICK = ["Called — left voicemail", "Emailed", "Met in person", "Scheduled follow-up"];
+  const schoolDisplay = candidateSchoolDisplay(c, schools);
 
   // ---- Edit details ----
   const [editing, setEditing] = useState(false);
@@ -1329,7 +1333,7 @@ function CandidateDrawer({ c, profile, team, schools, onClose, onSaved, startTra
           {editing ? (
             <EditCandidateForm edit={edit} setEf={setEf} schools={schools} saving={saving} onSave={saveEdit} onCancel={() => setEditing(false)} />
           ) : (
-            ([["Email", c.email], ["GPA", c.gpa], ["Grad Date", c.grad_date], ["University", c.university_raw], ["Added by", c.created_by ? (team.find((t) => t.id === c.created_by)?.full_name ?? "Team member") : (c.source === "jazzhr" ? "JazzHR sync" : "—")]] as [string, string | null][]).map(([k, v]) => (
+            ([["Email", c.email], ["GPA", c.gpa], ["Grad Date", c.grad_date], ["School", schoolDisplay.label], ["University", schoolDisplay.isGrouped ? null : c.university_raw], ["Added by", c.created_by ? (team.find((t) => t.id === c.created_by)?.full_name ?? "Team member") : (c.source === "jazzhr" ? "JazzHR sync" : "—")]] as [string, string | null][]).map(([k, v]) => (
               <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
                 <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span>
                 <span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>

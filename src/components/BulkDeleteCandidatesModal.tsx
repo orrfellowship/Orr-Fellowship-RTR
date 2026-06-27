@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { listCandidates, bulkDeleteCandidates } from "@/app/(app)/console/actions";
+import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 
 // Admin tool to clean up after a bad import: search candidates by name, select
 // the ones to remove, and delete them in bulk. Matches by name/email/major.
@@ -13,10 +14,10 @@ const C = {
 };
 const HEAD = "'Cabin', sans-serif";
 
-type Row = { id: string; name: string; email: string | null; school_id: string | null; stage: string | null };
+type Row = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null };
 
 export default function BulkDeleteCandidatesModal({ schools, onClose }: {
-  schools: { id: string; name: string }[];
+  schools: { id: string; name: string; tier?: string | null }[];
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -28,7 +29,7 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
-  const schoolName = (id: string | null) => (id ? (schools.find((s) => s.id === id)?.name ?? "—") : "Unrouted");
+  const schoolName = (row: Row) => candidateSchoolDisplay(row, schools).label;
 
   // Load matches (debounced). Empty query lists the first batch alphabetically.
   const mounted = useRef(false);
@@ -111,7 +112,7 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
                 <input type="checkbox" checked={sel} onChange={() => toggle(r.id)} style={{ accentColor: C.orange, width: 16, height: 16, flexShrink: 0 }} />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{r.name}</span>
-                  <span style={{ fontSize: 12, color: C.grayMute, marginLeft: 8 }}>{[r.email, schoolName(r.school_id), r.stage].filter(Boolean).join(" · ")}</span>
+                  <span style={{ fontSize: 12, color: C.grayMute, marginLeft: 8 }}>{[r.email, schoolName(r), r.stage].filter(Boolean).join(" · ")}</span>
                 </span>
               </label>
             );

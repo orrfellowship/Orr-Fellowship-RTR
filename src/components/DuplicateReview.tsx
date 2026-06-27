@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteCandidate } from "@/app/(app)/console/actions";
+import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 
 // Finds candidate records that look like duplicates of each other — regardless
 // of source (manual entry, bulk import, or JazzHR) — by matching on email or on
@@ -15,7 +16,7 @@ const C = {
 };
 const HEAD = "'Cabin', sans-serif";
 
-export type DupCand = { id: string; name: string; email: string | null; school_id: string | null; stage: string | null; source: string | null };
+export type DupCand = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null; source: string | null };
 
 const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
 
@@ -41,12 +42,12 @@ export function findDuplicateGroups(candidates: DupCand[]): { reason: "email" | 
 
 export default function DuplicateReview({ candidates, schools }: {
   candidates: DupCand[];
-  schools: { id: string; name: string }[];
+  schools: { id: string; name: string; tier?: string | null }[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const groups = useMemo(() => findDuplicateGroups(candidates), [candidates]);
-  const schoolName = (id: string | null) => (id ? (schools.find((s) => s.id === id)?.name ?? "—") : "Unrouted");
+  const schoolName = (c: DupCand) => candidateSchoolDisplay(c, schools).label;
 
   const del = (c: DupCand) => {
     if (!confirm(`Delete "${c.name}"? This removes the record and its outreach/intros.`)) return;
@@ -70,7 +71,7 @@ export default function DuplicateReview({ candidates, schools }: {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: C.gray }}>{c.name}</div>
                 <div style={{ fontSize: 12, color: C.grayMute }}>
-                  {[c.email, schoolName(c.school_id), c.stage, c.source === "jazzhr" ? "JazzHR" : c.source === "user_created" ? "Manual" : null].filter(Boolean).join(" · ")}
+                  {[c.email, schoolName(c), c.stage, c.source === "jazzhr" ? "JazzHR" : c.source === "user_created" ? "Manual" : null].filter(Boolean).join(" · ")}
                 </div>
               </div>
               <button onClick={() => del(c)} style={{ border: `1px solid ${C.orange}`, background: "#fff", color: C.orange, fontWeight: 700, fontSize: 12, padding: "6px 12px", borderRadius: 8, cursor: "pointer", flexShrink: 0 }}>Delete</button>

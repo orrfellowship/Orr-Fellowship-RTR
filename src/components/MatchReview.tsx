@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { approveJazzMatch, rejectJazzMatch } from "@/app/(app)/console/actions";
 import { routeToSchoolName } from "@/lib/stages";
+import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", orange: "#DD5434", gold: "#C9A227",
@@ -16,9 +17,10 @@ type Review = { id: string; jazz_snapshot: any; candidate_id: string | null; rea
 // snapshot). Kept minimal so a slim candidate projection can be passed in.
 type Cand = {
   id: string; name: string; email: string | null; school_id: string | null;
+  university_raw?: string | null;
   stage: string | null; area_of_study: string | null; gpa: string | null;
 };
-type SchoolLite = { id: string; name: string };
+type SchoolLite = { id: string; name: string; tier?: string | null };
 
 // Side-by-side review of JazzHR applicants that look like an existing sourced
 // candidate but couldn't be auto-linked (different email, nickname, etc.).
@@ -30,7 +32,7 @@ export default function MatchReview({ reviews, candidates, schools, compact = fa
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const schoolName = (id: string | null) => (id ? schools.find((s) => s.id === id)?.name ?? null : null);
+  const schoolName = (cand: Cand | null) => cand ? candidateSchoolDisplay(cand, schools).label : null;
 
   const act = (id: string, fn: (id: string) => Promise<any>) => {
     setBusyId(id);
@@ -56,7 +58,7 @@ export default function MatchReview({ reviews, candidates, schools, compact = fa
         const rows: { label: string; jazz: string | null; cand: string | null }[] = [
           { label: "Name",   jazz: snap.name ?? null,           cand: cand?.name ?? null },
           { label: "Email",  jazz: snap.email ?? null,          cand: cand?.email ?? null },
-          { label: "School", jazz: jazzSchool,                  cand: schoolName(cand?.school_id ?? null) },
+          { label: "School", jazz: jazzSchool,                  cand: schoolName(cand) },
           { label: "Major",  jazz: snap.area_of_study ?? null,  cand: cand?.area_of_study ?? null },
           { label: "GPA",    jazz: snap.gpa ?? null,            cand: cand?.gpa ?? null },
           { label: "Stage",  jazz: snap.stage ?? null,          cand: cand?.stage ?? null },

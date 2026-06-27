@@ -22,6 +22,7 @@ import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
 import BudgetPanel, { type BudgetEntry, type Guidance } from "@/components/BudgetPanel";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
+import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -32,7 +33,7 @@ const C = {
 const HEAD = "'Cabin', sans-serif";
 
 type Cand = {
-  id: string; jazz_id: string | null; name: string; email: string | null; stage: string | null;
+  id: string; jazz_id: string | null; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null;
   gpa: string | null; area_of_study: string | null; linkedin: string | null;
   resume_link: string | null; point_person_id: string | null;
   not_interested: boolean; is_favorite: boolean;
@@ -40,7 +41,7 @@ type Cand = {
 };
 type School      = { id: string; name: string; color_primary: string | null; logo_url: string | null };
 type AllSchool   = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
-type AllCand     = { id: string; name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; jazz_id: string | null; linkedin: string | null; point_person_id: string | null; not_interested: boolean; resume_link: string | null; is_favorite: boolean };
+type AllCand     = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; jazz_id: string | null; linkedin: string | null; point_person_id: string | null; not_interested: boolean; resume_link: string | null; is_favorite: boolean };
 type AllGoal     = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 type TeamMember  = { id: string; full_name: string; role?: string | null };
 type Completion  = { profile_id: string; state: string; updated_at?: string };
@@ -667,6 +668,7 @@ export default function WorkspaceClient({
                 {visible.map((c) => {
                   const sc = allSchools.find((s) => s.id === c.school_id);
                   const schoolAccent = sc?.color_primary ?? C.navy2;
+                  const schoolDisplay = candidateSchoolDisplay(c, allSchools);
                   const mine = c.point_person_id === profile.id;
                   return (
                     <div key={c.id} onClick={() => setOpenId(c.id)}
@@ -680,7 +682,7 @@ export default function WorkspaceClient({
                         </div>
                         <div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div>
                       </div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: schoolAccent }}>{sc?.name ?? <span style={{ color: C.grayMute, fontStyle: "italic" }}>Unrouted</span>}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: schoolDisplay.isUnrouted ? C.grayMute : schoolAccent, fontStyle: schoolDisplay.isUnrouted ? "italic" : "normal" }}>{schoolDisplay.label}</div>
                       <div style={{ fontSize: 13 }}>{c.area_of_study ?? "—"}</div>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>{c.gpa ?? "—"}</div>
                       <div><StagePill stage={c.stage} /></div>
@@ -716,7 +718,7 @@ export default function WorkspaceClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} allProfiles={allProfiles} onClose={() => { setOpenId(null); if (tab === "all") loadAllPage(allPageNum); }} onSaved={() => { if (tab === "all") loadAllPage(allPageNum); }} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
+        <CandidateDrawer c={open} canEdit={openCanEdit} profile={profile} team={team} schools={allSchools} allProfiles={allProfiles} onClose={() => { setOpenId(null); if (tab === "all") loadAllPage(allPageNum); }} onSaved={() => { if (tab === "all") loadAllPage(allPageNum); }} startTransition={startTransition} onResume={(jazzId, name) => setResumeFor({ jazzId, name })} />
       )}
       {resumeFor && (
         <ResumeModal jazzId={resumeFor.jazzId} name={resumeFor.name} onClose={() => setResumeFor(null)} />
@@ -1266,8 +1268,9 @@ function TaskRow({ task: t, phase, canEdit, team, profile, noteOpen, onToggleNot
 type Connection = { id: string; fellow_id: string; name: string; relationship: string; tagged_profile_id?: string | null };
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
-function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, onSaved, startTransition, onResume }: {
+function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onClose, onSaved, startTransition, onResume }: {
   c: Cand; canEdit: boolean; profile: Profile; team: TeamMember[];
+  schools: AllSchool[];
   allProfiles: { id: string; full_name: string }[];
   onClose: () => void; onSaved?: () => void; startTransition: (cb: () => void) => void;
   onResume: (jazzId: string, name: string) => void;
@@ -1296,6 +1299,7 @@ function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, onSa
   const [tagId, setTagId] = useState<string | null>(null); // optional person to tag on a warm intro
   const profileName = (id: string | null) => (id === profile.id ? "You" : allProfiles.find((p) => p.id === id)?.full_name ?? "Someone");
   const QUICK = ["Called — left voicemail", "Emailed", "Met in person", "Scheduled follow-up"];
+  const schoolDisplay = schools.length ? candidateSchoolDisplay(c, schools) : null;
 
   useEffect(() => {
     let active = true;
@@ -1385,7 +1389,7 @@ function CandidateDrawer({ c, canEdit, profile, team, allProfiles, onClose, onSa
             </div>
           ) : (
             <>
-              {[["Email", c.email], ["GPA", c.gpa]].map(([k, v]) => (
+              {[["Email", c.email], ...(schoolDisplay ? [["School", schoolDisplay.label] as [string, string]] : []), ["GPA", c.gpa]].map(([k, v]) => (
                 <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
                   <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span><span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>
                 </div>

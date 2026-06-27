@@ -96,6 +96,9 @@ export const SCHOOL_MATCH: SchoolMatch[] = [
   { school_name: "Indiana State", match: ["indiana state university", "indiana state", "isu terre haute"] },
   { school_name: "USI", match: ["university of southern indiana", "usi", "southern indiana"] },
   { school_name: "UIndy", match: ["university of indianapolis", "uindy"] },
+  { school_name: "University of Cincinnati", match: ["university of cincinnati", "cincinnati university", "cincinnati"] },
+  { school_name: "Xavier", match: ["xavier university", "xavier"] },
+  { school_name: "Dayton", match: ["university of dayton", "dayton"] },
   { school_name: "Ivy Tech", match: ["ivy tech community college", "ivy tech"] },
   { school_name: "Butler", match: ["butler university", "butler"] },
   { school_name: "Marian", match: ["marian university", "marian"] },
@@ -113,6 +116,11 @@ export const SCHOOL_MATCH: SchoolMatch[] = [
   { school_name: "Miami of Ohio", match: ["miami university ohio", "miami university", "miami oh", "miami (ohio)"] },
   { school_name: "Trine", match: ["trine university", "trine"] },
   { school_name: "Denison", match: ["denison university", "denison"] },
+  { school_name: "Wash U (St Louis)", match: ["washington university in saint louis", "washington university saint louis", "wash u saint louis", "wash u st louis", "washu", "wash u"] },
+  { school_name: "St. Louis University", match: ["saint louis university", "st louis university", "slu"] },
+  { school_name: "Huntington", match: ["huntington university", "huntington"] },
+  { school_name: "Bethel", match: ["bethel university", "bethel college", "bethel"] },
+  { school_name: "Grace College", match: ["grace college", "grace"] },
   { school_name: "IWU", match: ["indiana wesleyan university", "indiana wesleyan", "iwu"] },
 ];
 
@@ -157,6 +165,9 @@ export const SCHOOL_EMAIL_DOMAINS: SchoolEmailMatch[] = [
   { school_name: "Indiana State", domains: ["indstate.edu", "sycamores.indstate.edu"] },
   { school_name: "USI", domains: ["usi.edu", "eagles.usi.edu"] },
   { school_name: "UIndy", domains: ["uindy.edu"] },
+  { school_name: "University of Cincinnati", domains: ["uc.edu", "mail.uc.edu"] },
+  { school_name: "Xavier", domains: ["xavier.edu"] },
+  { school_name: "Dayton", domains: ["udayton.edu"] },
   { school_name: "Ivy Tech", domains: ["ivytech.edu"] },
   { school_name: "Butler", domains: ["butler.edu"] },
   { school_name: "Marian", domains: ["marian.edu"] },
@@ -174,6 +185,11 @@ export const SCHOOL_EMAIL_DOMAINS: SchoolEmailMatch[] = [
   { school_name: "Miami of Ohio", domains: ["miamioh.edu"] },
   { school_name: "Trine", domains: ["trine.edu"] },
   { school_name: "Denison", domains: ["denison.edu"] },
+  { school_name: "Wash U (St Louis)", domains: ["wustl.edu"] },
+  { school_name: "St. Louis University", domains: ["slu.edu"] },
+  { school_name: "Huntington", domains: ["huntington.edu"] },
+  { school_name: "Bethel", domains: ["betheluniversity.edu"] },
+  { school_name: "Grace College", domains: ["grace.edu"] },
   { school_name: "IWU", domains: ["indwes.edu"] },
 ];
 
@@ -194,9 +210,9 @@ export function routeToSchoolNameByEmail(email: string | null): string | null {
 export type SchoolLite = { id: string; name: string; tier?: string | null };
 
 // Resolve a typed/selected school name to a school_id for candidate entry.
-// Core/Satellite matches map to that school; everything else — other tiers, or a
-// school not in our list at all (e.g. an out-of-state university like Kentucky) —
-// is binned into the Bonus group, keeping the raw text in university_raw.
+// Core matches map to that school. Satellite/Bonus matches map to the tier's
+// representative row and keep the typed school in university_raw, so ownership is
+// grouped first while the person's actual school still displays second.
 export function resolveCandidateSchool(
   typed: string,
   schools: SchoolLite[],
@@ -204,7 +220,7 @@ export function resolveCandidateSchool(
   const t = (typed ?? "").trim();
   if (!t) return { school_id: null, university_raw: null };
   const lc = t.toLowerCase();
-  const isCoreOrSat = (s: SchoolLite) => s.tier === "core" || s.tier === "satellite";
+  const isGrouped = (s: SchoolLite) => s.tier === "satellite" || s.tier === "bonus";
   const firstByTier = (tier: string) => schools.filter((s) => s.tier === tier).sort((a, b) => a.name.localeCompare(b.name))[0];
 
   if (lc === "satellite" || lc === "satellite school" || lc === "satellite schools") {
@@ -215,15 +231,17 @@ export function resolveCandidateSchool(
   }
 
   const exact = schools.find((s) => s.name.toLowerCase() === lc);
-  if (exact && isCoreOrSat(exact)) return { school_id: exact.id, university_raw: null };
+  if (exact?.tier === "core") return { school_id: exact.id, university_raw: null };
+  if (exact?.tier === "satellite" || exact?.tier === "bonus") return { school_id: firstByTier(exact.tier)?.id ?? exact.id, university_raw: t };
   if (!exact) {
     const routed = routeToSchoolName(t);
     if (routed) {
       const rs = schools.find((s) => s.name.toLowerCase() === routed.toLowerCase());
-      if (rs && isCoreOrSat(rs)) return { school_id: rs.id, university_raw: null };
+      if (rs?.tier === "core") return { school_id: rs.id, university_raw: null };
+      if (rs?.tier === "satellite" || rs?.tier === "bonus") return { school_id: firstByTier(rs.tier)?.id ?? rs.id, university_raw: t };
     }
   }
-  // Not Core/Satellite (or unknown) → Bonus group; keep what they typed.
+  // Not Core (or unknown) → Bonus group; keep what they typed.
   const bonus = firstByTier("bonus");
   return { school_id: bonus?.id ?? null, university_raw: t };
 }

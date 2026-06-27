@@ -39,7 +39,7 @@ export async function fetchAllRows<T = any>(
 export const CAND_COLS_STANDINGS = "id, school_id, stage";
 // Full set the applicants/board views render.
 export const CAND_COLS_WORKSPACE =
-  "id, name, email, school_id, stage, gpa, area_of_study, jazz_id, linkedin, point_person_id, not_interested, resume_link, source, created_by";
+  "id, name, email, school_id, stage, gpa, area_of_study, university_raw, jazz_id, linkedin, point_person_id, not_interested, resume_link, source, created_by";
 export const CAND_COLS_CONSOLE =
   "id, jazz_id, name, email, school_id, stage, gpa, area_of_study, university_raw, linkedin, resume_link, point_person_id, not_interested, grad_date, source, created_by";
 

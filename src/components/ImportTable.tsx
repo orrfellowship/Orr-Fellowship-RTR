@@ -15,6 +15,12 @@ const C = {
   orange: "#E8743B", good: "#2E9E6B",
 };
 const HEAD = "'Cabin', sans-serif";
+const BONUS_SCHOOL_SUGGESTIONS = [
+  "University of Indianapolis", "University of Cincinnati", "Xavier", "Trine",
+  "Dayton", "Valpo", "Hanover", "Franklin College", "Anderson", "Denison",
+  "Wash U (St Louis)", "St. Louis University", "Rose Hulman", "Huntington",
+  "Bethel", "Manchester", "Grace College", "Earlham",
+];
 
 // Stage, GPA and major are intentionally NOT imported here — those flow in from
 // JazzHR. We seed name, email, school, LinkedIn, and point person.
@@ -165,6 +171,7 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
       <datalist id="import-schools">
         {schools.some((s) => s.tier === "satellite") && <option value="Satellite School" />}
         {schools.some((s) => s.tier === "bonus") && <option value="Bonus School" />}
+        {schools.some((s) => s.tier === "bonus") && BONUS_SCHOOL_SUGGESTIONS.map((name) => <option key={`bonus-${name}`} value={name} />)}
         {schools.map((s) => <option key={s.id} value={s.name} />)}
       </datalist>
       {showPP && <datalist id="import-people">{team.map((m) => <option key={m.id} value={m.full_name} />)}</datalist>}
