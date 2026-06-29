@@ -29,7 +29,7 @@ function Tooltip({ text, children }: { text: string; children: React.ReactNode }
           position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
           marginBottom: 6, zIndex: 60, background: C.navy, color: "#fff", fontSize: 11,
           fontFamily: BODY, borderRadius: 8, padding: "8px 12px",
-          whiteSpace: "normal", overflowWrap: "break-word", lineHeight: 1.4, textAlign: "left",
+          whiteSpace: "pre-wrap", overflowWrap: "break-word", lineHeight: 1.4, textAlign: "left",
           boxShadow: "0 4px 16px rgba(0,0,0,.25)", pointerEvents: "none",
           width: "max-content", maxWidth: 240,
         } as React.CSSProperties}>
@@ -297,7 +297,7 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
           tooltip="Schools below 50% to goal with active pipeline candidates." />
         <SummaryCard label="Top Performer" value={topSchool?.short ?? "—"} color={C.navy}
           sub={topSchool ? `${topSchool.orrScore} Orr Score` : undefined}
-          tooltip="School with the highest Orr Score (50% goal attainment + 35% yield + 15% depth)." />
+          tooltip={"Highest Orr Score. It blends three things:\n\n• Goal attainment (50%): how close the school is to its sourced + applied goals (each capped at 100%).\n\n• Yield (35%): applied ÷ sourced — the share of sourced candidates who went on to apply.\n\n• Depth (15%): how far the school's active candidates have advanced through the pipeline on average (sourced → contacted → applied → finalist → fellow)."} />
       </div>
 
       {/* Sub-tabs */}
