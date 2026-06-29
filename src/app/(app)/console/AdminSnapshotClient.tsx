@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { LifeBuoy, Link2, ChevronDown, ChevronRight, CheckCircle2 } from "lucide-react";
-import { setCandidateLinkedin, resolveHelpRequest } from "./actions";
+import { LifeBuoy, Link2, ChevronDown, ChevronRight, CheckCircle2, Star } from "lucide-react";
+import { setCandidateLinkedin, resolveHelpRequest, resolveDirectPlacement } from "./actions";
 
 const C = {
   navy: "#11123E", orange: "#DD5434", gray: "#303333", grayMute: "#6E7385",
@@ -13,6 +13,7 @@ const HEAD = "'Cabin', sans-serif";
 
 export type HelpRequest = { id: string; title: string; body: string | null; dedupeKey: string | null; created_at: string };
 export type MissingLinkedinCand = { id: string; name: string; email: string | null; school: string | null; area_of_study: string | null; gpa: string | null };
+export type DirectPlacementCand = { id: string; name: string; email: string | null; school: string | null; area_of_study: string | null; gpa: string | null; flaggedBy: string; flaggedAt: string | null };
 
 function timeAgo(iso: string): string {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -22,19 +23,46 @@ function timeAgo(iso: string): string {
   const d = Math.floor(h / 24); return d === 1 ? "yesterday" : `${d}d ago`;
 }
 
-export default function AdminSnapshotClient({ helpRequests, missingLinkedin }: { helpRequests: HelpRequest[]; missingLinkedin: MissingLinkedinCand[] }) {
+export default function AdminSnapshotClient({ helpRequests, missingLinkedin, directPlacement = [], isSuper = false }: {
+  helpRequests: HelpRequest[];
+  missingLinkedin: MissingLinkedinCand[];
+  directPlacement?: DirectPlacementCand[];
+  isSuper?: boolean;
+}) {
   const [deckOpen, setDeckOpen] = useState(false);
+  // Category filter: "all" shows every category (collapsed); picking one shows
+  // only that category, expanded — so the snapshot never opens as a long flood.
+  const [filter, setFilter] = useState<string>("all");
+
+  const cats = [
+    ...(isSuper ? [{ id: "dpp", label: "Direct Placement Potential", count: directPlacement.length }] : []),
+    { id: "help", label: "Help requests", count: helpRequests.length },
+    { id: "linkedin", label: "Missing LinkedIn", count: missingLinkedin.length },
+  ];
+  const total = cats.reduce((s, c) => s + c.count, 0);
+  const show = (id: string) => filter === "all" || filter === id;
+  const single = filter !== "all"; // a specific category is selected → expand it
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: "30px 28px 80px" }}>
-      <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Weekly Snapshot</h1>
-      <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
-        {helpRequests.length + missingLinkedin.length === 0 ? "You're all caught up." : "Tasks needing your attention, grouped by type."}
-      </p>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Weekly Snapshot</h1>
+          <p style={{ color: C.grayMute, margin: "4px 0 0" }}>
+            {total === 0 ? "You're all caught up." : "Tasks needing your attention, grouped by type."}
+          </p>
+        </div>
+        <select value={filter} onChange={(e) => setFilter(e.target.value)}
+          style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 13.5, background: "#fff", color: C.navy, fontWeight: 700, cursor: "pointer", marginTop: 6 }}>
+          <option value="all">All categories</option>
+          {cats.map((c) => <option key={c.id} value={c.id}>{c.label} ({c.count})</option>)}
+        </select>
+      </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 24 }}>
-        <HelpRequestsCategory requests={helpRequests} />
-        <MissingLinkedinCategory count={missingLinkedin.length} onOpen={() => setDeckOpen(true)} />
+      <div key={filter} style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 24 }}>
+        {isSuper && show("dpp") && <DirectPlacementCategory candidates={directPlacement} defaultOpen={single} />}
+        {show("help") && <HelpRequestsCategory requests={helpRequests} defaultOpen={single} />}
+        {show("linkedin") && <MissingLinkedinCategory count={missingLinkedin.length} onOpen={() => setDeckOpen(true)} defaultOpen={single} />}
       </div>
 
       {deckOpen && <LinkedinDeck candidates={missingLinkedin} onClose={() => setDeckOpen(false)} />}
@@ -61,7 +89,47 @@ function CategoryCard({ icon, title, count, tone, defaultOpen, children }: {
   );
 }
 
-function HelpRequestsCategory({ requests }: { requests: HelpRequest[] }) {
+// Super-Admin-only queue: candidates a team lead flagged as Direct Placement
+// Potential. Resolving unflags the candidate and clears every super admin's copy.
+function DirectPlacementCategory({ candidates, defaultOpen }: { candidates: DirectPlacementCand[]; defaultOpen?: boolean }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [resolving, setResolving] = useState<string | null>(null);
+
+  const resolve = (id: string) => {
+    setResolving(id);
+    startTransition(async () => {
+      await resolveDirectPlacement(id);
+      router.refresh();
+    });
+  };
+
+  return (
+    <CategoryCard icon={<Star size={18} />} title="Direct Placement Potential" count={candidates.length} tone={C.orange} defaultOpen={defaultOpen}>
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {candidates.map((c) => (
+          <div key={c.id} style={{ display: "flex", gap: 12, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "flex-start" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: C.gray }}>{c.name}</div>
+              <div style={{ fontSize: 12.5, color: C.grayMute, marginTop: 2 }}>
+                {[c.school, c.area_of_study, c.gpa ? `GPA ${c.gpa}` : null].filter(Boolean).join(" · ") || c.email}
+              </div>
+              <div style={{ fontSize: 11, color: "#A0A6B8", marginTop: 4 }}>
+                Flagged by {c.flaggedBy}{c.flaggedAt ? ` · ${timeAgo(c.flaggedAt)}` : ""}
+              </div>
+            </div>
+            <button onClick={() => resolve(c.id)} disabled={pending && resolving === c.id}
+              style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, border: `1px solid ${C.line}`, background: "#fff", color: C.good, fontWeight: 700, fontSize: 12.5, padding: "7px 12px", borderRadius: 8, cursor: "pointer" }}>
+              <CheckCircle2 size={14} /> {pending && resolving === c.id ? "…" : "Resolve"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </CategoryCard>
+  );
+}
+
+function HelpRequestsCategory({ requests, defaultOpen }: { requests: HelpRequest[]; defaultOpen?: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [resolving, setResolving] = useState<string | null>(null);
@@ -76,7 +144,7 @@ function HelpRequestsCategory({ requests }: { requests: HelpRequest[] }) {
   };
 
   return (
-    <CategoryCard icon={<LifeBuoy size={18} />} title="Help requests" count={requests.length} tone={C.orange} defaultOpen>
+    <CategoryCard icon={<LifeBuoy size={18} />} title="Help requests" count={requests.length} tone={C.orange} defaultOpen={defaultOpen ?? true}>
       <div style={{ display: "flex", flexDirection: "column" }}>
         {requests.map((r) => (
           <div key={r.id} style={{ display: "flex", gap: 12, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "flex-start" }}>
@@ -96,9 +164,9 @@ function HelpRequestsCategory({ requests }: { requests: HelpRequest[] }) {
   );
 }
 
-function MissingLinkedinCategory({ count, onOpen }: { count: number; onOpen: () => void }) {
+function MissingLinkedinCategory({ count, onOpen, defaultOpen }: { count: number; onOpen: () => void; defaultOpen?: boolean }) {
   return (
-    <CategoryCard icon={<Link2 size={18} />} title="Missing LinkedIn" count={count} tone={C.navy}>
+    <CategoryCard icon={<Link2 size={18} />} title="Missing LinkedIn" count={count} tone={C.navy} defaultOpen={defaultOpen}>
       <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div style={{ fontSize: 13, color: C.grayMute }}>{count} active candidate{count === 1 ? "" : "s"} need a LinkedIn URL added.</div>
         <button onClick={onOpen}

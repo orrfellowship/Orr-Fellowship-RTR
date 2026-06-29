@@ -791,6 +791,28 @@ export async function resolveHelpRequest(dedupeKey: string) {
   return { ok: true };
 }
 
+// Super Admin clears a Direct Placement Potential item from their snapshot:
+// unflag the candidate and supersede the related notifications so they drop off
+// every Super Admin's bell + queue. Super-admin only — it's their queue.
+export async function resolveDirectPlacement(candidateId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { error } = await db
+    .from("candidates")
+    .update({ direct_placement: false, direct_placement_by: null, direct_placement_at: null })
+    .eq("id", candidateId);
+  if (error) return { error: error.message };
+  await db
+    .from("notifications")
+    .update({ superseded: true })
+    .eq("type", "direct_placement")
+    .eq("candidate_id", candidateId);
+  revalidatePath("/console/snapshot");
+  return { ok: true };
+}
+
 export async function bulkInviteUsers(
   rows: { email: string; full_name: string; role: string; school_id: string | null }[]
 ) {

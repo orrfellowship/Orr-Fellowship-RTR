@@ -27,10 +27,11 @@ function Tooltip({ text, children }: { text: string; children: React.ReactNode }
       {show && (
         <span style={{
           position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
-          marginBottom: 6, zIndex: 60, background: C.navy, color: "#fff", fontSize: 10,
-          fontFamily: BODY, borderRadius: 8, padding: "6px 10px", whiteSpace: "nowrap",
+          marginBottom: 6, zIndex: 60, background: C.navy, color: "#fff", fontSize: 11,
+          fontFamily: BODY, borderRadius: 8, padding: "8px 12px",
+          whiteSpace: "normal", overflowWrap: "break-word", lineHeight: 1.4, textAlign: "left",
           boxShadow: "0 4px 16px rgba(0,0,0,.25)", pointerEvents: "none",
-          maxWidth: 220, whiteSpaceCollapse: "preserve" as any,
+          width: "max-content", maxWidth: 240,
         } as React.CSSProperties}>
           {text}
           <span style={{

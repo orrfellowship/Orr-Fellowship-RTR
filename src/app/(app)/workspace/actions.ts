@@ -6,8 +6,14 @@ import { getCurrentProfile, isPreviewing } from "@/lib/auth";
 import { canEditPlaybook, canEditEvents, canReassign, isAdminPlus } from "@/lib/types";
 import { queueNotification, supersedePending } from "@/lib/notify";
 import { getTierSchoolIds } from "@/lib/queries";
+import { sendEmail, emailLayout } from "@/lib/email";
 
 const CLAIM_DELAY_MS = 30 * 60 * 1000;
+
+function siteUrl() {
+  return process.env.NEXT_PUBLIC_SITE_URL
+    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+}
 type CalendarEventType = "attend" | "info" | "deadline";
 
 // Toggle a favorite for the current user (favorites table is per-user via RLS).
@@ -37,6 +43,79 @@ export async function setNotInterested(candidateId: string, value: boolean) {
   if (error) return { error: error.message };
   revalidatePath("/workspace");
   return { ok: true };
+}
+
+// Team leads (and only team leads) flag a candidate as a "Direct Placement
+// Potential". This sets the candidate flag, then immediately notifies every
+// active Super Admin — in-app bell + email — and the flagged candidate surfaces
+// on the Super Admin Weekly Snapshot action queue (see resolveDirectPlacement).
+// Super Admins clear it from the snapshot, not from here.
+export async function flagDirectPlacement(candidateId: string) {
+  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated" };
+  if (profile.role !== "team_lead") return { error: "Only team leads can flag a candidate for direct placement." };
+
+  const db = createServiceClient();
+  const { data: cand } = await db
+    .from("candidates")
+    .select("id, name, direct_placement")
+    .eq("id", candidateId)
+    .maybeSingle();
+  if (!cand) return { error: "Candidate not found." };
+  if ((cand as any).direct_placement) return { ok: true, already: true }; // already flagged — don't re-notify
+
+  const { error: upErr } = await db
+    .from("candidates")
+    .update({ direct_placement: true, direct_placement_by: profile.id, direct_placement_at: new Date().toISOString() })
+    .eq("id", candidateId);
+  if (upErr) return { error: upErr.message };
+
+  // Fan out to every active Super Admin: in-app row (bell + action queue) plus an
+  // immediate email. We mark the row emailed when the send succeeds so the cron
+  // flush doesn't re-send it; a failed send leaves it for the flush to retry.
+  const { data: supers } = await db
+    .from("profiles")
+    .select("id, email")
+    .eq("role", "super_admin")
+    .eq("is_active", true);
+
+  const name = (cand as any).name as string;
+  const title = `Direct Placement Potential: ${name}`;
+  const body = `${profile.full_name} flagged ${name} as a Direct Placement Potential candidate.`;
+  const html = emailLayout({
+    heading: title,
+    bodyHtml: `<div>${escapeHtml(body)}</div>`,
+    ctaLabel: "Open snapshot",
+    ctaUrl: `${siteUrl()}/console/snapshot`,
+  });
+
+  await Promise.all((supers ?? []).map(async (s: any) => {
+    let emailedAt: string | null = null;
+    if (s.email) {
+      const res = await sendEmail({ to: s.email, subject: title, html });
+      if (res.ok) emailedAt = new Date().toISOString();
+    }
+    await db.from("notifications").insert({
+      recipient_id: s.id,
+      type: "direct_placement",
+      title,
+      body,
+      link: "/console/snapshot",
+      candidate_id: candidateId,
+      send_after: new Date().toISOString(),
+      emailed_at: emailedAt,
+      dedupe_key: `direct_placement:${candidateId}`,
+    });
+  }));
+
+  revalidatePath("/workspace");
+  revalidatePath("/console/snapshot");
+  return { ok: true };
+}
+
+function escapeHtml(s: string): string {
+  return (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // Log an outreach note. Author must be the current user (enforced by RLS).

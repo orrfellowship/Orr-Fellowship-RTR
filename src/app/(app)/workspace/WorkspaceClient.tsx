@@ -7,7 +7,7 @@ import {
   toggleFavorite, setNotInterested, logOutreach, reassignPointPerson,
   getOutreach, addConnection, getConnections, upsertTask, deleteTask, addPhase,
   deleteOutreach, deleteConnection, updatePhase, deletePhase,
-  requestTaskComplete, confirmTaskComplete, setTaskAssignees,
+  requestTaskComplete, confirmTaskComplete, setTaskAssignees, flagDirectPlacement,
 } from "./actions";
 import { getCandidateFacets, listCandidates, updateCandidate } from "@/app/(app)/console/actions";
 import { phaseOf } from "@/lib/stages";
@@ -37,6 +37,7 @@ type Cand = {
   gpa: string | null; area_of_study: string | null; linkedin: string | null;
   resume_link: string | null; point_person_id: string | null;
   not_interested: boolean; is_favorite: boolean;
+  direct_placement?: boolean;
   source: string | null; created_by: string | null;
 };
 type School      = { id: string; name: string; color_primary: string | null; logo_url: string | null };
@@ -132,6 +133,7 @@ export default function WorkspaceClient({
     slim: slimCandidates,
   });
   const [openId, setOpenId] = useState<string | null>(null);
+  const [queueFilter, setQueueFilter] = useState<string>("all"); // Action Queue category filter
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [resumeFor, setResumeFor] = useState<{ jazzId: string; name: string } | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -257,6 +259,17 @@ export default function WorkspaceClient({
     return out.sort((a, b) => a.rank - b.rank);
   }, [candidates, lastContactByCand, profile.id]);
 
+  // Action Queue grouped by move type, so the snapshot opens as a few collapsed
+  // categories instead of one long flooded list. Preserves the rank order.
+  const planGroups = useMemo(() => {
+    const m = new Map<string, typeof plan>();
+    for (const a of plan) {
+      const arr = m.get(a.type) ?? m.set(a.type, []).get(a.type)!;
+      arr.push(a);
+    }
+    return Array.from(m.entries());
+  }, [plan]);
+
   // Team-lead review: each assignee's submission awaiting confirmation.
   const pendingReviewTasks = useMemo(() => {
     if (!canEdit) return [] as { task: Task; roleTitle: string; profileId: string }[];
@@ -341,7 +354,16 @@ export default function WorkspaceClient({
 
               {/* Action Queue */}
               <div>
-                <h2 style={{ fontSize: 20, color: C.navy, margin: "0 0 12px", fontFamily: HEAD }}>Action Queue</h2>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "0 0 12px" }}>
+                  <h2 style={{ fontSize: 20, color: C.navy, margin: 0, fontFamily: HEAD }}>Action Queue</h2>
+                  {planGroups.length > 0 && (
+                    <select value={queueFilter} onChange={(e) => setQueueFilter(e.target.value)}
+                      style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, fontSize: 12.5, background: "#fff", color: C.navy, fontWeight: 700, cursor: "pointer" }}>
+                      <option value="all">All categories</option>
+                      {planGroups.map(([type, items]) => <option key={type} value={type}>{type} ({items.length})</option>)}
+                    </select>
+                  )}
+                </div>
 
                 {/* Team-lead review of completed tasks */}
                 {pendingReviewTasks.length > 0 && (
@@ -364,20 +386,25 @@ export default function WorkspaceClient({
                   </div>
                 )}
 
-                <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-                  {plan.map((a) => (
-                    <div key={a.id} onClick={() => setOpenId(a.cand.id)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 12, padding: "15px 18px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }}>
-                      <span style={{ width: 92, fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: accent, flexShrink: 0 }}>{a.type}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, color: C.gray }}>{a.cand.name}</div><div style={{ fontSize: 13, color: C.grayMute }}>{a.why}</div></div>
-                      {a.type === "Claim" && (
-                        <button onClick={(e) => { e.stopPropagation(); startTransition(() => { reassignPointPerson(a.cand.id, profile.id); }); }}
-                          style={{ border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 12.5, padding: "7px 12px", borderRadius: 8, cursor: "pointer", flexShrink: 0 }}>
-                          Claim
-                        </button>
-                      )}
-                      <StagePill stage={a.cand.stage} />
-                    </div>
-                  ))}
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {planGroups
+                    .filter(([type]) => queueFilter === "all" || queueFilter === type)
+                    .map(([type, items]) => (
+                      <QueueCategory key={`${type}-${queueFilter}`} title={type} count={items.length} accent={accent} defaultOpen={queueFilter !== "all"}>
+                        {items.map((a) => (
+                          <div key={a.id} onClick={() => setOpenId(a.cand.id)} style={{ borderTop: `1px solid ${C.line}`, padding: "13px 18px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
+                            <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, color: C.gray }}>{a.cand.name}</div><div style={{ fontSize: 13, color: C.grayMute }}>{a.why}</div></div>
+                            {a.type === "Claim" && (
+                              <button onClick={(e) => { e.stopPropagation(); startTransition(() => { reassignPointPerson(a.cand.id, profile.id); }); }}
+                                style={{ border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 12.5, padding: "7px 12px", borderRadius: 8, cursor: "pointer", flexShrink: 0 }}>
+                                Claim
+                              </button>
+                            )}
+                            <StagePill stage={a.cand.stage} />
+                          </div>
+                        ))}
+                      </QueueCategory>
+                    ))}
                   {plan.length === 0 && pendingReviewTasks.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12 }}>All clear — nothing needs you right now.</div>}
                 </div>
               </div>
@@ -894,6 +921,26 @@ function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, start
   );
 }
 
+// Collapsible Action Queue category: a header (type + count) that toggles its
+// list of moves. Starts collapsed in the "All categories" view so the snapshot
+// never opens as one long flooded list.
+function QueueCategory({ title, count, accent, defaultOpen, children }: {
+  title: string; count: number; accent: string; defaultOpen?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen ?? false);
+  return (
+    <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 12, overflow: "hidden" }}>
+      <button onClick={() => setOpen((v) => !v)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", border: "none", background: "transparent", cursor: "pointer", textAlign: "left" }}>
+        <span style={{ flex: 1, fontFamily: HEAD, fontWeight: 700, fontSize: 13, textTransform: "uppercase", letterSpacing: 0.4, color: accent }}>{title}</span>
+        <span style={{ fontFamily: HEAD, fontWeight: 800, fontSize: 13.5, color: accent, background: `${accent}14`, borderRadius: 999, padding: "2px 11px", minWidth: 26, textAlign: "center" }}>{count}</span>
+        <span style={{ color: C.grayMute, fontSize: 12 }}>{open ? "▾" : "▸"}</span>
+      </button>
+      {open && <div>{children}</div>}
+    </div>
+  );
+}
+
 // A task-completion bubble with three states: empty (not done), half-filled gold
 // (submitted, awaiting team-lead review), and full green (confirmed). The half
 // state shows a popup so fellows know it isn't a rendering glitch.
@@ -1293,6 +1340,20 @@ function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onCl
     });
   };
   const [draft, setDraft] = useState("");
+  // Direct Placement Potential — team leads only. Once flagged, the candidate
+  // goes to the Super Admin snapshot queue (and notifies them by email + bell).
+  const isTeamLead = profile.role === "team_lead";
+  const [dpFlagged, setDpFlagged] = useState(!!c.direct_placement);
+  const [dpSaving, setDpSaving] = useState(false);
+  const flagDP = () => {
+    if (dpFlagged || dpSaving) return;
+    setDpSaving(true);
+    flagDirectPlacement(c.id).then((r: any) => {
+      setDpSaving(false);
+      if (r?.error) alert(r.error);
+      else { setDpFlagged(true); onSaved?.(); }
+    });
+  };
   const [log, setLog] = useState<{ id: string; body: string; created_at: string; author_id: string | null }[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
   const [relDraft, setRelDraft] = useState("");
@@ -1370,6 +1431,14 @@ function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onCl
               <button onClick={() => startTransition(() => { toggleFavorite(c.id, !c.is_favorite); })} style={{ flex: 1, border: `1px solid ${c.is_favorite ? C.gold : C.line}`, background: c.is_favorite ? "#FBF3D6" : "#fff", color: c.is_favorite ? "#8A6D0E" : C.gray, fontWeight: 700, padding: 10, borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{c.is_favorite ? "★ Favorited" : "☆ Favorite"}</button>
               <button onClick={() => startTransition(() => { setNotInterested(c.id, !c.not_interested); })} style={{ flex: 1, border: `1px solid ${C.line}`, background: c.not_interested ? "#EFEFF2" : "#fff", color: C.gray, fontWeight: 700, padding: 10, borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{c.not_interested ? "Unflag" : "Flag not interested"}</button>
             </div>
+          )}
+
+          {/* Direct Placement Potential — team leads only. Notifies Super Admin. */}
+          {isTeamLead && (
+            <button onClick={flagDP} disabled={dpFlagged || dpSaving} title={dpFlagged ? "Already sent to the Super Admin queue" : "Flag for direct placement and notify the Super Admin"}
+              style={{ width: "100%", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: `1px solid ${dpFlagged ? C.good : C.orange}`, background: dpFlagged ? "#EAF6F0" : C.orange, color: dpFlagged ? C.good : "#fff", fontWeight: 700, padding: 11, borderRadius: 9, cursor: dpFlagged || dpSaving ? "default" : "pointer", fontSize: 13 }}>
+              {dpFlagged ? "★ Direct Placement Potential — sent" : dpSaving ? "Sending…" : "★ Mark Direct Placement Potential"}
+            </button>
           )}
 
           {editing ? (
