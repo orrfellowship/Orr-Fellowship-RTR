@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { computeSchoolMetrics, goalColor, type SchoolMetric } from "@/lib/schoolMetrics";
 
 const C = {
@@ -18,27 +18,40 @@ type CandRow   = { id: string; school_id: string | null; stage: string | null };
 type GoalRow   = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 
 // ---- Tooltip ----
+// Rendered with position:fixed (coords measured on hover) so it escapes the
+// scrollable content area — which has overflow:auto and would otherwise clip the
+// box at the top/right edges. Auto-flips above/below and clamps to the viewport.
+const TIP_WIDTH = 260;
 function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
-  const [show, setShow] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; place: "top" | "bottom" } | null>(null);
+
+  const open = () => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const m = 8;
+    const half = TIP_WIDTH / 2;
+    const left = Math.max(m + half, Math.min(r.left + r.width / 2, window.innerWidth - m - half));
+    const place: "top" | "bottom" = r.top > 180 ? "top" : "bottom";
+    setPos({ left, top: place === "top" ? r.top - m : r.bottom + m, place });
+  };
+
   return (
-    <span style={{ position: "relative", display: "inline-flex", alignItems: "center", cursor: "help" }}
-      onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+    <span ref={ref} style={{ display: "inline-flex", alignItems: "center", cursor: "help" }}
+      onMouseEnter={open} onMouseLeave={() => setPos(null)}>
       {children}
-      {show && (
+      {pos && (
         <span style={{
-          position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
-          marginBottom: 6, zIndex: 60, background: C.navy, color: "#fff", fontSize: 11,
+          position: "fixed", left: pos.left, top: pos.top,
+          transform: pos.place === "top" ? "translate(-50%,-100%)" : "translate(-50%,0)",
+          zIndex: 9999, background: C.navy, color: "#fff", fontSize: 11,
           fontFamily: BODY, borderRadius: 8, padding: "8px 12px",
           whiteSpace: "pre-wrap", overflowWrap: "break-word", lineHeight: 1.4, textAlign: "left",
           boxShadow: "0 4px 16px rgba(0,0,0,.25)", pointerEvents: "none",
-          width: "max-content", maxWidth: 240,
+          width: "max-content", maxWidth: TIP_WIDTH,
         } as React.CSSProperties}>
           {text}
-          <span style={{
-            position: "absolute", top: "100%", left: "50%", transform: "translateX(-50%)",
-            borderWidth: 4, borderStyle: "solid",
-            borderColor: `${C.navy} transparent transparent transparent`,
-          }} />
         </span>
       )}
     </span>
