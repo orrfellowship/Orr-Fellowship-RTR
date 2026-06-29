@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteCandidate } from "@/app/(app)/console/actions";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
+import { norm, nameSchoolKey } from "@/lib/duplicates";
 
 // Finds candidate records that look like duplicates of each other — regardless
 // of source (manual entry, bulk import, or JazzHR) — by matching on email or on
@@ -18,13 +19,8 @@ const HEAD = "'Cabin', sans-serif";
 
 export type DupCand = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null; source: string | null };
 
-export const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
-// Name matching is scoped to a school: two different people who happen to share a
-// name (common in a large import) are only flagged when they're at the SAME
-// school. Email matching stays global. Keep this key in sync with the pre-import
-// warning in ImportTable so the two duplicate counts agree.
-export const nameSchoolKey = (name: string | null | undefined, schoolId: string | null | undefined) =>
-  `${norm(name)}|${schoolId ?? ""}`;
+// Re-exported so existing importers (ImportTable, ConsoleClient) keep their paths.
+export { norm, nameSchoolKey };
 
 // Groups of 2+ candidates that share `key`. Name groups whose members all share
 // one email are dropped (already covered by the email group).

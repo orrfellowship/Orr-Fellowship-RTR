@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { listCandidates, bulkDeleteCandidates } from "@/app/(app)/console/actions";
+import { listCandidates, bulkDeleteCandidates, deleteDuplicateCandidates } from "@/app/(app)/console/actions";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 
 // Admin tool to clean up after a bad import: search candidates by name, select
@@ -28,6 +28,7 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [dedupeRunning, setDedupeRunning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const schoolName = (row: Row) => candidateSchoolDisplay(row, schools).label;
 
@@ -72,6 +73,34 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
       setRows((prev) => prev.filter((row) => !ids.includes(row.id)));
       router.refresh();
     });
+  };
+
+  // One-click sweep: delete every email + name duplicate across the whole table,
+  // keeping one record per group. Dry-runs first to show the count in the confirm.
+  const deleteAllDuplicates = async () => {
+    setResult(null);
+    setDedupeRunning(true);
+    const preview = await deleteDuplicateCandidates(true);
+    if (preview.error) { setResult(`Error: ${preview.error}`); setDedupeRunning(false); return; }
+    if (preview.count === 0) { setResult("✓ No email or name duplicates found."); setDedupeRunning(false); return; }
+    if (!confirm(`Delete ${preview.count} duplicate candidate${preview.count !== 1 ? "s" : ""}? This keeps one record per name/email group (preferring JazzHR-linked records) and permanently removes the rest, including their outreach and warm intros. This cannot be undone.`)) {
+      setDedupeRunning(false);
+      return;
+    }
+    const res = await deleteDuplicateCandidates(false);
+    setDedupeRunning(false);
+    if (res.error) { setResult(`Error: ${res.error}`); return; }
+    setResult(`✓ Deleted ${res.count} duplicate candidate${res.count !== 1 ? "s" : ""}.`);
+    setSelected(new Set());
+    // Refresh the visible list with the current filters.
+    setLoading(true);
+    const refreshed = await listCandidates({
+      variant: "console", page: 0, pageSize: 1000, q, sortKey: "name", sortDir: "asc",
+      scope: school === "__unrouted__" ? "all" : school, unroutedOnly: school === "__unrouted__",
+    });
+    setRows((refreshed.rows as Row[]) ?? []);
+    setLoading(false);
+    router.refresh();
   };
 
   return (
@@ -122,12 +151,19 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
 
         {result && <div style={{ background: result.startsWith("Error") ? C.orangeBg : "#E8F5EE", border: `1px solid ${result.startsWith("Error") ? C.orange : C.good}`, borderRadius: 9, padding: "9px 13px", fontSize: 13, color: result.startsWith("Error") ? "#8A3A1E" : "#1B5E3F" }}>{result}</div>}
 
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>Close</button>
-          <button onClick={doDelete} disabled={deleting || selected.size === 0}
-            style={{ border: "none", background: selected.size > 0 && !deleting ? C.orange : "#E6A892", color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: selected.size > 0 && !deleting ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}>
-            {deleting ? "Deleting…" : `Delete ${selected.size || ""} selected`}
+        <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={deleteAllDuplicates} disabled={dedupeRunning || deleting}
+            title="Keep one record per name/email group and delete the rest, across all candidates"
+            style={{ border: `1px solid ${C.orange}`, background: "#fff", color: C.orange, fontWeight: 700, padding: "11px 16px", borderRadius: 10, cursor: dedupeRunning || deleting ? "default" : "pointer", whiteSpace: "nowrap", opacity: dedupeRunning || deleting ? 0.6 : 1 }}>
+            {dedupeRunning ? "Working…" : "⚠ Delete all email + name duplicates"}
           </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>Close</button>
+            <button onClick={doDelete} disabled={deleting || selected.size === 0}
+              style={{ border: "none", background: selected.size > 0 && !deleting ? C.orange : "#E6A892", color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: selected.size > 0 && !deleting ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}>
+              {deleting ? "Deleting…" : `Delete ${selected.size || ""} selected`}
+            </button>
+          </div>
         </div>
       </div>
     </div>

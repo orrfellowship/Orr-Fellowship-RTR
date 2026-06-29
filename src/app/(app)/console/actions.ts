@@ -22,6 +22,7 @@ import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
 import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
 import { representativeSchoolId } from "@/lib/candidateSchool";
+import { planDuplicateDeletions } from "@/lib/duplicates";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = createServerSupabase();
@@ -628,6 +629,34 @@ export async function deduplicateCandidates() {
 
   revalidatePath("/console");
   return { ok: true, removed: toDelete.length };
+}
+
+// Delete every email + name duplicate in one sweep, keeping one survivor per
+// cluster (see planDuplicateDeletions — matches the Duplicate Review's matching).
+// Pass dryRun to just count what would be removed (used to confirm before delete).
+export async function deleteDuplicateCandidates(dryRun = false): Promise<{ ok?: true; count: number; error?: string }> {
+  if (isPreviewing()) return { error: "Exit preview to make changes.", count: 0 };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden", count: 0 };
+  const db = createServiceClient();
+  // Page through so the sweep covers the whole table, not just the first 1000.
+  const cands = await fetchAllRows<{ id: string; name: string; email: string | null; school_id: string | null; jazz_id: string | null }>(
+    (from, to) => db.from("candidates").select("id, name, email, school_id, jazz_id").range(from, to),
+  );
+  const toDelete = planDuplicateDeletions(cands ?? []);
+  if (dryRun || toDelete.length === 0) return { ok: true, count: toDelete.length };
+
+  let deleted = 0;
+  const CHUNK = 200;
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
+    const slice = toDelete.slice(i, i + CHUNK);
+    const { error } = await db.from("candidates").delete().in("id", slice);
+    if (error) { revalidatePath("/console"); revalidatePath("/workspace"); return { error: error.message, count: deleted }; }
+    deleted += slice.length;
+  }
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true, count: deleted };
 }
 
 function siteUrlForInvite() {
