@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { resolveViewer } from "@/lib/auth";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
-import { isAdminPlus } from "@/lib/types";
+import { isAdminPlus, isSuper } from "@/lib/types";
 import { canAccessConsoleSection } from "@/lib/nav/config";
 import {
   getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
@@ -25,13 +25,14 @@ export default async function ConsoleSection({ params }: { params: { section: st
   // missing a LinkedIn). Fetched on its own — it doesn't need the big section load.
   if (S === "snapshot") {
     const db = createServiceClient();
+    const sup = isSuper(profile.role);
     const [helpRes, candRows, schools] = await Promise.all([
       db.from("notifications")
         .select("id, title, body, dedupe_key, created_at")
         .eq("recipient_id", profile.id).eq("type", "help_request").eq("superseded", false)
         .order("created_at", { ascending: false }),
-      fetchAllRows<{ id: string; name: string; email: string | null; school_id: string | null; university_raw: string | null; area_of_study: string | null; gpa: string | null; linkedin: string | null; stage: string | null; not_interested: boolean }>(
-        (from, to) => db.from("candidates").select("id, name, email, school_id, university_raw, area_of_study, gpa, linkedin, stage, not_interested").order("name").range(from, to),
+      fetchAllRows<{ id: string; name: string; email: string | null; school_id: string | null; university_raw: string | null; area_of_study: string | null; gpa: string | null; linkedin: string | null; stage: string | null; not_interested: boolean; direct_placement: boolean; direct_placement_by: string | null; direct_placement_at: string | null }>(
+        (from, to) => db.from("candidates").select("id, name, email, school_id, university_raw, area_of_study, gpa, linkedin, stage, not_interested, direct_placement, direct_placement_by, direct_placement_at").order("name").range(from, to),
       ),
       getSchoolsCached(),
     ]);
@@ -39,7 +40,29 @@ export default async function ConsoleSection({ params }: { params: { section: st
       .filter((c) => isActive(c.stage) && !c.not_interested && (!c.linkedin || c.linkedin.trim() === ""))
       .map((c) => ({ id: c.id, name: c.name, email: c.email, school: candidateSchoolDisplay(c, schools ?? []).label, area_of_study: c.area_of_study, gpa: c.gpa }));
     const helpRequests = (helpRes.data ?? []).map((h: any) => ({ id: h.id, title: h.title, body: h.body, dedupeKey: h.dedupe_key, created_at: h.created_at }));
-    return <AdminSnapshotClient helpRequests={helpRequests} missingLinkedin={missingLinkedin} />;
+
+    // Direct Placement Potential queue — Super Admin only (team-lead flagged).
+    let directPlacement: { id: string; name: string; email: string | null; school: string | null; area_of_study: string | null; gpa: string | null; flaggedBy: string; flaggedAt: string | null }[] = [];
+    if (sup) {
+      const flagged = (candRows ?? []).filter((c) => c.direct_placement && isActive(c.stage) && !c.not_interested);
+      const byIds = Array.from(new Set(flagged.map((c) => c.direct_placement_by).filter((v): v is string => !!v)));
+      const nameById = new Map<string, string>();
+      if (byIds.length) {
+        const { data: profs } = await db.from("profiles").select("id, full_name").in("id", byIds);
+        for (const p of profs ?? []) nameById.set((p as any).id, (p as any).full_name);
+      }
+      directPlacement = flagged
+        .map((c) => ({
+          id: c.id, name: c.name, email: c.email,
+          school: candidateSchoolDisplay(c, schools ?? []).label,
+          area_of_study: c.area_of_study, gpa: c.gpa,
+          flaggedBy: (c.direct_placement_by && nameById.get(c.direct_placement_by)) || "A team lead",
+          flaggedAt: c.direct_placement_at,
+        }))
+        .sort((a, b) => (b.flaggedAt ?? "").localeCompare(a.flaggedAt ?? ""));
+    }
+
+    return <AdminSnapshotClient helpRequests={helpRequests} missingLinkedin={missingLinkedin} directPlacement={directPlacement} isSuper={sup} />;
   }
 
   const need = {
