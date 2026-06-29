@@ -18,7 +18,13 @@ const HEAD = "'Cabin', sans-serif";
 
 export type DupCand = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null; source: string | null };
 
-const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+export const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+// Name matching is scoped to a school: two different people who happen to share a
+// name (common in a large import) are only flagged when they're at the SAME
+// school. Email matching stays global. Keep this key in sync with the pre-import
+// warning in ImportTable so the two duplicate counts agree.
+export const nameSchoolKey = (name: string | null | undefined, schoolId: string | null | undefined) =>
+  `${norm(name)}|${schoolId ?? ""}`;
 
 // Groups of 2+ candidates that share `key`. Name groups whose members all share
 // one email are dropped (already covered by the email group).
@@ -27,7 +33,10 @@ export function findDuplicateGroups(candidates: DupCand[]): { reason: "email" | 
   const byName = new Map<string, DupCand[]>();
   for (const c of candidates) {
     if (c.email && norm(c.email)) (byEmail.get(norm(c.email)) ?? byEmail.set(norm(c.email), []).get(norm(c.email))!).push(c);
-    if (norm(c.name)) (byName.get(norm(c.name)) ?? byName.set(norm(c.name), []).get(norm(c.name))!).push(c);
+    if (norm(c.name)) {
+      const k = nameSchoolKey(c.name, c.school_id);
+      (byName.get(k) ?? byName.set(k, []).get(k)!).push(c);
+    }
   }
   const groups: { reason: "email" | "name"; key: string; members: DupCand[] }[] = [];
   for (const [key, members] of byEmail) if (members.length > 1) groups.push({ reason: "email", key, members });

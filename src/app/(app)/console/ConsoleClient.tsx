@@ -23,7 +23,7 @@ import PlaybookBoard from "@/components/PlaybookBoard";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
-import DuplicateReview, { findDuplicateGroups } from "@/components/DuplicateReview";
+import DuplicateReview, { findDuplicateGroups, nameSchoolKey } from "@/components/DuplicateReview";
 import { phaseOf, routeToSchoolNameByEmail } from "@/lib/stages";
 import { candidateSchoolDisplay, candidateSchoolKey } from "@/lib/candidateSchool";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -1142,10 +1142,10 @@ export default function ConsoleClient({
         <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => { setOpenId(null); if (tab === "applicants") loadAppPage(appPage); }} onSaved={() => loadAppPage(appPage)} startTransition={startTransition} superUser={superUser} />
       )}
       {addOpen && (
-        <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(candidateFacets.slim.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidateFacets.slim.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setAddOpen(false); loadAppPage(0); }} startTransition={startTransition} />
+        <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(candidateFacets.slim.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidateFacets.slim.filter((c) => c.name?.trim()).map((c) => nameSchoolKey(c.name, c.school_id)))} onClose={() => { setAddOpen(false); loadAppPage(0); }} startTransition={startTransition} />
       )}
       {bulkOpen && (
-        <BulkImportModal schools={schools} team={team} canAssignPointPerson existingEmails={new Set(candidateFacets.slim.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidateFacets.slim.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))} onClose={() => { setBulkOpen(false); loadAppPage(0); }} />
+        <BulkImportModal schools={schools} team={team} canAssignPointPerson existingEmails={new Set(candidateFacets.slim.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidateFacets.slim.filter((c) => c.name?.trim()).map((c) => nameSchoolKey(c.name, c.school_id)))} onClose={() => { setBulkOpen(false); loadAppPage(0); }} />
       )}
       {infoOpen && (
         <ImportInfoModal onClose={() => { setInfoOpen(false); loadAppPage(appPage); }} />
@@ -1544,7 +1544,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
   const isGroup = selectedSchool?.tier === "satellite" || selectedSchool?.tier === "bonus";
 
   const dupeEmail = !!email.trim() && existingEmails.has(email.trim().toLowerCase());
-  const dupeName = !!name.trim() && existingNames.has(name.trim().toLowerCase());
+  const dupeName = !!name.trim() && existingNames.has(nameSchoolKey(name, schoolValue || null));
   // Preview the email-domain auto-routing the server applies when no school is set.
   const emailRoutedSchool = routeToSchoolNameByEmail(email.trim() || null);
 

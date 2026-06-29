@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useTransition, useRef } from "react";
+import { useState, useTransition, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { bulkImportCandidates } from "@/app/(app)/console/actions";
 import { resolveCandidateSchool } from "@/lib/stages";
+import { norm, nameSchoolKey } from "./DuplicateReview";
 
 // The canonical bulk-import UI: a spreadsheet-style grid you can type into or
 // paste CSV/Excel cells into. Used both by the /import page and the
@@ -80,8 +81,6 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
       ?? team.find((m) => m.full_name.toLowerCase().includes(t))?.id
       ?? "";
   };
-  const isDupeRow = (r: { name: string; email: string }) =>
-    (!!r.email && existingEmails.has(r.email.toLowerCase())) || (!!r.name && names.has(r.name.trim().toLowerCase()));
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [rows, setRows] = useState<Row[]>([emptyRow(), emptyRow(), emptyRow()]);
@@ -131,6 +130,32 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
   };
 
   const validRows = rows.filter((r) => r.name.trim());
+
+  // A row is a possible duplicate if it matches an EXISTING candidate OR if the
+  // same key appears more than once WITHIN this import batch. Matching mirrors the
+  // post-import Duplicate Review: email is global; name is scoped to a school
+  // (nameSchoolKey). The within-batch check matters most for large pastes —
+  // without it a file full of internal repeats reads as "0 duplicates" here, then
+  // floods the post-import review (which scans the whole table).
+  const rowSchoolId = (r: { school: string }) => resolveCandidateSchool(r.school, schools).school_id ?? null;
+  const batchCounts = useMemo(() => {
+    const nameCounts = new Map<string, number>();
+    const emailCounts = new Map<string, number>();
+    for (const r of rows) {
+      if (!r.name.trim()) continue;
+      const nk = nameSchoolKey(r.name, rowSchoolId(r)); nameCounts.set(nk, (nameCounts.get(nk) ?? 0) + 1);
+      const e = norm(r.email); if (e) emailCounts.set(e, (emailCounts.get(e) ?? 0) + 1);
+    }
+    return { nameCounts, emailCounts };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, schools]);
+  const isDupeRow = (r: { name: string; email: string; school: string }) => {
+    const e = norm(r.email);
+    const nk = nameSchoolKey(r.name, rowSchoolId(r));
+    const emailDup = !!e && (existingEmails.has(e) || (batchCounts.emailCounts.get(e) ?? 0) > 1);
+    const nameDup = !!norm(r.name) && (names.has(nk) || (batchCounts.nameCounts.get(nk) ?? 0) > 1);
+    return emailDup || nameDup;
+  };
   const dupeCount = validRows.filter(isDupeRow).length;
   const unmatchedPeople = showPP ? validRows.filter((r) => r.point_person.trim() && !resolvePerson(r.point_person)).length : 0;
   const resolved = validRows.map((r) => {
@@ -280,7 +305,7 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
       {validRows.length > 0 && !result && (
         <div style={{ padding: "9px 14px", background: C.canvas, borderRadius: 9, fontSize: 13 }}>
           <b style={{ color: C.navy }}>{validRows.length}</b> row{validRows.length !== 1 ? "s" : ""} ready to import
-          {dupeCount > 0 && <span style={{ color: C.orange, marginLeft: 10 }}>⚠ {dupeCount} possible duplicate{dupeCount !== 1 ? "s" : ""} (name or email match) — will still be imported</span>}
+          {dupeCount > 0 && <span style={{ color: C.orange, marginLeft: 10 }}>⚠ {dupeCount} possible duplicate{dupeCount !== 1 ? "s" : ""} (name/email match against existing records or repeated within this file) — will still be imported</span>}
           {unmatchedPeople > 0 && <span style={{ color: C.orange, marginLeft: 10 }}>⚠ {unmatchedPeople} point person name{unmatchedPeople !== 1 ? "s" : ""} not matched — will import as unassigned</span>}
         </div>
       )}

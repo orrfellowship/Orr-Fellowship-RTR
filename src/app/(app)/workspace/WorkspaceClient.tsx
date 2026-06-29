@@ -23,6 +23,7 @@ import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalend
 import BudgetPanel, { type BudgetEntry, type Guidance } from "@/components/BudgetPanel";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
+import { nameSchoolKey } from "@/components/DuplicateReview";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -105,7 +106,7 @@ export default function WorkspaceClient({
   // first page; these carry the total + facet dropdowns + slim dedupe list.
   allCandidatesTotal?: number; candidatesPageSize?: number;
   facetMajors?: string[]; facetStages?: string[];
-  slimCandidates?: { id: string; name: string; email: string | null }[];
+  slimCandidates?: { id: string; name: string; email: string | null; school_id: string | null }[];
 }) {
   const isMobile = useIsMobile();
   const [tab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources" | "budget">(initialSection as any);
@@ -756,7 +757,7 @@ export default function WorkspaceClient({
           team={team}
           canAssignPointPerson={canAssign}
           existingEmails={new Set(candidateFacets.slim.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))}
-          existingNames={new Set(candidateFacets.slim.map((c) => c.name?.trim().toLowerCase() ?? "").filter(Boolean))}
+          existingNames={new Set(candidateFacets.slim.filter((c) => c.name?.trim()).map((c) => nameSchoolKey(c.name, c.school_id)))}
           onClose={() => { setBulkOpen(false); if (tab === "all") loadAllPage(0); }}
         />
       )}
