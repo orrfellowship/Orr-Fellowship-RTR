@@ -20,6 +20,7 @@ import PlaybookBoard from "@/components/PlaybookBoard";
 import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
+import RecruitingRounds from "@/components/RecruitingRounds";
 import BudgetPanel, { type BudgetEntry, type Guidance } from "@/components/BudgetPanel";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
@@ -349,6 +350,8 @@ export default function WorkspaceClient({
                 );
               })}
             </div>
+
+            <RecruitingRounds accent={accent} />
 
             {/* Action Queue + My Tasks, side by side */}
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20, marginTop: 26, alignItems: "start" }}>
