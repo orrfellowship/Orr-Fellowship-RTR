@@ -37,6 +37,9 @@ export async function fetchAllRows<T = any>(
 // ---- candidate column sets -------------------------------------------------
 // Standings only needs these three (computeSchoolMetrics / StandingsClient).
 export const CAND_COLS_STANDINGS = "id, school_id, stage";
+// Pipeline cards/goal summaries need school grouping and stage counts, not the
+// full candidate record.
+export const CAND_COLS_PIPELINE = "id, school_id, university_raw, stage";
 // Full set the applicants/board views render.
 export const CAND_COLS_WORKSPACE =
   "id, name, email, school_id, stage, gpa, area_of_study, university_raw, jazz_id, linkedin, point_person_id, not_interested, resume_link, source, created_by";

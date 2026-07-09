@@ -1,7 +1,8 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { resolveViewer, getSchoolById, displaySchool } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
-import { isAdminPlus } from "@/lib/types";
+import { isAdminPlus, type Profile } from "@/lib/types";
 import { canAccessWorkspaceSection } from "@/lib/nav/config";
 import {
   getTierSchoolIds, getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/queries";
 import WorkspaceClient from "../WorkspaceClient";
 import { listCandidates } from "../../console/actions";
+import SectionSkeleton from "@/components/nav/SectionSkeleton";
 
 // slug (URL) → internal tab key used by WorkspaceClient
 const TAB: Record<string, string> = {
@@ -16,14 +18,23 @@ const TAB: Record<string, string> = {
   applicants: "all", playbook: "playbook", resources: "resources", budget: "budget",
 };
 
-// Each route renders exactly ONE section, so we only fetch what that section
-// reads. Everything else is passed empty — the other tabs' code never runs.
 export default async function WorkspaceSection({ params }: { params: { section: string } }) {
   const { profile } = await resolveViewer();
   if (!profile) redirect("/login");
   if (isAdminPlus(profile.role)) redirect("/console/overview");
   if (!canAccessWorkspaceSection(profile.role, params.section)) redirect("/workspace/snapshot");
-  const S = TAB[params.section]; // internal tab key
+
+  return (
+    <Suspense fallback={<SectionSkeleton />}>
+      <WorkspaceSectionData section={params.section} profile={profile} />
+    </Suspense>
+  );
+}
+
+// Each route renders exactly ONE section, so we only fetch what that section
+// reads. Everything else is passed empty — the other tabs' code never runs.
+async function WorkspaceSectionData({ section, profile }: { section: string; profile: Profile }) {
+  const S = TAB[section]; // internal tab key
 
   const need = {
     candidates: S === "plan" || S === "board",
@@ -52,8 +63,8 @@ export default async function WorkspaceSection({ params }: { params: { section: 
   const groupName = tier === "satellite" ? "Satellite School" : tier === "bonus" ? "Bonus School" : null;
   const playbookSchoolId = tierSchoolIds[0] ?? schoolId;
 
-  // Standings only reads id/school_id/stage; every other view needs the full row.
-  const allCandSelect = S === "standings" ? CAND_COLS_STANDINGS : CAND_COLS_WORKSPACE;
+  // Standings and the snapshot's org-wide counters only read id/school_id/stage.
+  const allCandSelect = (S === "standings" || S === "plan") ? CAND_COLS_STANDINGS : CAND_COLS_WORKSPACE;
   // The Candidates tab (S === "all") is server-paginated; it doesn't load every row.
   const paginatedList = S === "all";
 
@@ -145,7 +156,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
 
   // Candidates tab: first page + count. Full-set facets/slim data hydrate on
   // the client after paint so the route does not block TTFB on every candidate.
-  const PAGE_SIZE = 500;
+  const PAGE_SIZE = 100;
   const allPage = paginatedList
     ? await listCandidates({ variant: "workspace", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" })
     : { rows: [] as any[], total: 0, ai: [] as any[] };

@@ -1,25 +1,37 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { resolveViewer } from "@/lib/auth";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
-import { isAdminPlus, isSuper } from "@/lib/types";
+import { isAdminPlus, isSuper, type Profile } from "@/lib/types";
 import { canAccessConsoleSection } from "@/lib/nav/config";
 import {
   getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
-  CAND_COLS_STANDINGS, CAND_COLS_CONSOLE,
+  CAND_COLS_STANDINGS, CAND_COLS_PIPELINE, CAND_COLS_CONSOLE,
 } from "@/lib/queries";
 import ConsoleClient from "../ConsoleClient";
 import AdminSnapshotClient from "../AdminSnapshotClient";
 import { isActive } from "@/lib/stages";
 import { listCandidates } from "../actions";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
+import SectionSkeleton from "@/components/nav/SectionSkeleton";
 
-// Each route renders one section → only fetch what that section reads.
 export default async function ConsoleSection({ params }: { params: { section: string } }) {
   const { profile } = await resolveViewer();
   if (!profile) redirect("/login");
   if (!isAdminPlus(profile.role)) redirect("/workspace/snapshot");
   if (!canAccessConsoleSection(profile.role, params.section)) redirect("/console/overview");
-  const S = params.section;
+
+  return (
+    <Suspense fallback={<SectionSkeleton />}>
+      <ConsoleSectionData section={params.section} profile={profile} />
+    </Suspense>
+  );
+}
+
+// Each route renders one section → only fetch what that section reads. Keeping
+// the expensive work below Suspense lets the authenticated shell paint first.
+async function ConsoleSectionData({ section, profile }: { section: string; profile: Profile }) {
+  const S = section;
 
   // Admin Weekly Snapshot: categorized tasks (open help requests + candidates
   // missing a LinkedIn). Fetched on its own — it doesn't need the big section load.
@@ -32,7 +44,11 @@ export default async function ConsoleSection({ params }: { params: { section: st
         .eq("recipient_id", profile.id).eq("type", "help_request").eq("superseded", false)
         .order("created_at", { ascending: false }),
       fetchAllRows<{ id: string; name: string; email: string | null; school_id: string | null; university_raw: string | null; area_of_study: string | null; gpa: string | null; linkedin: string | null; stage: string | null; not_interested: boolean; direct_placement: boolean; direct_placement_by: string | null; direct_placement_at: string | null }>(
-        (from, to) => db.from("candidates").select("id, name, email, school_id, university_raw, area_of_study, gpa, linkedin, stage, not_interested, direct_placement, direct_placement_by, direct_placement_at").order("name").range(from, to),
+        (from, to) => db.from("candidates")
+          .select("id, name, email, school_id, university_raw, area_of_study, gpa, linkedin, stage, not_interested, direct_placement, direct_placement_by, direct_placement_at")
+          .eq("not_interested", false)
+          .order("name")
+          .range(from, to),
       ),
       getSchoolsCached(),
     ]);
@@ -81,9 +97,10 @@ export default async function ConsoleSection({ params }: { params: { section: st
   const supabase = createServerSupabase();
   const serviceDb = createServiceClient();
 
-  // Standings only reads id/school_id/stage; every other view needs the full row.
-  const candSelect = S === "standings" ? CAND_COLS_STANDINGS : CAND_COLS_CONSOLE;
-  // The Candidates tab is server-paginated (500/page); it doesn't load the full
+  const candSelect = S === "standings"
+    ? CAND_COLS_STANDINGS
+    : (S === "overview" || S === "schools") ? CAND_COLS_PIPELINE : CAND_COLS_CONSOLE;
+  // The Candidates tab is server-paginated; it doesn't load the full
   // table. Other sections (overview/standings/schools/sync/review) still need it.
   const paginatedList = S === "applicants";
 
@@ -105,7 +122,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
 
   // Candidates tab: first page + count. Full-set facets/slim data hydrate on
   // the client after paint so the route does not block TTFB on every candidate.
-  const PAGE_SIZE = 500;
+  const PAGE_SIZE = 100;
   const candPage = paginatedList
     ? await listCandidates({ variant: "console", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" })
     : { rows: [] as any[], total: 0 };

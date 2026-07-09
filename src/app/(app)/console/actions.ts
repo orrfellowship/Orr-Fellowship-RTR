@@ -346,8 +346,8 @@ export async function bulkImportCandidates(
 // ---- Server-side candidate pagination --------------------------------------
 // One page of candidates, filtered/sorted/counted in the database so the client
 // never holds the whole table. Used by the console + workspace candidate lists.
-// Limitations (acceptable at 500/page): GPA is a text column so Min-GPA and the
-// GPA sort compare lexically; the stage sort is alphabetical (not phase order).
+// Limitations (acceptable for page-sized reads): GPA is a text column so Min-GPA
+// and the GPA sort compare lexically; the stage sort is alphabetical (not phase order).
 const UUID_NONE = "00000000-0000-0000-0000-000000000000";
 export type CandidatePageParams = {
   variant: "console" | "workspace"; // which column set to return
