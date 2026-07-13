@@ -1,4 +1,4 @@
-import { DEMO_CANDIDATES, isEligible, renderTemplate } from "./EmailCampaignsClient";
+import { DEMO_CANDIDATES, getAutomaticExclusionReason, isEligible, renderTemplate } from "./EmailCampaignsClient";
 
 let failures = 0;
 function check(name: string, condition: boolean) {
@@ -11,9 +11,13 @@ function check(name: string, condition: boolean) {
 
 const eligible = DEMO_CANDIDATES.filter(isEligible);
 check("demo audience has 10 assigned candidates", DEMO_CANDIDATES.length === 10);
-check("default audience has 8 eligible recipients", eligible.length === 8);
+check("default audience has 7 eligible recipients", eligible.length === 7);
 check("missing-email candidate is excluded", DEMO_CANDIDATES.some((candidate) => !candidate.email && !isEligible(candidate)));
 check("unsubscribed candidate is excluded", DEMO_CANDIDATES.some((candidate) => candidate.unsubscribed && !isEligible(candidate)));
+const doNotContactCandidate = DEMO_CANDIDATES.find((candidate) => candidate.doNotContact);
+check("Do Not Contact candidate remains in the assigned demo data", !!doNotContactCandidate);
+check("Do Not Contact candidate is automatically excluded", !!doNotContactCandidate && !isEligible(doNotContactCandidate));
+check("Do Not Contact exclusion uses the required reason", !!doNotContactCandidate && getAutomaticExclusionReason(doNotContactCandidate) === "Marked Do Not Contact");
 
 const template = "Hi {{first_name}} — {{school_name}} / {{major}} / {{primary_contact_name}}";
 const firstPreview = renderTemplate(template, eligible[0]);

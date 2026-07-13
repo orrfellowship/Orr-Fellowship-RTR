@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState, type CSSProperties } from "react";
 import {
-  ArrowLeft, ArrowRight, CalendarClock, Check, CheckCircle2, ChevronLeft,
+  ArrowLeft, ArrowRight, Ban, CalendarClock, Check, CheckCircle2, ChevronLeft,
   ChevronRight, CircleAlert, Clock3, Mail, Send, UserRoundCheck, UsersRound, X,
 } from "lucide-react";
 
@@ -17,6 +17,7 @@ type DemoCandidate = {
   stage: string;
   lastContactedAt: string | null;
   unsubscribed: boolean;
+  doNotContact: boolean;
 };
 
 export const MOCK_PRIMARY_CONTACT = {
@@ -27,16 +28,16 @@ export const MOCK_PRIMARY_CONTACT = {
 };
 
 export const DEMO_CANDIDATES: DemoCandidate[] = [
-  { id: "ava-patel", firstName: "Ava", lastName: "Patel", email: "ava.patel@example.com", schoolName: "Purdue University", graduationYear: 2027, major: "Industrial Engineering", stage: "Sourced", lastContactedAt: null, unsubscribed: false },
-  { id: "malik-johnson", firstName: "Malik", lastName: "Johnson", email: "malik.johnson@example.com", schoolName: "Indiana University", graduationYear: 2027, major: "Finance", stage: "Contacted", lastContactedAt: "2026-07-08", unsubscribed: false },
-  { id: "elena-garcia", firstName: "Elena", lastName: "Garcia", email: "elena.garcia@example.com", schoolName: "Butler University", graduationYear: 2028, major: "Marketing", stage: "Applied", lastContactedAt: "2026-06-24", unsubscribed: false },
-  { id: "noah-kim", firstName: "Noah", lastName: "Kim", email: "noah.kim@example.com", schoolName: "Purdue University", graduationYear: 2027, major: "Computer Science", stage: "Sourced", lastContactedAt: null, unsubscribed: false },
-  { id: "maya-thompson", firstName: "Maya", lastName: "Thompson", email: "maya.thompson@example.com", schoolName: "DePauw University", graduationYear: 2028, major: "Economics", stage: "Contacted", lastContactedAt: "2026-07-02", unsubscribed: false },
-  { id: "liam-obrien", firstName: "Liam", lastName: "O'Brien", email: "liam.obrien@example.com", schoolName: "Wabash College", graduationYear: 2027, major: "Political Science", stage: "Applied", lastContactedAt: "2026-06-18", unsubscribed: false },
-  { id: "zoe-williams", firstName: "Zoe", lastName: "Williams", email: "zoe.williams@example.com", schoolName: "Indiana University", graduationYear: 2028, major: "Information Systems", stage: "Sourced", lastContactedAt: null, unsubscribed: false },
-  { id: "ethan-nguyen", firstName: "Ethan", lastName: "Nguyen", email: "ethan.nguyen@example.com", schoolName: "Purdue University", graduationYear: 2027, major: "Supply Chain Management", stage: "Finalist", lastContactedAt: "2026-07-10", unsubscribed: false },
-  { id: "isabella-reed", firstName: "Isabella", lastName: "Reed", email: null, schoolName: "Butler University", graduationYear: 2028, major: "Strategic Communication", stage: "Sourced", lastContactedAt: null, unsubscribed: false },
-  { id: "caleb-brooks", firstName: "Caleb", lastName: "Brooks", email: "caleb.brooks@example.com", schoolName: "Indiana University", graduationYear: 2027, major: "Accounting", stage: "Contacted", lastContactedAt: "2026-06-30", unsubscribed: true },
+  { id: "ava-patel", firstName: "Ava", lastName: "Patel", email: "ava.patel@example.com", schoolName: "Purdue University", graduationYear: 2027, major: "Industrial Engineering", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "malik-johnson", firstName: "Malik", lastName: "Johnson", email: "malik.johnson@example.com", schoolName: "Indiana University", graduationYear: 2027, major: "Finance", stage: "Contacted", lastContactedAt: "2026-07-08", unsubscribed: false, doNotContact: false },
+  { id: "elena-garcia", firstName: "Elena", lastName: "Garcia", email: "elena.garcia@example.com", schoolName: "Butler University", graduationYear: 2028, major: "Marketing", stage: "Applied", lastContactedAt: "2026-06-24", unsubscribed: false, doNotContact: false },
+  { id: "noah-kim", firstName: "Noah", lastName: "Kim", email: "noah.kim@example.com", schoolName: "Purdue University", graduationYear: 2027, major: "Computer Science", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "maya-thompson", firstName: "Maya", lastName: "Thompson", email: "maya.thompson@example.com", schoolName: "DePauw University", graduationYear: 2028, major: "Economics", stage: "Contacted", lastContactedAt: "2026-07-02", unsubscribed: false, doNotContact: false },
+  { id: "liam-obrien", firstName: "Liam", lastName: "O'Brien", email: "liam.obrien@example.com", schoolName: "Wabash College", graduationYear: 2027, major: "Political Science", stage: "Applied", lastContactedAt: "2026-06-18", unsubscribed: false, doNotContact: false },
+  { id: "zoe-williams", firstName: "Zoe", lastName: "Williams", email: "zoe.williams@example.com", schoolName: "Indiana University", graduationYear: 2028, major: "Information Systems", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: true },
+  { id: "ethan-nguyen", firstName: "Ethan", lastName: "Nguyen", email: "ethan.nguyen@example.com", schoolName: "Purdue University", graduationYear: 2027, major: "Supply Chain Management", stage: "Finalist", lastContactedAt: "2026-07-10", unsubscribed: false, doNotContact: false },
+  { id: "isabella-reed", firstName: "Isabella", lastName: "Reed", email: null, schoolName: "Butler University", graduationYear: 2028, major: "Strategic Communication", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "caleb-brooks", firstName: "Caleb", lastName: "Brooks", email: "caleb.brooks@example.com", schoolName: "Indiana University", graduationYear: 2027, major: "Accounting", stage: "Contacted", lastContactedAt: "2026-06-30", unsubscribed: true, doNotContact: false },
 ];
 
 const MERGE_VARIABLES = [
@@ -61,7 +62,14 @@ Best,
 {{primary_contact_name}}`;
 
 export function isEligible(candidate: DemoCandidate) {
-  return !!candidate.email && !candidate.unsubscribed;
+  return getAutomaticExclusionReason(candidate) === null;
+}
+
+export function getAutomaticExclusionReason(candidate: DemoCandidate) {
+  if (!candidate.email) return "Missing email address";
+  if (candidate.unsubscribed) return "Unsubscribed from email";
+  if (candidate.doNotContact) return "Marked Do Not Contact";
+  return null;
 }
 
 function fullName(candidate: DemoCandidate) {
@@ -196,6 +204,7 @@ export default function EmailCampaignsClient() {
             <Metric label="Eligible to email" value={eligibleIds.length} tone="good" icon={<Mail size={18} />} />
             <Metric label="Missing email" value={DEMO_CANDIDATES.filter((candidate) => !candidate.email).length} tone="warning" icon={<CircleAlert size={18} />} />
             <Metric label="Unsubscribed" value={DEMO_CANDIDATES.filter((candidate) => candidate.unsubscribed).length} tone="warning" icon={<X size={18} />} />
+            <Metric label="Do Not Contact" value={DEMO_CANDIDATES.filter((candidate) => candidate.doNotContact).length} tone="warning" icon={<Ban size={18} />} />
             <Metric label="Previously contacted" value={DEMO_CANDIDATES.filter((candidate) => candidate.lastContactedAt).length} icon={<Clock3 size={18} />} />
           </div>
 
@@ -217,7 +226,7 @@ export default function EmailCampaignsClient() {
                     <div><strong>{fullName(candidate)}</strong><small>{candidate.email ?? "No email on file"}</small></div>
                     <div>{candidate.schoolName}<small>Class of {candidate.graduationYear}</small></div>
                     <div><StagePill stage={candidate.stage} /></div>
-                    <div>{!candidate.email ? <StatusPill tone="warning">Missing email · excluded</StatusPill> : candidate.unsubscribed ? <StatusPill tone="warning">Unsubscribed · excluded</StatusPill> : included ? <StatusPill tone="good">Eligible · included</StatusPill> : <StatusPill>Manually excluded</StatusPill>}</div>
+                    <div>{!candidate.email ? <StatusPill tone="warning">Missing email · excluded</StatusPill> : candidate.unsubscribed ? <StatusPill tone="warning">Unsubscribed · excluded</StatusPill> : candidate.doNotContact ? <StatusPill tone="warning">Do not contact · excluded</StatusPill> : included ? <StatusPill tone="good">Eligible · included</StatusPill> : <StatusPill>Manually excluded</StatusPill>}</div>
                     <div className={candidate.lastContactedAt ? "" : "muted"}>{formatDate(candidate.lastContactedAt)}</div>
                   </div>
                 );
@@ -317,7 +326,7 @@ export default function EmailCampaignsClient() {
               </ReviewCard>
               <ReviewCard title={`Excluded (${excludedCandidates.length})`}>
                 <div className="exclusion-list">
-                  {excludedCandidates.map((candidate) => <div key={candidate.id}><div><strong>{fullName(candidate)}</strong><small>{!candidate.email ? "Missing email address" : candidate.unsubscribed ? "Unsubscribed from email" : "Excluded from this campaign"}</small></div><StatusPill tone="warning">Excluded</StatusPill></div>)}
+                  {excludedCandidates.map((candidate) => <div key={candidate.id}><div><strong>{fullName(candidate)}</strong><small>{getAutomaticExclusionReason(candidate) ?? "Excluded from this campaign"}</small></div><StatusPill tone="warning">Excluded</StatusPill></div>)}
                 </div>
               </ReviewCard>
             </div>
@@ -397,7 +406,7 @@ const styles = `
   .step.active .step-number { color: #fff; background: ${C.orange}; border-color: ${C.orange}; } .step.complete .step-number { color: #fff; background: ${C.good}; border-color: ${C.good}; }
   .section-title { justify-content: space-between; gap: 18px; margin-bottom: 18px; } .section-title h2 { font-size: 23px; color: ${C.navy}; margin: 0; }
   .scope-pill { display: inline-flex; align-items: center; gap: 7px; color: ${C.navy2}; background: #EEF2F8; border-radius: 999px; padding: 7px 11px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-  .metrics-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .metrics-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
   .metric { background: #fff; border: 1px solid ${C.line}; border-radius: 12px; padding: 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .metric>div { display: flex; flex-direction: column; gap: 4px; min-width: 0; } .metric div span { color: ${C.muted}; font-size: 11.5px; white-space: nowrap; } .metric strong { color: ${C.navy}; font: 700 24px ${HEAD}; }
   .metric-icon { display: grid; place-items: center; width: 34px; height: 34px; color: ${C.navy2}; background: #EEF2F8; border-radius: 9px; flex: 0 0 auto; } .metric.good .metric-icon { color: ${C.good}; background: #E8F5EE; } .metric.warning .metric-icon { color: ${C.orange}; background: #FBE7DF; }
