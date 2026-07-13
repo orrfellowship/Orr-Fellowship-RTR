@@ -14,6 +14,7 @@ import { isActive } from "@/lib/stages";
 import { listCandidates } from "../actions";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 import SectionSkeleton from "@/components/nav/SectionSkeleton";
+import EmailCampaignsClient from "@/components/EmailCampaignsClient";
 
 export default async function ConsoleSection({ params }: { params: Promise<{ section: string }> }) {
   const { section } = await params;
@@ -33,6 +34,10 @@ export default async function ConsoleSection({ params }: { params: Promise<{ sec
 // the expensive work below Suspense lets the authenticated shell paint first.
 async function ConsoleSectionData({ section, profile }: { section: string; profile: Profile }) {
   const S = section;
+
+  // Front-end-only demo: deliberately return before creating database clients
+  // or loading candidate data. The mock owns all of its fictional data locally.
+  if (S === "email-campaigns") return <EmailCampaignsClient />;
 
   // Admin Weekly Snapshot: categorized tasks (open help requests + candidates
   // missing a LinkedIn). Fetched on its own — it doesn't need the big section load.
