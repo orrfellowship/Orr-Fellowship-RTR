@@ -6,7 +6,7 @@ The application is role-aware: fellows and team leads work in school-scoped work
 
 ## Architecture
 
-- **Next.js 14**: App Router application under `src/app`, with server components, server actions, API routes, and shared UI components.
+- **Next.js 16**: App Router application under `src/app`, with server components, server actions, API routes, and shared UI components.
 - **Vercel**: Expected hosting platform for preview and production deployments.
 - **Supabase Auth and PostgreSQL**: Authentication, profile/role data, recruiting data, storage, and server-side data access. Server-only service role usage bypasses RLS and must be handled carefully.
 - **JazzHR integration**: API routes and helper clients import applicants, synchronize JazzHR IDs, resolve resume documents, and support candidate review workflows.
@@ -14,7 +14,7 @@ The application is role-aware: fellows and team leads work in school-scoped work
 
 ## Prerequisites
 
-- Node 20
+- Node 22 or newer
 - npm
 - Git
 
@@ -47,6 +47,12 @@ The application is role-aware: fellows and team leads work in school-scoped work
    npm run typecheck
    ```
 
+   Run the full local quality gate before opening a pull request:
+
+   ```sh
+   npm run check
+   ```
+
 6. Start the local development server:
 
    ```sh
@@ -58,4 +64,3 @@ The application is role-aware: fellows and team leads work in school-scoped work
 Local credentials may point to production Supabase, JazzHR, SMTP, or Vercel resources. Treat every value in `.env.local` as potentially production-connected unless you have explicitly verified otherwise.
 
 Before running scripts, API routes, sync flows, or SQL, confirm which Supabase project, JazzHR account, and SMTP account the credentials target.
-

@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   const type = (params.get("type") as EmailOtpType | null) ?? "recovery";
   const code = params.get("code");
 
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   let error = null;
   if (token_hash) {
     ({ error } = await supabase.auth.verifyOtp({ type, token_hash }));

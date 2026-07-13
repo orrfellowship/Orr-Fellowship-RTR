@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { importCandidateInfo } from "@/app/(app)/console/actions";
 
@@ -60,10 +60,12 @@ export default function ImportInfoModal({ onClose }: { onClose: () => void }) {
     setError(null); setResult(null);
     try {
       let csv: string;
-      if (/\.(xlsx|xls)$/i.test(file.name)) {
-        const XLSX = await import("xlsx");
-        const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-        csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);
+      if (/\.xlsx$/i.test(file.name)) {
+        const { readSheet } = await import("read-excel-file/browser");
+        const rows = await readSheet(file);
+        csv = rows
+          .map((row) => row.map((cell) => cell == null ? "" : String(cell)).join("\t"))
+          .join("\n");
       } else {
         csv = await file.text();
       }
@@ -108,7 +110,7 @@ export default function ImportInfoModal({ onClose }: { onClose: () => void }) {
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <label style={{ display: "inline-flex", alignItems: "center", gap: 7, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13, padding: "8px 14px", borderRadius: 9, cursor: "pointer" }}>
             ⬆ Upload CSV / Excel
-            <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} style={{ display: "none" }} />
+            <input type="file" accept=".csv,.xlsx" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} style={{ display: "none" }} />
           </label>
           <span style={{ fontSize: 12.5, color: C.grayMute }}>or type / paste rows below (columns: email, linkedin).</span>
         </div>

@@ -12,7 +12,7 @@ export const VIEW_AS_COOKIE = "orr_view_as";
 // cache() so the layout and the page share one lookup per request (no double
 // auth.getUser + profiles round-trip on every navigation).
 export const getCurrentProfile = cache(async (): Promise<Profile | null> => {
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -38,8 +38,8 @@ export const getProfileById = cache(async (id: string): Promise<Profile | null> 
 });
 
 // Is an admin currently previewing as someone else? (used to keep preview read-only)
-export function isPreviewing(): boolean {
-  return !!cookies().get(VIEW_AS_COOKIE)?.value;
+export async function isPreviewing(): Promise<boolean> {
+  return !!(await cookies()).get(VIEW_AS_COOKIE)?.value;
 }
 
 // Resolve who the UI should render for. Admins can "view as" another person; the
@@ -52,7 +52,7 @@ export async function resolveViewer(): Promise<{
 }> {
   const real = await getCurrentProfile();
   if (!real || !isAdminPlus(real.role)) return { profile: real, real, previewing: null };
-  const targetId = cookies().get(VIEW_AS_COOKIE)?.value;
+  const targetId = (await cookies()).get(VIEW_AS_COOKIE)?.value;
   if (!targetId || targetId === real.id) return { profile: real, real, previewing: null };
   const target = await getProfileById(targetId);
   if (!target) return { profile: real, real, previewing: null };

@@ -18,15 +18,16 @@ const TAB: Record<string, string> = {
   applicants: "all", playbook: "playbook", resources: "resources", budget: "budget",
 };
 
-export default async function WorkspaceSection({ params }: { params: { section: string } }) {
+export default async function WorkspaceSection({ params }: { params: Promise<{ section: string }> }) {
+  const { section } = await params;
   const { profile } = await resolveViewer();
   if (!profile) redirect("/login");
   if (isAdminPlus(profile.role)) redirect("/console/overview");
-  if (!canAccessWorkspaceSection(profile.role, params.section)) redirect("/workspace/snapshot");
+  if (!canAccessWorkspaceSection(profile.role, section)) redirect("/workspace/snapshot");
 
   return (
     <Suspense fallback={<SectionSkeleton />}>
-      <WorkspaceSectionData section={params.section} profile={profile} />
+      <WorkspaceSectionData section={section} profile={profile} />
     </Suspense>
   );
 }

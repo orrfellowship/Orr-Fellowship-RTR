@@ -51,7 +51,12 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
     return () => clearTimeout(t);
   }, [q, school]);
 
-  const toggle = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggle = (id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
   const allShownSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const toggleAll = () => setSelected((prev) => {
     const n = new Set(prev);

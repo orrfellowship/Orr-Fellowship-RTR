@@ -115,7 +115,7 @@ function ColHead({ label, tone, left }: { label: string; tone: string; left?: bo
 }
 
 function Row({ label, jazz, cand, differ }: { label: string; jazz: string | null; cand: string | null; differ: boolean }) {
-  const cell = (v: string | null, left?: boolean): JSX.Element => (
+  const cell = (v: string | null, left?: boolean): React.ReactElement => (
     <div style={{ padding: "9px 14px", borderTop: `1px solid ${C.line}`, borderLeft: left ? `1px solid ${C.line}` : "none", background: differ ? `${C.gold}10` : "#fff" }}>
       <span style={{ fontSize: 13, color: v ? C.gray : C.grayMute, fontWeight: 600 }}>{v ?? "—"}</span>
     </div>

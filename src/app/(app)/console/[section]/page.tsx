@@ -15,15 +15,16 @@ import { listCandidates } from "../actions";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 import SectionSkeleton from "@/components/nav/SectionSkeleton";
 
-export default async function ConsoleSection({ params }: { params: { section: string } }) {
+export default async function ConsoleSection({ params }: { params: Promise<{ section: string }> }) {
+  const { section } = await params;
   const { profile } = await resolveViewer();
   if (!profile) redirect("/login");
   if (!isAdminPlus(profile.role)) redirect("/workspace/snapshot");
-  if (!canAccessConsoleSection(profile.role, params.section)) redirect("/console/overview");
+  if (!canAccessConsoleSection(profile.role, section)) redirect("/console/overview");
 
   return (
     <Suspense fallback={<SectionSkeleton />}>
-      <ConsoleSectionData section={params.section} profile={profile} />
+      <ConsoleSectionData section={section} profile={profile} />
     </Suspense>
   );
 }
@@ -94,7 +95,7 @@ async function ConsoleSectionData({ section, profile }: { section: string; profi
     budget: S === "budget",
   };
 
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const serviceDb = createServiceClient();
 
   const candSelect = S === "standings"

@@ -141,6 +141,7 @@ export default function WorkspaceClient({
   const [infoOpen, setInfoOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [planNow] = useState(Date.now);
   const canEdit = canEditPlaybook(profile.role);
   const canAssign = canReassign(profile.role);
 
@@ -251,14 +252,13 @@ export default function WorkspaceClient({
 
   // Action queue — next moves on candidates you own (or unclaimed ones to grab).
   const plan = useMemo(() => {
-    const now = Date.now();
     const out: { id: string; type: string; cand: Cand; why: string; rank: number }[] = [];
     for (const c of candidates) {
-      const t = evaluateCandidate(c, { profileId: profile.id, lastContactISO: lastContactByCand[c.id], now });
+      const t = evaluateCandidate(c, { profileId: profile.id, lastContactISO: lastContactByCand[c.id], now: planNow });
       if (t) out.push({ id: `${t.kind}-${c.id}`, type: t.type, cand: c, why: t.why, rank: t.rank });
     }
     return out.sort((a, b) => a.rank - b.rank);
-  }, [candidates, lastContactByCand, profile.id]);
+  }, [candidates, lastContactByCand, planNow, profile.id]);
 
   // Action Queue grouped by move type, so the snapshot opens as a few collapsed
   // categories instead of one long flooded list. Preserves the rank order.
@@ -1017,12 +1017,14 @@ function PlaybookTab({ phases, schoolId, profile, canEdit, team, accent, startTr
 
   const toggleRole = (id: string) => setExpandedRoles((prev) => {
     const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     return next;
   });
   const toggleNote = (id: string) => setExpandedNotes((prev) => {
     const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     return next;
   });
 
@@ -1357,6 +1359,7 @@ function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onCl
   };
   const [log, setLog] = useState<{ id: string; body: string; created_at: string; author_id: string | null }[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
+  const tempConnectionSequence = useRef(0);
   const [relDraft, setRelDraft] = useState("");
   const [tagId, setTagId] = useState<string | null>(null); // optional person to tag on a warm intro
   const profileName = (id: string | null) => (id === profile.id ? "You" : allProfiles.find((p) => p.id === id)?.full_name ?? "Someone");
@@ -1376,7 +1379,7 @@ function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onCl
   const doAddConn = (rel: string) => {
     if (!rel.trim()) return;
     const tagged = tagId;
-    const tempId = `temp-${Math.random()}`;
+    const tempId = `temp-${profile.id}-${tempConnectionSequence.current++}`;
     setConns((prev) => [{ id: tempId, fellow_id: profile.id, name: "You", relationship: rel.trim(), tagged_profile_id: tagged }, ...(prev ?? [])]);
     setRelDraft("");
     setTagId(null);

@@ -13,9 +13,9 @@ const groups = (role: any) => navForRole(role).map((g) => g.group).filter(Boolea
 check("super_admin has Users + Sync", ids("super_admin").includes("users") && ids("super_admin").includes("sync"));
 check("super_admin Operations group present", groups("super_admin").includes("Operations"));
 
-// admin: Operations = Review Sync only; no Users/Sync
+// admin: Operations includes Users + Review Sync; JazzHR Sync stays super-only
 check("admin has Review Sync", ids("admin").includes("review"));
-check("admin has NO Users", !ids("admin").includes("users"));
+check("admin has Users", ids("admin").includes("users"));
 check("admin has NO Sync", !ids("admin").includes("sync"));
 
 // fellow / team_lead: no Operations, lead with Weekly Snapshot

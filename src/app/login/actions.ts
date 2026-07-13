@@ -20,7 +20,7 @@ async function checkProfileAllowed(email: string) {
 export async function signInWithEmailPassword(email: string, password: string) {
   const blocked = await checkProfileAllowed(email);
   if (blocked) return { error: blocked };
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: "Invalid email or password." };
   return { ok: true };
