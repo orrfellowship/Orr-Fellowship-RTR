@@ -181,6 +181,23 @@ export default function EmailCampaignsClient({
     }
   }
 
+  // Clear the result and return to a fresh wizard for another campaign. The
+  // composed template (name/subject/body) is kept so a follow-up send can reuse
+  // it; only the audience, confirmation, and result are reset.
+  function startAnotherCampaign() {
+    setCampaignResult(null);
+    setSelectedIds(new Set());
+    setConfirmationFingerprint(null);
+    setPreviewIndex(0);
+    setStep(0);
+    setMaxReached(0);
+    submission.current = null;
+  }
+
+  // A successful send takes over the screen with a clear confirmation instead of
+  // leaving the sender on the review step wondering whether it worked.
+  const showSent = campaignResult?.success === true;
+
   return (
     <div className="email-campaigns-page">
       <style>{styles}</style>
@@ -229,6 +246,50 @@ export default function EmailCampaignsClient({
         )}
       </section>
 
+      {showSent && campaignResult && (
+        <section className="sent-screen" role="status" aria-live="polite">
+          <div className="sent-hero">
+            <div className={`sent-badge ${campaignResult.failed > 0 ? "partial" : "good"}`}>
+              <CheckCircle2 size={34} />
+            </div>
+            <h2>{campaignResult.failed > 0 ? "Campaign sent — with some issues" : "Campaign sent"}</h2>
+            <p>
+              {campaignResult.sent} of {campaignResult.attempted}{" "}
+              {campaignResult.attempted === 1 ? "message was" : "messages were"} sent
+              {gmailConnection.connectedEmail ? <> from <strong>{gmailConnection.connectedEmail}</strong></> : null}.
+              {campaignResult.failed > 0 && <> {campaignResult.failed} could not be delivered — see the list below.</>}
+            </p>
+          </div>
+
+          <div className="review-card">
+            <div className="result-metrics" aria-label="Campaign result summary">
+              <ResultMetric label="Sent" value={campaignResult.sent} tone="good" />
+              <ResultMetric label="Failed" value={campaignResult.failed} tone="warning" />
+              <ResultMetric label="Excluded" value={campaignResult.excluded} />
+              <ResultMetric label="Attempted" value={campaignResult.attempted} />
+            </div>
+            <div className="campaign-results">
+              {campaignResult.recipients.map((recipient) => (
+                <div key={recipient.candidateId}>
+                  <div><strong>{recipient.candidateName}</strong><small>{recipient.maskedRecipient ?? "No recipient address"}</small></div>
+                  <div className="result-status">
+                    <StatusPill tone={recipient.status === "sent" ? "good" : "warning"}>{recipient.status}</StatusPill>
+                    {recipient.messageId && <small>Gmail ID: <code>{recipient.messageId}</code></small>}
+                    {recipient.failureReason && <small>{recipient.failureReason}</small>}
+                    {recipient.exclusionReason && <small>{recipient.exclusionReason}</small>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="sent-actions">
+            <button type="button" className="primary-action" onClick={startAnotherCampaign}><Mail size={16} /> Start another campaign</button>
+          </div>
+        </section>
+      )}
+
+      {!showSent && (<>
       <div className="stepper" aria-label="Campaign steps">
         {CAMPAIGN_STEPS.map((label, index) => {
           const accessible = index <= maxReached;
@@ -378,31 +439,6 @@ export default function EmailCampaignsClient({
                   {excludedCandidates.map((candidate) => <div key={candidate.id}><div><strong>{demoCandidateFullName(candidate)}</strong><small>{getAutomaticExclusionReason(candidate) ?? "Manually excluded from this campaign"}</small></div><StatusPill tone="warning">Excluded</StatusPill></div>)}
                 </div>
               </ReviewCard>
-              {campaignResult && (
-                <div role="status">
-                <ReviewCard title="Most recent Gmail result">
-                  <div className="result-metrics" aria-label="Campaign result summary">
-                    <ResultMetric label="Attempted" value={campaignResult.attempted} />
-                    <ResultMetric label="Sent" value={campaignResult.sent} tone="good" />
-                    <ResultMetric label="Failed" value={campaignResult.failed} tone="warning" />
-                    <ResultMetric label="Excluded" value={campaignResult.excluded} />
-                  </div>
-                  <div className="campaign-results">
-                    {campaignResult.recipients.map((recipient) => (
-                      <div key={recipient.candidateId}>
-                        <div><strong>{recipient.candidateName}</strong><small>{recipient.maskedRecipient ?? "No recipient address"}</small></div>
-                        <div className="result-status">
-                          <StatusPill tone={recipient.status === "sent" ? "good" : "warning"}>{recipient.status}</StatusPill>
-                          {recipient.messageId && <small>Gmail ID: <code>{recipient.messageId}</code></small>}
-                          {recipient.failureReason && <small>{recipient.failureReason}</small>}
-                          {recipient.exclusionReason && <small>{recipient.exclusionReason}</small>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ReviewCard>
-                </div>
-              )}
             </div>
             <aside className="send-card">
               <div className="send-icon"><Send size={22} /></div>
@@ -433,6 +469,7 @@ export default function EmailCampaignsClient({
           {step < 3 && <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to {CAMPAIGN_STEPS[step + 1]} <ArrowRight size={16} /></button>}
         </div>
       </div>
+      </>)}
 
     </div>
   );
@@ -469,6 +506,15 @@ function ResultMetric({ label, value, tone = "default" }: { label: string; value
 
 const styles = `
   .email-campaigns-page { max-width: 1240px; margin: 0 auto; padding: 30px 28px 80px; color: ${C.gray}; }
+  .sent-screen { max-width: 640px; margin: 8px auto 0; display: flex; flex-direction: column; gap: 20px; }
+  .sent-hero { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .sent-badge { display: grid; place-items: center; width: 68px; height: 68px; border-radius: 20px; }
+  .sent-badge.good { color: ${C.good}; background: #E6F3EC; }
+  .sent-badge.partial { color: ${C.orange}; background: #FBE7DF; }
+  .sent-hero h2 { color: ${C.navy}; font-family: ${HEAD}; font-size: 25px; margin: 4px 0 0; }
+  .sent-hero p { color: ${C.muted}; font-size: 13.5px; line-height: 1.55; margin: 0; max-width: 480px; }
+  .sent-actions { display: flex; justify-content: center; }
+  .sent-actions .primary-action { width: auto; padding: 11px 22px; }
   .campaign-heading, .section-title, .heading-line, .previewing-note, .wizard-footer, .footer-actions, .recipient-switcher { display: flex; align-items: center; }
   .campaign-heading { justify-content: space-between; gap: 24px; margin-bottom: 22px; }
   .gmail-notice { display: flex; align-items: center; gap: 8px; margin: -8px 0 16px; padding: 10px 13px; border-radius: 10px; font-size: 12.5px; font-weight: 600; }
