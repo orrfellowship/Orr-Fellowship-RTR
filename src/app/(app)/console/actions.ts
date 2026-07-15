@@ -349,7 +349,7 @@ export async function bulkImportCandidates(
 // group-routed assignments move; explicit admin placements are left alone.
 // Pass ids to fix specific candidates, or omit to fix everything flagged.
 export async function fixMisroutedCandidates(ids?: string[]): Promise<{ ok?: true; moved: number; error?: string }> {
-  if (isPreviewing()) return { error: "Exit preview to make changes.", moved: 0 };
+  if (await isPreviewing()) return { error: "Exit preview to make changes.", moved: 0 };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden", moved: 0 };
   const db = createServiceClient();
