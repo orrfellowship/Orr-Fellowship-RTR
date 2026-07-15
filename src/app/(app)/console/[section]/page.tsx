@@ -16,29 +16,65 @@ import { candidateSchoolDisplay, findMisrouted } from "@/lib/candidateSchool";
 import { findDuplicateGroups } from "@/lib/duplicates";
 import SectionSkeleton from "@/components/nav/SectionSkeleton";
 import EmailCampaignsClient from "@/components/EmailCampaignsClient";
+import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
+import type { GmailConnectionStatus } from "@/lib/gmail/types";
+import { isGmailTestSendEnabled } from "@/lib/gmail/test-send.server";
 
-export default async function ConsoleSection({ params }: { params: Promise<{ section: string }> }) {
+export default async function ConsoleSection({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ section: string }>;
+  searchParams: Promise<{ gmail?: string; gmail_error?: string }>;
+}) {
   const { section } = await params;
-  const { profile } = await resolveViewer();
+  const query = await searchParams;
+  const { profile, real } = await resolveViewer();
   if (!profile) redirect("/login");
   if (!isAdminPlus(profile.role)) redirect("/workspace/snapshot");
   if (!canAccessConsoleSection(profile.role, section)) redirect("/console/overview");
 
   return (
     <Suspense fallback={<SectionSkeleton />}>
-      <ConsoleSectionData section={section} profile={profile} />
+      <ConsoleSectionData section={section} profile={profile} authenticatedUserId={(real ?? profile).id} gmailQuery={query} />
     </Suspense>
   );
 }
 
 // Each route renders one section → only fetch what that section reads. Keeping
 // the expensive work below Suspense lets the authenticated shell paint first.
-async function ConsoleSectionData({ section, profile }: { section: string; profile: Profile }) {
+async function ConsoleSectionData({
+  section,
+  profile,
+  authenticatedUserId,
+  gmailQuery,
+}: {
+  section: string;
+  profile: Profile;
+  authenticatedUserId: string;
+  gmailQuery: { gmail?: string; gmail_error?: string };
+}) {
   const S = section;
 
-  // Front-end-only demo: deliberately return before creating database clients
-  // or loading candidate data. The mock owns all of its fictional data locally.
-  if (S === "email-campaigns") return <EmailCampaignsClient />;
+  // The campaign remains a fictional-data demo. Only the safe Gmail connection
+  // summary is loaded from the server; no credential fields cross this boundary.
+  if (S === "email-campaigns") {
+    let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
+    let statusUnavailable = false;
+    try {
+      gmailConnection = await getGmailConnectionStatusForUser(authenticatedUserId);
+    } catch {
+      statusUnavailable = true;
+    }
+    return <EmailCampaignsClient
+      gmailConnection={gmailConnection}
+      gmailNotice={{
+        result: gmailQuery.gmail,
+        error: gmailQuery.gmail_error ?? (statusUnavailable ? "status_unavailable" : undefined),
+      }}
+      gmailCampaignSendEnabled={isGmailTestSendEnabled()}
+    />;
+  }
 
   // Admin Weekly Snapshot: categorized tasks (open help requests + candidates
   // missing a LinkedIn). Fetched on its own — it doesn't need the big section load.
