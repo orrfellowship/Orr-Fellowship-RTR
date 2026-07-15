@@ -10,7 +10,8 @@ The application is role-aware: fellows and team leads work in school-scoped work
 - **Vercel**: Expected hosting platform for preview and production deployments.
 - **Supabase Auth and PostgreSQL**: Authentication, profile/role data, recruiting data, storage, and server-side data access. Server-only service role usage bypasses RLS and must be handled carefully.
 - **JazzHR integration**: API routes and helper clients import applicants, synchronize JazzHR IDs, resolve resume documents, and support candidate review workflows.
-- **SMTP notifications**: Transactional email is sent through SMTP credentials, including user invites and recruiting digests.
+- **Resend notifications**: Transactional system email is sent through the existing Resend integration, including user invites and recruiting digests.
+- **Gmail OAuth (Phase 1)**: RTR users can securely connect an Orr Fellowship Google account for future campaign delivery. Campaign sending is not implemented.
 
 ## Prerequisites
 
@@ -61,6 +62,28 @@ The application is role-aware: fellows and team leads work in school-scoped work
 
 ## Production Credential Warning
 
-Local credentials may point to production Supabase, JazzHR, SMTP, or Vercel resources. Treat every value in `.env.local` as potentially production-connected unless you have explicitly verified otherwise.
+Local credentials may point to production Supabase, JazzHR, Resend, or Vercel resources. Treat every value in `.env.local` as potentially production-connected unless you have explicitly verified otherwise.
 
-Before running scripts, API routes, sync flows, or SQL, confirm which Supabase project, JazzHR account, and SMTP account the credentials target.
+Before running scripts, API routes, sync flows, or SQL, confirm which Supabase project, JazzHR account, and Resend account the credentials target.
+
+## Gmail OAuth setup (Phase 1)
+
+1. In the Google Cloud project used by RTR, enable the **Gmail API**.
+2. Configure the OAuth consent screen for the Orr Fellowship Google Workspace organization.
+3. Create an OAuth 2.0 Client ID with application type **Web application**.
+4. Add these authorized redirect URIs exactly (scheme, host, port, path, and trailing slash must match):
+
+   - Local: `http://localhost:3000/api/google/callback`
+   - Production: `https://YOUR_PRODUCTION_HOST/api/google/callback`
+
+5. Request only `openid`, `email`, and `https://www.googleapis.com/auth/gmail.send`. The `openid` and `email` scopes verify the connected address; `gmail.send` is the only Gmail permission.
+6. Configure these server-only environment variables:
+
+   - `GOOGLE_CLIENT_ID`
+   - `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_REDIRECT_URI` (one exact URI from step 4 for that environment)
+   - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY` (a base64-encoded 32-byte key; generate with `openssl rand -base64 32`)
+
+7. Apply [`db/phase15.sql`](db/phase15.sql) in the target Supabase project's SQL editor before deploying the code.
+
+The OAuth `hd` hint prefers `orrfellowship.org`, but the callback independently verifies the returned Google email. Refresh tokens are encrypted with AES-256-GCM before storage. The credential table is inaccessible to browser roles; only safe connection status fields are returned by the application.

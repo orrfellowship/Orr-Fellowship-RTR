@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "node --import tsx src/lib/nav/config.test.ts && node --import tsx src/components/EmailCampaignsClient.test.ts",
+    "test": "node --import tsx src/lib/nav/config.test.ts && node --import tsx src/lib/gmail/security.server.test.ts && node --import tsx src/lib/gmail/google-network.server.test.ts && node --import tsx src/components/EmailCampaignsClient.test.ts",
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm run typecheck && npm test && npm run build"
   },

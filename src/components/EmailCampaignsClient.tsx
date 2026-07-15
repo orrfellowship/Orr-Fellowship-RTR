@@ -3,8 +3,9 @@
 import { useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowLeft, ArrowRight, Ban, CalendarClock, Check, CheckCircle2, ChevronLeft,
-  ChevronRight, CircleAlert, Clock3, Mail, Send, UserRoundCheck, UsersRound, X,
+  ChevronRight, CircleAlert, Clock3, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound, X,
 } from "lucide-react";
+import type { GmailConnectionStatus } from "@/lib/gmail/types";
 
 type DemoCandidate = {
   id: string;
@@ -95,7 +96,38 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 }
 
-export default function EmailCampaignsClient() {
+type GmailNotice = { result?: string; error?: string };
+
+const DEFAULT_GMAIL_STATUS: GmailConnectionStatus = {
+  connected: false,
+  connectedEmail: null,
+  connectedAt: null,
+};
+
+function gmailNoticeText(notice: GmailNotice) {
+  if (notice.result === "connected") return "Gmail connected successfully.";
+  if (notice.result === "disconnected") return "Gmail disconnected.";
+  const messages: Record<string, string> = {
+    access_denied: "Google connection was canceled.",
+    invalid_domain: "Use an @orrfellowship.org Google account.",
+    invalid_state: "The connection request expired or could not be verified. Please try again.",
+    missing_refresh_token: "Google did not return a reusable connection. Please reconnect and grant consent.",
+    missing_scope: "The Gmail send permission was not granted.",
+    authentication: "Your RTR session expired. Sign in and try again.",
+    configuration: "Gmail connection is not configured on this environment.",
+    disconnect_failed: "Gmail could not be disconnected. Please try again.",
+    status_unavailable: "Gmail connection status is temporarily unavailable.",
+  };
+  return notice.error ? (messages[notice.error] ?? "Gmail could not be connected. Please try again.") : null;
+}
+
+export default function EmailCampaignsClient({
+  gmailConnection = DEFAULT_GMAIL_STATUS,
+  gmailNotice = {},
+}: {
+  gmailConnection?: GmailConnectionStatus;
+  gmailNotice?: GmailNotice;
+}) {
   const eligibleIds = useMemo(() => DEMO_CANDIDATES.filter(isEligible).map((candidate) => candidate.id), []);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(eligibleIds));
   const [step, setStep] = useState(0);
@@ -120,6 +152,7 @@ export default function EmailCampaignsClient() {
   const excludedCandidates = DEMO_CANDIDATES.filter((candidate) => !selectedIds.has(candidate.id) || !isEligible(candidate));
   const composeReady = campaignName.trim() && subject.trim() && body.trim() && senderName.trim() && replyTo.trim();
   const canContinue = step === 0 ? selectedCandidates.length > 0 : step === 1 ? !!composeReady : true;
+  const connectionNotice = gmailNoticeText(gmailNotice);
 
   function goToStep(next: number) {
     if (next < 0 || next > 3 || next > maxReached) return;
@@ -178,6 +211,39 @@ export default function EmailCampaignsClient() {
         </div>
         <div className="previewing-note"><UserRoundCheck size={17} /> <span>Previewing as: <strong>{MOCK_PRIMARY_CONTACT.name}</strong>, Primary Contact</span></div>
       </div>
+
+      {connectionNotice && (
+        <div className={`gmail-notice ${gmailNotice.error ? "error" : "success"}`} role="status">
+          {gmailNotice.error ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}
+          <span>{connectionNotice}</span>
+        </div>
+      )}
+
+      <section className="gmail-connection-card" aria-label="Gmail connection">
+        <div className={`gmail-mark ${gmailConnection.connected ? "connected" : ""}`}>
+          {gmailConnection.connected ? <CheckCircle2 size={21} /> : <Mail size={21} />}
+        </div>
+        <div className="gmail-connection-copy">
+          <div className="gmail-connection-title">
+            <h2>Orr Fellowship Gmail</h2>
+            <StatusPill tone={gmailConnection.connected ? "good" : "warning"}>
+              {gmailConnection.connected ? "Connected" : "Not connected"}
+            </StatusPill>
+          </div>
+          {gmailConnection.connected ? (
+            <p><strong>{gmailConnection.connectedEmail}</strong> is connected for future campaign delivery. Sending remains disabled in Phase 1.</p>
+          ) : (
+            <p>Connect your Orr Fellowship account so campaign emails can eventually be sent from your own Gmail address. Sending remains disabled in Phase 1.</p>
+          )}
+        </div>
+        {gmailConnection.connected ? (
+          <form method="post" action="/api/google/disconnect">
+            <button type="submit" className="gmail-action secondary"><Unplug size={15} /> Disconnect Gmail</button>
+          </form>
+        ) : (
+          <a className="gmail-action" href="/api/google/connect"><Link2 size={15} /> Connect Gmail</a>
+        )}
+      </section>
 
       <div className="stepper" aria-label="Campaign steps">
         {STEPS.map((label, index) => {
@@ -334,8 +400,8 @@ export default function EmailCampaignsClient() {
               <div className="send-icon"><Send size={22} /></div>
               <h3>Ready to reach out?</h3>
               <p>This campaign is limited to candidates assigned to {MOCK_PRIMARY_CONTACT.firstName}. Delivery remains disabled in this local prototype.</p>
-              <button type="button" className="primary-action" onClick={() => handleDemoSend("sent")}><Send size={16} /> Send now</button>
-              <button type="button" className="secondary-action" onClick={() => handleDemoSend("scheduled")}><CalendarClock size={16} /> Schedule for later</button>
+              <button type="button" className="primary-action" onClick={() => handleDemoSend("sent")}><Send size={16} /> Demo send only</button>
+              <button type="button" className="secondary-action" onClick={() => handleDemoSend("scheduled")}><CalendarClock size={16} /> Demo schedule only</button>
               <div className="safety-note"><CircleAlert size={15} /> No network or email action will occur.</div>
             </aside>
           </div>
@@ -394,6 +460,12 @@ const styles = `
   .email-campaigns-page { max-width: 1240px; margin: 0 auto; padding: 30px 28px 80px; color: ${C.gray}; }
   .campaign-heading, .section-title, .heading-line, .previewing-note, .wizard-footer, .footer-actions, .recipient-switcher { display: flex; align-items: center; }
   .campaign-heading { justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+  .gmail-notice { display: flex; align-items: center; gap: 8px; margin: -8px 0 16px; padding: 10px 13px; border-radius: 10px; font-size: 12.5px; font-weight: 600; }
+  .gmail-notice.success { color: ${C.good}; background: #E8F5EE; border: 1px solid #C7E7D6; } .gmail-notice.error { color: ${C.orange}; background: #FBE7DF; border: 1px solid #F1C2B4; }
+  .gmail-connection-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-bottom: 18px; padding: 15px 16px; background: #fff; border: 1px solid ${C.line}; border-radius: 14px; box-shadow: 0 5px 18px rgba(17,18,62,.04); }
+  .gmail-mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 11px; color: ${C.orange}; background: #FBE7DF; } .gmail-mark.connected { color: ${C.good}; background: #E8F5EE; }
+  .gmail-connection-copy { min-width: 0; } .gmail-connection-title { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; } .gmail-connection-title h2 { margin: 0; color: ${C.navy}; font-size: 16px; } .gmail-connection-copy p { margin: 4px 0 0; color: ${C.muted}; font-size: 12px; line-height: 1.5; } .gmail-connection-copy p strong { color: ${C.gray}; }
+  .gmail-action { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid ${C.navy}; border-radius: 9px; padding: 9px 12px; color: #fff; background: ${C.navy}; font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap; cursor: pointer; } .gmail-action.secondary { color: ${C.navy}; background: #fff; border-color: ${C.line}; }
   .heading-line { gap: 12px; flex-wrap: wrap; }
   .heading-line h1 { font-size: 30px; color: ${C.navy}; margin: 0; }
   .campaign-heading p, .section-title p { color: ${C.muted}; margin: 5px 0 0; font-size: 14px; }
@@ -446,6 +518,6 @@ const styles = `
   .modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(17,18,62,.48); backdrop-filter: blur(3px); animation: demoFade .16s ease; } .demo-modal { width: min(430px, 100%); background: #fff; border-radius: 17px; padding: 28px; box-shadow: 0 24px 70px rgba(17,18,62,.25); text-align: center; animation: demoPop .18s ease; } .modal-icon { display: grid; place-items: center; width: 50px; height: 50px; margin: 0 auto 13px; color: ${C.orange}; background: #FBE7DF; border-radius: 14px; } .demo-modal .demo-badge { margin: 0 auto; } .demo-modal h2 { color: ${C.navy}; font-size: 23px; margin: 12px 0 7px; } .demo-modal p { color: ${C.muted}; font-size: 13px; line-height: 1.55; margin: 0 0 20px; } .demo-modal button { width: 100%; color: #fff; background: ${C.navy}; border: 0; border-radius: 9px; padding: 11px; font-weight: 700; cursor: pointer; }
   @keyframes demoFade { from { opacity: 0; } } @keyframes demoPop { from { opacity: 0; transform: translateY(8px) scale(.98); } }
   @media (max-width: 980px) { .metrics-grid { grid-template-columns: repeat(3, 1fr); } .compose-layout, .review-grid { grid-template-columns: 1fr; } .variables-card, .send-card { position: static; } .preview-layout { grid-template-columns: 210px minmax(0, 1fr); } }
-  @media (max-width: 720px) { .email-campaigns-page { padding: 20px 14px 60px; } .campaign-heading, .section-title { align-items: flex-start; flex-direction: column; } .previewing-note { width: 100%; } .stepper { grid-template-columns: repeat(4, minmax(48px, 1fr)); } .step { flex-direction: column; gap: 4px; font-size: 10px; padding: 7px 2px; } .metrics-grid { grid-template-columns: repeat(2, 1fr); } .compose-layout, .preview-layout, .review-grid { grid-template-columns: 1fr; } .two-col, .review-details { grid-template-columns: 1fr; } .preview-title { align-items: stretch; } .recipient-switcher select { flex: 1; min-width: 0; } .email-meta { padding: 12px 14px; } .email-meta>div { grid-template-columns: 58px 1fr; } .email-body { min-height: 300px; padding: 22px 18px 30px; } .wizard-footer { align-items: flex-start; flex-direction: column; } .footer-actions { width: 100%; } .footer-actions button { flex: 1; justify-content: center; } }
+  @media (max-width: 720px) { .email-campaigns-page { padding: 20px 14px 60px; } .campaign-heading, .section-title { align-items: flex-start; flex-direction: column; } .previewing-note { width: 100%; } .gmail-connection-card { grid-template-columns: auto minmax(0, 1fr); align-items: start; } .gmail-connection-card form, .gmail-connection-card>.gmail-action { grid-column: 1 / -1; width: 100%; } .stepper { grid-template-columns: repeat(4, minmax(48px, 1fr)); } .step { flex-direction: column; gap: 4px; font-size: 10px; padding: 7px 2px; } .metrics-grid { grid-template-columns: repeat(2, 1fr); } .compose-layout, .preview-layout, .review-grid { grid-template-columns: 1fr; } .two-col, .review-details { grid-template-columns: 1fr; } .preview-title { align-items: stretch; } .recipient-switcher select { flex: 1; min-width: 0; } .email-meta { padding: 12px 14px; } .email-meta>div { grid-template-columns: 58px 1fr; } .email-body { min-height: 300px; padding: 22px 18px 30px; } .wizard-footer { align-items: flex-start; flex-direction: column; } .footer-actions { width: 100%; } .footer-actions button { flex: 1; justify-content: center; } }
   @media (max-width: 430px) { .metrics-grid { grid-template-columns: 1fr; } .metric div span { white-space: normal; } .step>span:last-child { display: none; } }
 `;
