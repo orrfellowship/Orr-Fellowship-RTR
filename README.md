@@ -88,25 +88,28 @@ Before running scripts, API routes, sync flows, or SQL, confirm which Supabase p
 
 The OAuth `hd` hint prefers `orrfellowship.org`, but the callback independently verifies the returned Google email. Refresh tokens are encrypted with AES-256-GCM before storage. The credential table is inaccessible to browser roles; only safe connection status fields are returned by the application.
 
-### Local one-message Gmail test (Phase 2)
+### Local mock Gmail campaign test (Phase 3)
 
-Phase 2 adds a deliberately restricted development-only proof that a connected account can send one real plain-text message through the Gmail API. It does not send campaigns, read candidate data, loop over recipients, schedule delivery, retry failures, or change the existing Resend integration.
+Phase 3 connects the existing four-stage Email Campaigns prototype to real Gmail delivery while retaining fictional candidate records. Eligible fictional candidates use only the controlled test addresses `samuel.brumley@orrfellowship.org` and `sam@brumley.cloud`; multiple candidates intentionally share those inboxes. One selected eligible fictional candidate always produces one separate personalized Gmail message.
 
-The endpoint is `POST /api/google/test-send`. It is unavailable whenever `NODE_ENV=production` and defaults to disabled in development. To enable the developer test panel locally, add this to `.env.local` and restart the development server:
+The endpoint is `POST /api/google/send-demo-campaign`. It resolves candidate IDs against the server-owned mock dataset, recalculates missing-email, unsubscribed, and Do Not Contact exclusions, renders merge variables separately, and sends sequentially. It accepts at most 10 selected mock candidates and never accepts browser-supplied recipient addresses. A short-lived in-memory idempotency record prevents an immediate retry of the same request identifier from sending duplicates.
+
+The route is unavailable whenever `NODE_ENV=production` and defaults to disabled in development. To enable the Review-stage **Send with Gmail** action locally, add this to `.env.local` and restart the development server:
 
 ```sh
 ENABLE_GMAIL_TEST_SEND=true
 ```
 
-Local manual test:
+Local manual test — this sends real email:
 
 1. Keep the Google OAuth project in Testing mode and ensure the intended `@orrfellowship.org` account is an allowed test user.
 2. Start the app with `npm run dev` and sign in to RTR.
 3. Open `/console/email-campaigns` and connect Gmail if needed.
-4. In **Developer Gmail test**, enter exactly one recipient, a subject, and a plain-text message.
-5. Check **I understand this will send one real email**.
-6. Click **Send one Gmail test** once.
-7. Confirm the UI shows the Gmail message ID and verify that the recipient received one message from the displayed connected account.
-8. Return `ENABLE_GMAIL_TEST_SEND=false` when testing is complete.
+4. Use **My Candidates**, **Compose**, and **Preview** to inspect the fictional audience and personalized content.
+5. On **Review**, confirm the connected sender, eligible count, and automatic exclusion reasons.
+6. Check the explicit real-send confirmation.
+7. Click **Send with Gmail** once.
+8. Confirm the attempted, sent, failed, and excluded summary plus each fictional candidate result. Verify that each eligible candidate produced one message in the controlled inbox, including candidates sharing an address.
+9. Return `ENABLE_GMAIL_TEST_SEND=false` when testing is complete.
 
-The route refreshes the stored encrypted OAuth credential entirely on the server. Neither access tokens, refresh tokens, MIME content, nor raw Google responses are returned to the browser.
+This phase uses no production candidate data, campaign tables, queues, schedules, retries, or campaign persistence. It does not update candidate contact history or stages and does not change the existing Resend transactional-email integration. Results exist only in the current client state. The Google OAuth project may remain in Testing mode for this local test. Access tokens, refresh tokens, MIME content, authorization headers, and raw Google responses never cross the server boundary.

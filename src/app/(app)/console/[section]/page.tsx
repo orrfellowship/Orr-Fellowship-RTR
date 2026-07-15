@@ -72,7 +72,7 @@ async function ConsoleSectionData({
         result: gmailQuery.gmail,
         error: gmailQuery.gmail_error ?? (statusUnavailable ? "status_unavailable" : undefined),
       }}
-      gmailTestSendEnabled={isGmailTestSendEnabled()}
+      gmailCampaignSendEnabled={isGmailTestSendEnabled()}
     />;
   }
 

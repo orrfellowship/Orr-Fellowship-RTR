@@ -1,28 +1,24 @@
 import { NextResponse } from "next/server";
+import { sendDemoCampaignForUser } from "@/lib/gmail/demo-campaign.server";
+import type { DemoCampaignResult } from "@/lib/gmail/demo-campaign";
 import { getAuthenticatedRtrUser } from "@/lib/gmail/server";
-import {
-  GmailTestSendError,
-  isGmailTestSendEnabled,
-  safeTestSendError,
-  sendOneGmailTestForUser,
-  type GmailSendResult,
-} from "@/lib/gmail/test-send.server";
+import { GmailTestSendError, isGmailTestSendEnabled, safeTestSendError } from "@/lib/gmail/test-send.server";
 
 export const runtime = "nodejs";
 
-type TestSendRouteDependencies = {
+type DemoCampaignRouteDependencies = {
   nodeEnv: string | undefined;
   enabledFlag: string | undefined;
   authenticate: () => Promise<{ id: string } | null>;
-  send: (userId: string, input: unknown) => Promise<GmailSendResult>;
+  send: (userId: string, input: unknown) => Promise<DemoCampaignResult>;
 };
 
-function getDefaultDependencies(): TestSendRouteDependencies {
+function getDefaultDependencies(): DemoCampaignRouteDependencies {
   return {
     nodeEnv: process.env.NODE_ENV,
     enabledFlag: process.env.ENABLE_GMAIL_TEST_SEND,
     authenticate: getAuthenticatedRtrUser,
-    send: sendOneGmailTestForUser,
+    send: sendDemoCampaignForUser,
   };
 }
 
@@ -33,15 +29,15 @@ function jsonError(error: GmailTestSendError) {
   });
 }
 
-export async function handleGmailTestSendRequest(
+export async function handleDemoCampaignRequest(
   request: Request,
-  dependencies: TestSendRouteDependencies = getDefaultDependencies(),
+  dependencies: DemoCampaignRouteDependencies = getDefaultDependencies(),
 ) {
   if (dependencies.nodeEnv === "production") {
-    return jsonError(new GmailTestSendError("not_available", "Gmail test sending is unavailable in production.", 404));
+    return jsonError(new GmailTestSendError("not_available", "Local Gmail campaign testing is unavailable in production.", 404));
   }
   if (!isGmailTestSendEnabled({ NODE_ENV: dependencies.nodeEnv, ENABLE_GMAIL_TEST_SEND: dependencies.enabledFlag })) {
-    return jsonError(new GmailTestSendError("feature_disabled", "Gmail test sending is disabled.", 404));
+    return jsonError(new GmailTestSendError("feature_disabled", "Local Gmail campaign testing is disabled.", 404));
   }
 
   const origin = request.headers.get("origin");
@@ -51,12 +47,10 @@ export async function handleGmailTestSendRequest(
   } catch {
     sameOrigin = false;
   }
-  if (!sameOrigin) {
-    return jsonError(new GmailTestSendError("invalid_origin", "Invalid request origin.", 403));
-  }
+  if (!sameOrigin) return jsonError(new GmailTestSendError("invalid_origin", "Invalid request origin.", 403));
 
   const user = await dependencies.authenticate();
-  if (!user) return jsonError(new GmailTestSendError("unauthorized", "Sign in to send a Gmail test message.", 401));
+  if (!user) return jsonError(new GmailTestSendError("unauthorized", "Sign in to send this local Gmail campaign test.", 401));
 
   let input: unknown;
   try {
@@ -71,13 +65,13 @@ export async function handleGmailTestSendRequest(
   } catch (error) {
     const known = error instanceof GmailTestSendError
       ? error
-      : new GmailTestSendError("gmail_send_failed", "The Gmail test message could not be sent.", 502);
+      : new GmailTestSendError("campaign_send_failed", "The local Gmail campaign test could not be completed.", 502);
     return jsonError(known);
   }
 }
 
 export async function POST(request: Request) {
-  return handleGmailTestSendRequest(request);
+  return handleDemoCampaignRequest(request);
 }
 
-export type { TestSendRouteDependencies };
+export type { DemoCampaignRouteDependencies };

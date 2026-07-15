@@ -2,95 +2,30 @@
 
 import { useMemo, useRef, useState, type CSSProperties } from "react";
 import {
-  ArrowLeft, ArrowRight, Ban, CalendarClock, Check, CheckCircle2, ChevronLeft,
+  ArrowLeft, ArrowRight, Ban, Check, CheckCircle2, ChevronLeft,
   ChevronRight, CircleAlert, Clock3, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound, X,
 } from "lucide-react";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
-import GmailTestSendPanel from "@/components/GmailTestSendPanel";
+import {
+  DEMO_CAMPAIGN_LIMITS,
+  DEMO_CANDIDATES,
+  CAMPAIGN_STEPS,
+  demoCandidateFullName,
+  findUnsupportedMergeVariables,
+  getAutomaticExclusionReason,
+  INITIAL_CAMPAIGN_BODY,
+  INITIAL_CAMPAIGN_SUBJECT,
+  isEligible,
+  MERGE_VARIABLES,
+  MOCK_PRIMARY_CONTACT,
+  renderTemplate,
+  type DemoCampaignResult,
+  type DemoCandidate,
+} from "@/lib/gmail/demo-campaign";
 
-type DemoCandidate = {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string | null;
-  schoolName: string;
-  graduationYear: number;
-  major: string;
-  stage: string;
-  lastContactedAt: string | null;
-  unsubscribed: boolean;
-  doNotContact: boolean;
-};
-
-export const MOCK_PRIMARY_CONTACT = {
-  name: "Sam Brumley",
-  firstName: "Sam",
-  email: "sam@example.com",
-  schoolName: "Purdue University",
-};
-
-export const DEMO_CANDIDATES: DemoCandidate[] = [
-  { id: "ava-patel", firstName: "Ava", lastName: "Patel", email: "ava.patel@example.com", schoolName: "Purdue University", graduationYear: 2027, major: "Industrial Engineering", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
-  { id: "malik-johnson", firstName: "Malik", lastName: "Johnson", email: "malik.johnson@example.com", schoolName: "Indiana University", graduationYear: 2027, major: "Finance", stage: "Contacted", lastContactedAt: "2026-07-08", unsubscribed: false, doNotContact: false },
-  { id: "elena-garcia", firstName: "Elena", lastName: "Garcia", email: "elena.garcia@example.com", schoolName: "Butler University", graduationYear: 2028, major: "Marketing", stage: "Applied", lastContactedAt: "2026-06-24", unsubscribed: false, doNotContact: false },
-  { id: "noah-kim", firstName: "Noah", lastName: "Kim", email: "noah.kim@example.com", schoolName: "Purdue University", graduationYear: 2027, major: "Computer Science", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
-  { id: "maya-thompson", firstName: "Maya", lastName: "Thompson", email: "maya.thompson@example.com", schoolName: "DePauw University", graduationYear: 2028, major: "Economics", stage: "Contacted", lastContactedAt: "2026-07-02", unsubscribed: false, doNotContact: false },
-  { id: "liam-obrien", firstName: "Liam", lastName: "O'Brien", email: "liam.obrien@example.com", schoolName: "Wabash College", graduationYear: 2027, major: "Political Science", stage: "Applied", lastContactedAt: "2026-06-18", unsubscribed: false, doNotContact: false },
-  { id: "zoe-williams", firstName: "Zoe", lastName: "Williams", email: "zoe.williams@example.com", schoolName: "Indiana University", graduationYear: 2028, major: "Information Systems", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: true },
-  { id: "ethan-nguyen", firstName: "Ethan", lastName: "Nguyen", email: "ethan.nguyen@example.com", schoolName: "Purdue University", graduationYear: 2027, major: "Supply Chain Management", stage: "Finalist", lastContactedAt: "2026-07-10", unsubscribed: false, doNotContact: false },
-  { id: "isabella-reed", firstName: "Isabella", lastName: "Reed", email: null, schoolName: "Butler University", graduationYear: 2028, major: "Strategic Communication", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
-  { id: "caleb-brooks", firstName: "Caleb", lastName: "Brooks", email: "caleb.brooks@example.com", schoolName: "Indiana University", graduationYear: 2027, major: "Accounting", stage: "Contacted", lastContactedAt: "2026-06-30", unsubscribed: true, doNotContact: false },
-];
-
-const MERGE_VARIABLES = [
-  "{{first_name}}", "{{full_name}}", "{{school_name}}", "{{graduation_year}}",
-  "{{major}}", "{{primary_contact_name}}", "{{primary_contact_email}}", "{{application_link}}",
-] as const;
-
-const STEPS = ["My Candidates", "Compose", "Preview", "Review"] as const;
 const C = { navy: "#11123E", navy2: "#485F92", orange: "#DD5434", gray: "#303333", muted: "#6E7385", line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B", gold: "#C9A227" };
 const HEAD = "'Cabin', sans-serif";
 const MONO = "'JetBrains Mono', ui-monospace, monospace";
-
-const initialBody = `Hi {{first_name}},
-
-I hope your summer is going well! I wanted to reach out because your experience at {{school_name}} stood out to our recruiting team.
-
-The Orr Fellowship connects ambitious graduating seniors with high-growth companies in Indianapolis, along with a two-year professional development experience and a close-knit peer community. I would love to tell you more and learn what you are looking for after graduation.
-
-You can explore the Fellowship and start an application here: {{application_link}}
-
-Best,
-{{primary_contact_name}}`;
-
-export function isEligible(candidate: DemoCandidate) {
-  return getAutomaticExclusionReason(candidate) === null;
-}
-
-export function getAutomaticExclusionReason(candidate: DemoCandidate) {
-  if (!candidate.email) return "Missing email address";
-  if (candidate.unsubscribed) return "Unsubscribed from email";
-  if (candidate.doNotContact) return "Marked Do Not Contact";
-  return null;
-}
-
-function fullName(candidate: DemoCandidate) {
-  return `${candidate.firstName} ${candidate.lastName}`;
-}
-
-export function renderTemplate(template: string, candidate: DemoCandidate) {
-  const values: Record<string, string> = {
-    first_name: candidate.firstName,
-    full_name: fullName(candidate),
-    school_name: candidate.schoolName,
-    graduation_year: String(candidate.graduationYear),
-    major: candidate.major,
-    primary_contact_name: MOCK_PRIMARY_CONTACT.name,
-    primary_contact_email: MOCK_PRIMARY_CONTACT.email,
-    application_link: "https://example.com/apply",
-  };
-  return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (match, key: string) => values[key.toLowerCase()] ?? match);
-}
 
 function formatDate(value: string | null) {
   if (!value) return "Never";
@@ -125,27 +60,29 @@ function gmailNoticeText(notice: GmailNotice) {
 export default function EmailCampaignsClient({
   gmailConnection = DEFAULT_GMAIL_STATUS,
   gmailNotice = {},
-  gmailTestSendEnabled = false,
+  gmailCampaignSendEnabled = false,
 }: {
   gmailConnection?: GmailConnectionStatus;
   gmailNotice?: GmailNotice;
-  gmailTestSendEnabled?: boolean;
+  gmailCampaignSendEnabled?: boolean;
 }) {
   const eligibleIds = useMemo(() => DEMO_CANDIDATES.filter(isEligible).map((candidate) => candidate.id), []);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(eligibleIds));
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(DEMO_CANDIDATES.map((candidate) => candidate.id)));
   const [step, setStep] = useState(0);
   const [maxReached, setMaxReached] = useState(0);
   const [campaignName, setCampaignName] = useState("Fall 2026 Fellowship Introduction");
-  const [subject, setSubject] = useState("{{first_name}}, explore Orr Fellowship opportunities");
-  const [body, setBody] = useState(initialBody);
-  const [senderName, setSenderName] = useState(MOCK_PRIMARY_CONTACT.name);
-  const [replyTo, setReplyTo] = useState(MOCK_PRIMARY_CONTACT.email);
+  const [subject, setSubject] = useState(INITIAL_CAMPAIGN_SUBJECT);
+  const [body, setBody] = useState(INITIAL_CAMPAIGN_BODY);
   const [activeField, setActiveField] = useState<"subject" | "body">("body");
   const [previewIndex, setPreviewIndex] = useState(0);
-  const [demoModalOpen, setDemoModalOpen] = useState(false);
-  const [demoAction, setDemoAction] = useState<"sent" | "scheduled">("sent");
+  const [confirmationFingerprint, setConfirmationFingerprint] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [campaignResult, setCampaignResult] = useState<DemoCampaignResult | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const inFlight = useRef(false);
+  const submission = useRef<{ fingerprint: string; key: string } | null>(null);
 
   const selectedCandidates = useMemo(
     () => DEMO_CANDIDATES.filter((candidate) => selectedIds.has(candidate.id) && isEligible(candidate)),
@@ -153,9 +90,26 @@ export default function EmailCampaignsClient({
   );
   const currentPreview = selectedCandidates[Math.min(previewIndex, Math.max(0, selectedCandidates.length - 1))];
   const excludedCandidates = DEMO_CANDIDATES.filter((candidate) => !selectedIds.has(candidate.id) || !isEligible(candidate));
-  const composeReady = campaignName.trim() && subject.trim() && body.trim() && senderName.trim() && replyTo.trim();
+  const automaticExcludedCandidates = DEMO_CANDIDATES.filter((candidate) => selectedIds.has(candidate.id) && !isEligible(candidate));
+  const unsupportedVariables = [...findUnsupportedMergeVariables(subject), ...findUnsupportedMergeVariables(body)];
+  const selectedCandidateIds = Array.from(selectedIds);
+  const campaignFingerprint = JSON.stringify({ campaignName, subject, body, selectedCandidateIds });
+  const confirmed = confirmationFingerprint === campaignFingerprint;
+  const composeReady = !!campaignName.trim()
+    && !!subject.trim()
+    && !!body.trim()
+    && campaignName.length <= DEMO_CAMPAIGN_LIMITS.campaignName
+    && subject.length <= DEMO_CAMPAIGN_LIMITS.subject
+    && body.length <= DEMO_CAMPAIGN_LIMITS.body
+    && unsupportedVariables.length === 0;
   const canContinue = step === 0 ? selectedCandidates.length > 0 : step === 1 ? !!composeReady : true;
   const connectionNotice = gmailNoticeText(gmailNotice);
+  const canSend = gmailCampaignSendEnabled
+    && gmailConnection.connected
+    && selectedCandidates.length > 0
+    && composeReady
+    && confirmed
+    && !sending;
 
   function goToStep(next: number) {
     if (next < 0 || next > 3 || next > maxReached) return;
@@ -195,9 +149,36 @@ export default function EmailCampaignsClient({
     });
   }
 
-  function handleDemoSend(action: "sent" | "scheduled") {
-    setDemoAction(action);
-    setDemoModalOpen(true);
+  async function handleCampaignSend() {
+    if (!canSend || inFlight.current) return;
+    const idempotencyKey = submission.current?.fingerprint === campaignFingerprint
+      ? submission.current.key
+      : crypto.randomUUID();
+    submission.current = { fingerprint: campaignFingerprint, key: idempotencyKey };
+    inFlight.current = true;
+    setSending(true);
+    setSendError(null);
+    try {
+      const response = await fetch("/api/google/send-demo-campaign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignName, subject, body, selectedCandidateIds, idempotencyKey }),
+      });
+      const payload = await response.json() as DemoCampaignResult | { success: false; error?: { message?: string } };
+      if (!response.ok || payload.success !== true) {
+        setSendError(payload.success === false && payload.error?.message
+          ? payload.error.message
+          : "The local Gmail campaign test could not be completed.");
+        return;
+      }
+      setCampaignResult(payload);
+      setConfirmationFingerprint(null);
+    } catch {
+      setSendError("The local Gmail campaign test could not be completed.");
+    } finally {
+      inFlight.current = false;
+      setSending(false);
+    }
   }
 
   return (
@@ -210,7 +191,7 @@ export default function EmailCampaignsClient({
             <h1>Email Campaigns</h1>
             <span className="demo-badge">Demo mode</span>
           </div>
-          <p>This local prototype uses fictional candidate data and simulates the future fellow experience. Email delivery is disabled.</p>
+          <p>This local-only Phase 3 test uses fictional candidates but sends real personalized Gmail messages only to controlled test inboxes.</p>
         </div>
         <div className="previewing-note"><UserRoundCheck size={17} /> <span>Previewing as: <strong>{MOCK_PRIMARY_CONTACT.name}</strong>, Primary Contact</span></div>
       </div>
@@ -234,9 +215,9 @@ export default function EmailCampaignsClient({
             </StatusPill>
           </div>
           {gmailConnection.connected ? (
-            <p><strong>{gmailConnection.connectedEmail}</strong> is connected for future campaign delivery. Sending remains disabled in Phase 1.</p>
+            <p><strong>{gmailConnection.connectedEmail}</strong> is connected for local mock-campaign delivery through Gmail.</p>
           ) : (
-            <p>Connect your Orr Fellowship account so campaign emails can eventually be sent from your own Gmail address. Sending remains disabled in Phase 1.</p>
+            <p>Connect your Orr Fellowship account before sending this local mock-data Gmail campaign test.</p>
           )}
         </div>
         {gmailConnection.connected ? (
@@ -248,10 +229,8 @@ export default function EmailCampaignsClient({
         )}
       </section>
 
-      {gmailTestSendEnabled && <GmailTestSendPanel connection={gmailConnection} />}
-
       <div className="stepper" aria-label="Campaign steps">
-        {STEPS.map((label, index) => {
+        {CAMPAIGN_STEPS.map((label, index) => {
           const accessible = index <= maxReached;
           const complete = index < step;
           return (
@@ -293,8 +272,8 @@ export default function EmailCampaignsClient({
                 const included = selectedIds.has(candidate.id) && eligible;
                 return (
                   <div className={`candidate-table candidate-row ${eligible ? "" : "excluded"}`} key={candidate.id}>
-                    <div><input type="checkbox" aria-label={`Include ${fullName(candidate)}`} checked={included} disabled={!eligible} onChange={() => toggleCandidate(candidate)} /></div>
-                    <div><strong>{fullName(candidate)}</strong><small>{candidate.email ?? "No email on file"}</small></div>
+                    <div><input type="checkbox" aria-label={`Include ${demoCandidateFullName(candidate)}`} checked={selectedIds.has(candidate.id)} disabled={!eligible} onChange={() => toggleCandidate(candidate)} /></div>
+                    <div><strong>{demoCandidateFullName(candidate)}</strong><small>{candidate.email ?? "No email on file"}</small></div>
                     <div>{candidate.schoolName}<small>Class of {candidate.graduationYear}</small></div>
                     <div><StagePill stage={candidate.stage} /></div>
                     <div>{!candidate.email ? <StatusPill tone="warning">Missing email · excluded</StatusPill> : candidate.unsubscribed ? <StatusPill tone="warning">Unsubscribed · excluded</StatusPill> : candidate.doNotContact ? <StatusPill tone="warning">Do not contact · excluded</StatusPill> : included ? <StatusPill tone="good">Eligible · included</StatusPill> : <StatusPill>Manually excluded</StatusPill>}</div>
@@ -313,18 +292,15 @@ export default function EmailCampaignsClient({
           <div className="compose-layout">
             <div className="form-card">
               <Field label="Campaign name" hint="Only visible to your recruiting team">
-                <input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Campaign name" />
+                <input value={campaignName} maxLength={DEMO_CAMPAIGN_LIMITS.campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Campaign name" />
               </Field>
               <Field label="Subject line">
-                <input ref={subjectRef} value={subject} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" />
+                <input ref={subjectRef} value={subject} maxLength={DEMO_CAMPAIGN_LIMITS.subject} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" />
               </Field>
               <Field label="Email body">
-                <textarea ref={bodyRef} value={body} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)} rows={14} />
+                <textarea ref={bodyRef} value={body} maxLength={DEMO_CAMPAIGN_LIMITS.body} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)} rows={14} />
               </Field>
-              <div className="two-col">
-                <Field label="Sender name"><input value={senderName} onChange={(event) => setSenderName(event.target.value)} /></Field>
-                <Field label="Reply-to email"><input type="email" value={replyTo} onChange={(event) => setReplyTo(event.target.value)} /></Field>
-              </div>
+              <div className="gmail-compose-sender"><Mail size={16} /><span>Gmail sender</span><strong>{gmailConnection.connectedEmail ?? "Connect Gmail before sending"}</strong></div>
             </div>
             <aside className="variables-card">
               <div className="variables-heading"><span>Merge variables</span><small>Insert into {activeField}</small></div>
@@ -345,7 +321,7 @@ export default function EmailCampaignsClient({
             <div className="recipient-switcher">
               <button type="button" aria-label="Previous recipient" onClick={() => setPreviewIndex((index) => (index - 1 + selectedCandidates.length) % selectedCandidates.length)}><ChevronLeft size={18} /></button>
               <select value={currentPreview.id} onChange={(event) => setPreviewIndex(selectedCandidates.findIndex((candidate) => candidate.id === event.target.value))}>
-                {selectedCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{fullName(candidate)}</option>)}
+                {selectedCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{demoCandidateFullName(candidate)}</option>)}
               </select>
               <button type="button" aria-label="Next recipient" onClick={() => setPreviewIndex((index) => (index + 1) % selectedCandidates.length)}><ChevronRight size={18} /></button>
             </div>
@@ -353,7 +329,7 @@ export default function EmailCampaignsClient({
           <div className="preview-layout">
             <div className="preview-context">
               <span className="preview-count">Recipient {previewIndex + 1} of {selectedCandidates.length}</span>
-              <h3>{fullName(currentPreview)}</h3>
+              <h3>{demoCandidateFullName(currentPreview)}</h3>
               <p>{currentPreview.email}</p>
               <dl>
                 <div><dt>School</dt><dd>{currentPreview.schoolName}</dd></div>
@@ -365,9 +341,8 @@ export default function EmailCampaignsClient({
             <article className="email-preview">
               <div className="email-toolbar"><span></span><span></span><span></span><div>Email preview</div></div>
               <div className="email-meta">
-                <div><span>From</span><strong>{senderName}</strong></div>
-                <div><span>Reply-to</span><strong>{replyTo}</strong></div>
-                <div><span>To</span><strong>{fullName(currentPreview)} &lt;{currentPreview.email}&gt;</strong></div>
+                <div><span>From</span><strong>{gmailConnection.connectedEmail ?? "Gmail not connected"}</strong></div>
+                <div><span>To</span><strong>{demoCandidateFullName(currentPreview)} &lt;{currentPreview.email}&gt;</strong></div>
                 <div><span>Subject</span><strong>{renderTemplate(subject, currentPreview)}</strong></div>
               </div>
               <div className="email-body">{renderTemplate(body, currentPreview)}</div>
@@ -378,36 +353,74 @@ export default function EmailCampaignsClient({
 
       {step === 3 && (
         <section>
-          <div className="section-title"><div><h2>Review campaign</h2><p>Confirm your audience and content before attempting this demo send.</p></div><StatusPill tone="good">Ready for demo</StatusPill></div>
+          <div className="section-title">
+            <div><h2>Review campaign</h2><p>Confirm the fictional audience and content before sending real Gmail messages to controlled test inboxes.</p></div>
+            <StatusPill tone={gmailCampaignSendEnabled ? "good" : "warning"}>{gmailCampaignSendEnabled ? "Local Gmail test" : "Sending disabled"}</StatusPill>
+          </div>
           <div className="review-grid">
             <div className="review-main">
               <ReviewCard title="Campaign details">
                 <div className="review-details">
                   <ReviewValue label="Campaign name" value={campaignName} />
-                  <ReviewValue label="Recipients" value={`${selectedCandidates.length} assigned candidates`} />
-                  <ReviewValue label="Sender" value={senderName} />
-                  <ReviewValue label="Reply-to" value={replyTo} />
+                  <ReviewValue label="Eligible recipients" value={`${selectedCandidates.length} personalized messages`} />
+                  <ReviewValue label="Connected sender" value={gmailConnection.connectedEmail ?? "Gmail not connected"} />
+                  <ReviewValue label="Automatic exclusions" value={`${automaticExcludedCandidates.length}`} />
                   <ReviewValue label="Subject" value={subject} wide />
                 </div>
               </ReviewCard>
               <ReviewCard title={`Recipients (${selectedCandidates.length})`}>
                 <div className="recipient-list">
-                  {selectedCandidates.map((candidate) => <div key={candidate.id}><span className="avatar">{candidate.firstName[0]}{candidate.lastName[0]}</span><div><strong>{fullName(candidate)}</strong><small>{candidate.email} · {candidate.schoolName}</small></div><CheckCircle2 size={17} /></div>)}
+                  {selectedCandidates.map((candidate) => <div key={candidate.id}><span className="avatar">{candidate.firstName[0]}{candidate.lastName[0]}</span><div><strong>{demoCandidateFullName(candidate)}</strong><small>{candidate.email} · {candidate.schoolName}</small></div><CheckCircle2 size={17} /></div>)}
                 </div>
               </ReviewCard>
               <ReviewCard title={`Excluded (${excludedCandidates.length})`}>
                 <div className="exclusion-list">
-                  {excludedCandidates.map((candidate) => <div key={candidate.id}><div><strong>{fullName(candidate)}</strong><small>{getAutomaticExclusionReason(candidate) ?? "Excluded from this campaign"}</small></div><StatusPill tone="warning">Excluded</StatusPill></div>)}
+                  {excludedCandidates.map((candidate) => <div key={candidate.id}><div><strong>{demoCandidateFullName(candidate)}</strong><small>{getAutomaticExclusionReason(candidate) ?? "Manually excluded from this campaign"}</small></div><StatusPill tone="warning">Excluded</StatusPill></div>)}
                 </div>
               </ReviewCard>
+              {campaignResult && (
+                <div role="status">
+                <ReviewCard title="Most recent Gmail result">
+                  <div className="result-metrics" aria-label="Campaign result summary">
+                    <ResultMetric label="Attempted" value={campaignResult.attempted} />
+                    <ResultMetric label="Sent" value={campaignResult.sent} tone="good" />
+                    <ResultMetric label="Failed" value={campaignResult.failed} tone="warning" />
+                    <ResultMetric label="Excluded" value={campaignResult.excluded} />
+                  </div>
+                  <div className="campaign-results">
+                    {campaignResult.recipients.map((recipient) => (
+                      <div key={recipient.candidateId}>
+                        <div><strong>{recipient.candidateName}</strong><small>{recipient.maskedRecipient ?? "No recipient address"}</small></div>
+                        <div className="result-status">
+                          <StatusPill tone={recipient.status === "sent" ? "good" : "warning"}>{recipient.status}</StatusPill>
+                          {recipient.messageId && <small>Gmail ID: <code>{recipient.messageId}</code></small>}
+                          {recipient.failureReason && <small>{recipient.failureReason}</small>}
+                          {recipient.exclusionReason && <small>{recipient.exclusionReason}</small>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ReviewCard>
+                </div>
+              )}
             </div>
             <aside className="send-card">
               <div className="send-icon"><Send size={22} /></div>
-              <h3>Ready to reach out?</h3>
-              <p>This campaign is limited to candidates assigned to {MOCK_PRIMARY_CONTACT.firstName}. Delivery remains disabled in this local prototype.</p>
-              <button type="button" className="primary-action" onClick={() => handleDemoSend("sent")}><Send size={16} /> Demo send only</button>
-              <button type="button" className="secondary-action" onClick={() => handleDemoSend("scheduled")}><CalendarClock size={16} /> Demo schedule only</button>
-              <div className="safety-note"><CircleAlert size={15} /> No network or email action will occur.</div>
+              <h3>Send with Gmail</h3>
+              {gmailConnection.connected ? (
+                <p><strong>{gmailConnection.connectedEmail}</strong> will send {selectedCandidates.length} real personalized {selectedCandidates.length === 1 ? "message" : "messages"}.</p>
+              ) : (
+                <p>Gmail must be connected before this local mock campaign can send.</p>
+              )}
+              <div className="send-warning"><CircleAlert size={16} /><span>Fictional candidates may share the same controlled inbox. Each candidate still produces one separate Gmail message.</span></div>
+              <label className="campaign-confirmation">
+                <input type="checkbox" checked={confirmed} disabled={!gmailCampaignSendEnabled || !gmailConnection.connected || sending} onChange={(event) => setConfirmationFingerprint(event.target.checked ? campaignFingerprint : null)} />
+                <span>I understand this will send {selectedCandidates.length} real personalized emails through {gmailConnection.connectedEmail ?? "the connected Gmail account"}.</span>
+              </label>
+              <button type="button" className="primary-action" disabled={!canSend} onClick={handleCampaignSend}><Send size={16} /> {sending ? "Sending sequentially…" : "Send with Gmail"}</button>
+              {!gmailConnection.connected && <a className="gmail-action review-connect" href="/api/google/connect"><Link2 size={15} /> Connect Gmail</a>}
+              {!gmailCampaignSendEnabled && <div className="safety-note"><CircleAlert size={15} /> Local Gmail sending is disabled in this environment.</div>}
+              {sendError && <div className="campaign-send-error" role="alert"><CircleAlert size={15} /> {sendError}</div>}
             </aside>
           </div>
         </section>
@@ -417,21 +430,10 @@ export default function EmailCampaignsClient({
         <div>{step === 0 && selectedCandidates.length === 0 ? <span className="validation-note">Select at least one eligible candidate.</span> : step === 1 && !composeReady ? <span className="validation-note">Complete all fields to continue.</span> : null}</div>
         <div className="footer-actions">
           {step > 0 && <button type="button" className="back-button" onClick={() => setStep((current) => current - 1)}><ArrowLeft size={16} /> Back</button>}
-          {step < 3 && <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to {STEPS[step + 1]} <ArrowRight size={16} /></button>}
+          {step < 3 && <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to {CAMPAIGN_STEPS[step + 1]} <ArrowRight size={16} /></button>}
         </div>
       </div>
 
-      {demoModalOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDemoModalOpen(false); }}>
-          <div className="demo-modal" role="dialog" aria-modal="true" aria-labelledby="demo-modal-title">
-            <div className="modal-icon"><Mail size={24} /></div>
-            <span className="demo-badge">Demo mode</span>
-            <h2 id="demo-modal-title">No emails were {demoAction}</h2>
-            <p>Email delivery is not connected yet. No messages were sent or scheduled.</p>
-            <button type="button" onClick={() => setDemoModalOpen(false)}>Close and return to review</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -459,6 +461,10 @@ function ReviewCard({ title, children }: { title: string; children: React.ReactN
 
 function ReviewValue({ label, value, wide }: { label: string; value: string; wide?: boolean }) {
   return <div className={wide ? "wide" : ""}><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function ResultMetric({ label, value, tone = "default" }: { label: string; value: number; tone?: "default" | "good" | "warning" }) {
+  return <div className={tone}><span>{label}</span><strong>{value}</strong></div>;
 }
 
 const styles = `
@@ -501,7 +507,7 @@ const styles = `
   .field { display: block; margin-bottom: 16px; } .field:last-child { margin-bottom: 0; } .field>span { display: flex; justify-content: space-between; color: ${C.navy}; font: 700 12.5px ${HEAD}; margin-bottom: 7px; } .field>span small { color: ${C.muted}; font: 400 10.5px 'Open Sans', sans-serif; }
   .field input, .field textarea { width: 100%; border: 1px solid #DADDE6; border-radius: 9px; background: #fff; color: ${C.gray}; padding: 10px 12px; font: 13.5px 'Open Sans', sans-serif; outline: none; } .field textarea { resize: vertical; line-height: 1.6; min-height: 250px; }
   .field input:focus, .field textarea:focus { border-color: ${C.navy2}; box-shadow: 0 0 0 3px rgba(72,95,146,.1); }
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } .two-col .field { margin-bottom: 0; }
+  .gmail-compose-sender { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 11px 12px; color: ${C.muted}; background: #FAFBFE; border: 1px solid ${C.line}; border-radius: 9px; font-size: 12px; } .gmail-compose-sender strong { color: ${C.navy}; overflow-wrap: anywhere; }
   .variables-card { padding: 18px; position: sticky; top: 16px; } .variables-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: ${C.navy}; font: 700 15px ${HEAD}; } .variables-heading small { color: ${C.orange}; background: #FBE7DF; padding: 3px 7px; border-radius: 999px; font: 700 9.5px ${MONO}; }
   .variables-card>p { color: ${C.muted}; font-size: 12px; line-height: 1.5; } .variable-list { display: flex; flex-wrap: wrap; gap: 7px; } .variable-list button { border: 1px solid ${C.line}; background: #FAFBFE; color: ${C.navy2}; padding: 6px 8px; border-radius: 7px; font: 600 10.5px ${MONO}; cursor: pointer; } .variable-list button:hover { border-color: ${C.orange}; color: ${C.orange}; }
   .tip, .personalization-note, .safety-note { display: flex; align-items: flex-start; gap: 7px; color: ${C.muted}; font-size: 11px; line-height: 1.45; } .tip { border-top: 1px solid ${C.line}; margin-top: 16px; padding-top: 13px; } .tip svg, .personalization-note svg, .safety-note svg { flex: 0 0 auto; }
@@ -517,12 +523,16 @@ const styles = `
   .recipient-list, .exclusion-list { display: grid; gap: 0; } .recipient-list>div, .exclusion-list>div { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid ${C.line}; } .recipient-list>div:first-child, .exclusion-list>div:first-child { border-top: 0; padding-top: 0; } .recipient-list>div:last-child, .exclusion-list>div:last-child { padding-bottom: 0; } .recipient-list>div>div, .exclusion-list>div>div { flex: 1; min-width: 0; } .recipient-list strong, .exclusion-list strong { display: block; color: ${C.gray}; font-size: 12.5px; } .recipient-list small, .exclusion-list small { display: block; color: ${C.muted}; font-size: 10.5px; margin-top: 2px; overflow-wrap: anywhere; } .recipient-list>div>svg { color: ${C.good}; }
   .avatar { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; color: ${C.navy2}; background: #EEF2F8; font: 700 10px ${MONO}; flex: 0 0 auto; }
   .send-card { position: sticky; top: 16px; padding: 22px; text-align: center; } .send-icon { display: grid; place-items: center; width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 13px; color: ${C.orange}; background: #FBE7DF; } .send-card h3 { color: ${C.navy}; font-size: 19px; margin: 0; } .send-card>p { color: ${C.muted}; font-size: 12px; line-height: 1.55; }
-  .primary-action, .secondary-action { width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; border-radius: 9px; padding: 10px 14px; font-weight: 700; cursor: pointer; } .primary-action { color: #fff; background: ${C.navy}; border: 1px solid ${C.navy}; } .secondary-action { color: ${C.navy}; background: #fff; border: 1px solid ${C.line}; margin-top: 8px; }
+  .primary-action { width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; border-radius: 9px; padding: 10px 14px; color: #fff; background: ${C.navy}; border: 1px solid ${C.navy}; font-weight: 700; cursor: pointer; } .primary-action:disabled { opacity: .42; cursor: not-allowed; }
+  .send-warning { display: flex; align-items: flex-start; gap: 7px; margin: 14px 0; padding: 10px; color: #7A5A0A; background: #FFF7DC; border-radius: 9px; font-size: 11px; line-height: 1.45; text-align: left; } .send-warning svg { flex: 0 0 auto; }
+  .campaign-confirmation { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; color: ${C.gray}; font-size: 11px; line-height: 1.45; text-align: left; } .campaign-confirmation input { width: 16px; height: 16px; flex: 0 0 auto; accent-color: ${C.navy}; }
+  .review-connect { width: 100%; margin-top: 9px; }
   .safety-note { justify-content: center; color: ${C.orange}; margin-top: 14px; }
+  .campaign-send-error { display: flex; align-items: flex-start; gap: 7px; margin-top: 11px; padding: 9px; color: ${C.orange}; background: #FBE7DF; border-radius: 8px; font-size: 11px; line-height: 1.4; text-align: left; }
+  .result-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; } .result-metrics>div { display: grid; gap: 2px; padding: 10px; background: #F7F8FB; border-radius: 9px; } .result-metrics span { color: ${C.muted}; font-size: 10px; text-transform: uppercase; } .result-metrics strong { color: ${C.navy}; font: 700 20px ${HEAD}; } .result-metrics .good strong { color: ${C.good}; } .result-metrics .warning strong { color: ${C.orange}; }
+  .campaign-results { display: grid; } .campaign-results>div { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid ${C.line}; } .campaign-results>div>div:first-child { min-width: 0; } .campaign-results strong { display: block; color: ${C.gray}; font-size: 12.5px; } .campaign-results small { display: block; margin-top: 3px; color: ${C.muted}; font-size: 10.5px; overflow-wrap: anywhere; } .campaign-results code { font: 600 10px ${MONO}; } .result-status { display: flex; flex-direction: column; align-items: flex-end; max-width: 55%; text-align: right; }
   .wizard-footer { justify-content: space-between; gap: 16px; min-height: 44px; margin-top: 20px; } .footer-actions { gap: 9px; margin-left: auto; } .back-button, .next-button { display: inline-flex; align-items: center; gap: 8px; border-radius: 9px; padding: 10px 15px; font-weight: 700; cursor: pointer; } .back-button { color: ${C.navy}; background: #fff; border: 1px solid ${C.line}; } .next-button { color: #fff; background: ${C.navy}; border: 1px solid ${C.navy}; } .next-button:disabled { opacity: .45; cursor: not-allowed; } .validation-note { color: ${C.orange}; font-size: 12px; }
-  .modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(17,18,62,.48); backdrop-filter: blur(3px); animation: demoFade .16s ease; } .demo-modal { width: min(430px, 100%); background: #fff; border-radius: 17px; padding: 28px; box-shadow: 0 24px 70px rgba(17,18,62,.25); text-align: center; animation: demoPop .18s ease; } .modal-icon { display: grid; place-items: center; width: 50px; height: 50px; margin: 0 auto 13px; color: ${C.orange}; background: #FBE7DF; border-radius: 14px; } .demo-modal .demo-badge { margin: 0 auto; } .demo-modal h2 { color: ${C.navy}; font-size: 23px; margin: 12px 0 7px; } .demo-modal p { color: ${C.muted}; font-size: 13px; line-height: 1.55; margin: 0 0 20px; } .demo-modal button { width: 100%; color: #fff; background: ${C.navy}; border: 0; border-radius: 9px; padding: 11px; font-weight: 700; cursor: pointer; }
-  @keyframes demoFade { from { opacity: 0; } } @keyframes demoPop { from { opacity: 0; transform: translateY(8px) scale(.98); } }
   @media (max-width: 980px) { .metrics-grid { grid-template-columns: repeat(3, 1fr); } .compose-layout, .review-grid { grid-template-columns: 1fr; } .variables-card, .send-card { position: static; } .preview-layout { grid-template-columns: 210px minmax(0, 1fr); } }
-  @media (max-width: 720px) { .email-campaigns-page { padding: 20px 14px 60px; } .campaign-heading, .section-title { align-items: flex-start; flex-direction: column; } .previewing-note { width: 100%; } .gmail-connection-card { grid-template-columns: auto minmax(0, 1fr); align-items: start; } .gmail-connection-card form, .gmail-connection-card>.gmail-action { grid-column: 1 / -1; width: 100%; } .stepper { grid-template-columns: repeat(4, minmax(48px, 1fr)); } .step { flex-direction: column; gap: 4px; font-size: 10px; padding: 7px 2px; } .metrics-grid { grid-template-columns: repeat(2, 1fr); } .compose-layout, .preview-layout, .review-grid { grid-template-columns: 1fr; } .two-col, .review-details { grid-template-columns: 1fr; } .preview-title { align-items: stretch; } .recipient-switcher select { flex: 1; min-width: 0; } .email-meta { padding: 12px 14px; } .email-meta>div { grid-template-columns: 58px 1fr; } .email-body { min-height: 300px; padding: 22px 18px 30px; } .wizard-footer { align-items: flex-start; flex-direction: column; } .footer-actions { width: 100%; } .footer-actions button { flex: 1; justify-content: center; } }
+  @media (max-width: 720px) { .email-campaigns-page { padding: 20px 14px 60px; } .campaign-heading, .section-title { align-items: flex-start; flex-direction: column; } .previewing-note { width: 100%; } .gmail-connection-card { grid-template-columns: auto minmax(0, 1fr); align-items: start; } .gmail-connection-card form, .gmail-connection-card>.gmail-action { grid-column: 1 / -1; width: 100%; } .stepper { grid-template-columns: repeat(4, minmax(48px, 1fr)); } .step { flex-direction: column; gap: 4px; font-size: 10px; padding: 7px 2px; } .metrics-grid { grid-template-columns: repeat(2, 1fr); } .compose-layout, .preview-layout, .review-grid { grid-template-columns: 1fr; } .review-details { grid-template-columns: 1fr; } .preview-title { align-items: stretch; } .recipient-switcher select { flex: 1; min-width: 0; } .email-meta { padding: 12px 14px; } .email-meta>div { grid-template-columns: 58px 1fr; } .email-body { min-height: 300px; padding: 22px 18px 30px; } .wizard-footer { align-items: flex-start; flex-direction: column; } .footer-actions { width: 100%; } .footer-actions button { flex: 1; justify-content: center; } .result-metrics { grid-template-columns: repeat(2, 1fr); } .campaign-results>div { flex-direction: column; } .result-status { align-items: flex-start; max-width: none; text-align: left; } }
   @media (max-width: 430px) { .metrics-grid { grid-template-columns: 1fr; } .metric div span { white-space: normal; } .step>span:last-child { display: none; } }
 `;

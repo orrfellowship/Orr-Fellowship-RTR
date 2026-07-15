@@ -15,6 +15,12 @@ export type GmailSendResult = {
   threadId: string | null;
 };
 
+export type GmailSendSession = {
+  sender: string;
+  accessToken: string;
+  fetchImpl: typeof fetch;
+};
+
 export type SafeTestSendError = {
   success: false;
   error: {
@@ -230,6 +236,15 @@ export async function sendOneGmailTestForUser(
   dependencies: TestSendDependencies = {},
 ): Promise<GmailSendResult> {
   const input = validateGmailTestInput(value);
+  const session = await createGmailSendSessionForUser(userId, dependencies);
+  const { raw } = buildGmailMimeMessage({ ...input, sender: session.sender });
+  return sendRawGmailMessage(session.accessToken, raw, session.fetchImpl);
+}
+
+export async function createGmailSendSessionForUser(
+  userId: string,
+  dependencies: TestSendDependencies = {},
+): Promise<GmailSendSession> {
   const connection = await (dependencies.loadConnection ?? loadStoredConnection)(userId);
   if (!connection) {
     throw new GmailTestSendError("missing_connection", "Connect Gmail before sending a test message.", 409);
@@ -245,8 +260,7 @@ export async function sendOneGmailTestForUser(
 
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const accessToken = await refreshGoogleAccessToken(refreshToken, config, fetchImpl);
-  const { raw } = buildGmailMimeMessage({ ...input, sender: connection.google_email });
-  return sendRawGmailMessage(accessToken, raw, fetchImpl);
+  return { sender: normalizeOrrEmail(connection.google_email), accessToken, fetchImpl };
 }
 
 export type { StoredGmailConnection, TestSendDependencies };

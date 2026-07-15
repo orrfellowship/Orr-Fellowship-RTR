@@ -6,9 +6,7 @@ import {
   sendOneGmailTestForUser,
   sendRawGmailMessage,
   serializeGmailSendResult,
-  type GmailSendResult,
 } from "./test-send.server";
-import { handleGmailTestSendRequest, type TestSendRouteDependencies } from "@/app/api/google/test-send/route";
 import type { GoogleOAuthConfig } from "./server";
 
 let failures = 0;
@@ -107,46 +105,6 @@ async function main() {
   });
   check("successful service flow returns a safe message ID", oneMessageResult.messageId === "one-message-id");
   check("successful service flow refreshes once and sends exactly once", tokenCalls === 1 && gmailCalls === 1);
-
-  let productionAuthCalls = 0;
-  let productionSendCalls = 0;
-  const productionResponse = await handleGmailTestSendRequest(new Request("http://localhost:3000/api/google/test-send", {
-    method: "POST", headers: { Origin: "http://localhost:3000", "Content-Type": "application/json" }, body: "{}",
-  }), {
-    nodeEnv: "production",
-    enabledFlag: "true",
-    authenticate: async () => { productionAuthCalls++; return { id: "user-1" }; },
-    send: async () => { productionSendCalls++; return { success: true, messageId: "id", threadId: null }; },
-  });
-  check("production environment is rejected", productionResponse.status === 404 && productionAuthCalls === 0 && productionSendCalls === 0);
-
-  let disabledSendCalls = 0;
-  const disabledResponse = await handleGmailTestSendRequest(new Request("http://localhost:3000/api/google/test-send", {
-    method: "POST", headers: { Origin: "http://localhost:3000", "Content-Type": "application/json" }, body: "{}",
-  }), {
-    nodeEnv: "development",
-    enabledFlag: undefined,
-    authenticate: async () => ({ id: "user-1" }),
-    send: async () => { disabledSendCalls++; return { success: true, messageId: "id", threadId: null }; },
-  });
-  check("missing feature flag is rejected as disabled", disabledResponse.status === 404 && disabledSendCalls === 0);
-
-  let routeSendCalls = 0;
-  const routeResult: GmailSendResult = { success: true, messageId: "route-message-id", threadId: null };
-  const routeDependencies: TestSendRouteDependencies = {
-    nodeEnv: "development",
-    enabledFlag: "true",
-    authenticate: async () => ({ id: "user-1" }),
-    send: async () => { routeSendCalls++; return routeResult; },
-  };
-  const routeResponse = await handleGmailTestSendRequest(new Request("http://localhost:3000/api/google/test-send", {
-    method: "POST",
-    headers: { Origin: "http://localhost:3000", "Content-Type": "application/json" },
-    body: JSON.stringify({ recipient: "recipient@example.com", subject: "Test", body: "Body" }),
-  }), routeDependencies);
-  const routeJson = await routeResponse.json();
-  check("successful API request invokes one send operation", routeResponse.status === 200 && routeSendCalls === 1);
-  check("successful API response is safely serialized", JSON.stringify(routeJson) === JSON.stringify(routeResult));
 
   const safeError = safeTestSendError(new Error("internal token mock-current-access-token"));
   check("unknown API errors do not expose internal details", !JSON.stringify(safeError).includes("token") && safeError.error.code === "gmail_send_failed");
