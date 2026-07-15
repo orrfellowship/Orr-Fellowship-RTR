@@ -135,17 +135,44 @@ async function main() {
   check("duplicate in-flight submission reuses one campaign operation", idempotentSendCalls === 1 && JSON.stringify(firstResult) === JSON.stringify(duplicateResult));
 
   const safeRouteResult: DemoCampaignResult = { success: true, attempted: 1, sent: 1, failed: 0, excluded: 0, recipients: [{ candidateId: "ava-patel", candidateName: "Ava Patel", maskedRecipient: "sa***@example.com", status: "sent", messageId: "safe-message-id" }] };
-  let productionAuthCalls = 0;
   let productionSendCalls = 0;
-  const productionResponse = await handleDemoCampaignRequest(new Request("http://localhost:3000/api/google/send-demo-campaign", {
-    method: "POST", headers: { Origin: "http://localhost:3000", "Content-Type": "application/json" }, body: "{}",
+  const productionResponse = await handleDemoCampaignRequest(new Request("https://rtr.orrfellowship.org/api/google/send-demo-campaign", {
+    method: "POST", headers: { Origin: "https://rtr.orrfellowship.org", "Content-Type": "application/json" }, body: JSON.stringify(input()),
+  }), {
+    nodeEnv: "production",
+    enabledFlag: undefined,
+    productionEnabledFlag: "true",
+    authenticate: async () => ({ id: "user-1" }),
+    previewing: async () => false,
+    send: async () => { productionSendCalls++; return safeRouteResult; },
+  });
+  check("the explicit production smoke-test flag allows a controlled send", productionResponse.status === 200 && productionSendCalls === 1);
+
+  const productionMultipleResponse = await handleDemoCampaignRequest(new Request("https://rtr.orrfellowship.org/api/google/send-demo-campaign", {
+    method: "POST", headers: { Origin: "https://rtr.orrfellowship.org", "Content-Type": "application/json" },
+    body: JSON.stringify(input({ selectedCandidateIds: ["ava-patel", "elena-garcia"] })),
+  }), {
+    nodeEnv: "production",
+    enabledFlag: undefined,
+    productionEnabledFlag: "true",
+    authenticate: async () => ({ id: "user-1" }),
+    previewing: async () => false,
+    send: async () => safeRouteResult,
+  });
+  check("production smoke tests permit only one selected candidate", productionMultipleResponse.status === 400);
+
+  let productionDisabledAuthCalls = 0;
+  const productionDisabledResponse = await handleDemoCampaignRequest(new Request("https://rtr.orrfellowship.org/api/google/send-demo-campaign", {
+    method: "POST", headers: { Origin: "https://rtr.orrfellowship.org", "Content-Type": "application/json" }, body: "{}",
   }), {
     nodeEnv: "production",
     enabledFlag: "true",
-    authenticate: async () => { productionAuthCalls++; return { id: "user-1" }; },
-    send: async () => { productionSendCalls++; return safeRouteResult; },
+    productionEnabledFlag: undefined,
+    authenticate: async () => { productionDisabledAuthCalls++; return { id: "user-1" }; },
+    previewing: async () => false,
+    send: async () => safeRouteResult,
   });
-  check("production environment is rejected before authentication or sending", productionResponse.status === 404 && productionAuthCalls === 0 && productionSendCalls === 0);
+  check("the local flag cannot enable production sending", productionDisabledResponse.status === 404 && productionDisabledAuthCalls === 0);
 
   let disabledSendCalls = 0;
   const disabledResponse = await handleDemoCampaignRequest(new Request("http://localhost:3000/api/google/send-demo-campaign", {
@@ -153,7 +180,9 @@ async function main() {
   }), {
     nodeEnv: "development",
     enabledFlag: undefined,
+    productionEnabledFlag: undefined,
     authenticate: async () => ({ id: "user-1" }),
+    previewing: async () => false,
     send: async () => { disabledSendCalls++; return safeRouteResult; },
   });
   check("missing feature flag is rejected before sending", disabledResponse.status === 404 && disabledSendCalls === 0);
@@ -162,7 +191,9 @@ async function main() {
   const routeDependencies: DemoCampaignRouteDependencies = {
     nodeEnv: "development",
     enabledFlag: "true",
+    productionEnabledFlag: undefined,
     authenticate: async () => ({ id: "user-1" }),
+    previewing: async () => false,
     send: async () => { routeSendCalls++; return safeRouteResult; },
   };
   const routeResponse = await handleDemoCampaignRequest(new Request("http://localhost:3000/api/google/send-demo-campaign", {
@@ -173,6 +204,11 @@ async function main() {
   const routeJson = await routeResponse.json();
   check("successful API request invokes exactly one campaign service operation", routeResponse.status === 200 && routeSendCalls === 1);
   check("successful API response is safely serialized", JSON.stringify(routeJson) === JSON.stringify(safeRouteResult));
+
+  const previewResponse = await handleDemoCampaignRequest(new Request("http://localhost:3000/api/google/send-demo-campaign", {
+    method: "POST", headers: { Origin: "http://localhost:3000", "Content-Type": "application/json" }, body: JSON.stringify(input()),
+  }), { ...routeDependencies, previewing: async () => true });
+  check("View As mode cannot send the controlled campaign", previewResponse.status === 403);
 
   console.log(failures === 0 ? "\nAll Gmail demo-campaign checks passed." : `\n${failures} Gmail demo-campaign check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);

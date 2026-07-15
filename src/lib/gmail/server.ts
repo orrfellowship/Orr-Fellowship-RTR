@@ -7,6 +7,7 @@ import {
   type EncryptedRefreshToken,
 } from "./security.server";
 import type { GmailConnectionStatus } from "./types";
+import { isAdminPlus, type AppRole } from "@/lib/types";
 
 export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 export const GOOGLE_IDENTITY_SCOPES = ["openid", "email"] as const;
@@ -66,6 +67,18 @@ export async function getAuthenticatedRtrUser() {
     .eq("id", user.id)
     .maybeSingle();
   return profile?.is_active ? user : null;
+}
+
+export async function getAuthenticatedRtrAdmin() {
+  const supabase = await createServerSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id, role, is_active")
+    .eq("id", user.id)
+    .maybeSingle();
+  return profile?.is_active && isAdminPlus(profile.role as AppRole) ? { id: user.id } : null;
 }
 
 export async function getGmailConnectionStatusForUser(userId: string): Promise<GmailConnectionStatus> {
