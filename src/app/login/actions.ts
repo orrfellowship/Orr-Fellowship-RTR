@@ -29,7 +29,7 @@ export async function signInWithEmailPassword(email: string, password: string) {
 export async function sendPasswordReset(email: string, redirectTo: string) {
   const blocked = await checkProfileAllowed(email);
   if (blocked) return { error: blocked };
-  // Generate a recovery link (admin) and deliver it via our SMTP — same as
+  // Generate a recovery link (admin) and deliver it via our transactional email path — same as
   // invites. The link carries a hashed token the reset-callback verifies with
   // verifyOtp(); the PKCE code-exchange flow doesn't work for emailed links.
   const service = createServiceClient();
