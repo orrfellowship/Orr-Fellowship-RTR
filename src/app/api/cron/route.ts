@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
 import { evaluateCandidate, DIGEST_KINDS } from "@/lib/triggers";
+import { drainOutreachQueue } from "@/lib/gmail/outreach-queue.server";
 import { fetchAllRows } from "@/lib/queries";
 import { phaseOf } from "@/lib/stages";
 
@@ -48,6 +49,14 @@ async function run(req: NextRequest) {
       html: emailLayout({ heading: "It works ✓", bodyHtml: "<div>If you're reading this, the cron route and transactional email provider are wired up correctly.</div>" }),
     });
     return NextResponse.json({ ok: res.ok, emailConfigured: emailConfigured(), result: res });
+  }
+
+  // Outreach send queue: drain a time-budgeted chunk of queued Gmail sends.
+  // Scheduled every minute (db/phase16.sql) and also poked right after a
+  // fellow enqueues a campaign, so the first messages leave within seconds.
+  if (job === "outreach") {
+    const outreach = await drainOutreachQueue();
+    return NextResponse.json({ ok: true, job, outreach });
   }
 
   if (job === "digest") {

@@ -46,18 +46,27 @@ create index if not exists candidates_do_not_contact_idx
 --    Read: your own campaigns; admins see all. Writes via the service role.
 -- ---------------------------------------------------------------------------
 create table if not exists public.outreach_campaigns (
-  id           uuid primary key default gen_random_uuid(),
-  created_by   uuid not null references public.profiles(id) on delete cascade,
-  name         text not null,
-  subject      text not null,
-  body         text not null,
-  status       text not null default 'queued'
-               check (status in ('queued','sending','sent','partial','failed','canceled')),
-  total_count  integer not null default 0,   -- rows enqueued (incl. skips)
-  created_at   timestamptz not null default now(),
-  updated_at   timestamptz not null default now(),
-  completed_at timestamptz
+  id              uuid primary key default gen_random_uuid(),
+  created_by      uuid not null references public.profiles(id) on delete cascade,
+  name            text not null,
+  subject         text not null,
+  body            text not null,
+  status          text not null default 'queued'
+                  check (status in ('queued','sending','sent','partial','failed','canceled')),
+  total_count     integer not null default 0,   -- rows enqueued (incl. skips)
+  idempotency_key text,                          -- guards double-submit (per creator)
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  completed_at    timestamptz
 );
+
+-- A creator's idempotency key maps to at most one campaign, so a double-click
+-- (or a retried request) re-uses the first campaign instead of sending twice.
+alter table public.outreach_campaigns
+  add column if not exists idempotency_key text;
+create unique index if not exists outreach_campaigns_idempotency_idx
+  on public.outreach_campaigns (created_by, idempotency_key)
+  where idempotency_key is not null;
 
 alter table public.outreach_campaigns enable row level security;
 grant select on public.outreach_campaigns to authenticated;

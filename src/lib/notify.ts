@@ -15,7 +15,8 @@ export type NotificationType =
   | "tagged"           // someone tagged you on a warm intro (Phase 4)
   | "event_reminder"   // day-before reminder for an "attend" event
   | "help_request"     // a fellow/lead asked an admin for help
-  | "missing_linkedin"; // admin nudge: active candidates missing a LinkedIn
+  | "missing_linkedin"  // admin nudge: active candidates missing a LinkedIn
+  | "outreach_error";  // an outreach campaign had failed sends (sender + admins)
 
 export async function queueNotification(n: {
   recipientId: string;

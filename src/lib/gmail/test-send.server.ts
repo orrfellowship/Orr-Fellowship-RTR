@@ -222,6 +222,11 @@ export async function sendRawGmailMessage(
     if (response.status === 401 || response.status === 403) {
       throw new GmailTestSendError("gmail_permission_denied", "Google rejected the Gmail permission. Reconnect Gmail and try again.", 409);
     }
+    // 429 (and Gmail's 5xx) are transient throttling — surfaced distinctly so
+    // the outreach drainer can back off and retry rather than mark a hard fail.
+    if (response.status === 429 || response.status >= 500) {
+      throw new GmailTestSendError("gmail_rate_limited", "Google is rate-limiting sends right now. This will retry automatically.", 429);
+    }
     throw new GmailTestSendError("gmail_send_failed", "Google could not send the test message.", 502);
   }
   return serializeGmailSendResult(await response.json());
