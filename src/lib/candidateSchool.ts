@@ -1,4 +1,4 @@
-import { routeToSchoolName } from "@/lib/stages";
+import { routeToSchoolName, routeUniversity } from "@/lib/stages";
 
 export type CandidateSchool = {
   id: string;
@@ -72,14 +72,16 @@ export function candidateSchoolDisplay(candidate: CandidateSchoolFields, schools
 }
 
 // Where the routing table says a raw university string belongs today: a core
-// school's own row, or the representative row of its satellite/bonus tier.
+// school's own row, the representative row of a seeded satellite/bonus school's
+// tier, or the satellite representative for regional IU/Purdue campuses.
 // null = the string doesn't route (unknown school → Bonus catch-all is fine).
 export function expectedSchoolIdForRaw(raw: string | null | undefined, schools: CandidateSchool[]): string | null {
   const typed = (raw ?? "").trim();
   if (!typed) return null;
-  const routed = routeToSchoolName(typed);
-  if (!routed) return null;
-  const target = schools.find((s) => s.name.toLowerCase() === routed.toLowerCase());
+  const route = routeUniversity(typed);
+  if (!route) return null;
+  if ("group" in route) return representativeSchoolId(schools, route.group);
+  const target = schools.find((s) => s.name.toLowerCase() === route.school.toLowerCase());
   if (!target) return null;
   return target.tier === "satellite" || target.tier === "bonus"
     ? representativeSchoolId(schools, target.tier) ?? target.id
@@ -96,10 +98,12 @@ export function isGroupRepresentativeSchool(schoolId: string, schools: Candidate
 }
 
 // Candidates whose stored school no longer matches where their raw university
-// text routes — e.g. "IU Indianapolis" sitting in the Bonus group because the
-// routing table didn't recognize it at import time. Only unrouted candidates
-// and group-routed (tier-representative) assignments are flagged; a candidate
-// an admin explicitly placed on a specific school is never second-guessed.
+// text routes — e.g. "IU Indianapolis" sitting in the Bonus group (or on the
+// flagship IU row) because the routing table filed it wrong at import time.
+// Flagged: unrouted candidates, group-routed (tier-representative) assignments,
+// and core-row assignments (those come from automated routing too — this is how
+// campus candidates stuck on flagship IU/Purdue get surfaced). A candidate an
+// admin placed on a specific satellite/bonus school is never second-guessed.
 export function findMisrouted<T extends CandidateSchoolFields & { id: string }>(
   candidates: T[],
   schools: CandidateSchool[],
@@ -108,7 +112,11 @@ export function findMisrouted<T extends CandidateSchoolFields & { id: string }>(
   for (const c of candidates) {
     const expected = expectedSchoolIdForRaw(c.university_raw, schools);
     if (!expected || expected === c.school_id) continue;
-    if (c.school_id && !isGroupRepresentativeSchool(c.school_id, schools)) continue;
+    if (c.school_id) {
+      const current = schools.find((s) => s.id === c.school_id);
+      const reroutable = current?.tier === "core" || isGroupRepresentativeSchool(c.school_id, schools);
+      if (!reroutable) continue;
+    }
     out.push({ candidate: c, expectedSchoolId: expected });
   }
   return out;

@@ -16,12 +16,12 @@ import { createServerSupabase, createServiceClient } from "@/lib/supabase/server
 import { getCurrentProfile, isPreviewing, VIEW_AS_COOKIE } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources, canReassign } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
-import { routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
+import { routeToSchoolNameByEmail } from "@/lib/stages";
 import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
 import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
-import { representativeSchoolId, findMisrouted } from "@/lib/candidateSchool";
+import { representativeSchoolId, findMisrouted, expectedSchoolIdForRaw } from "@/lib/candidateSchool";
 import { planDuplicateDeletions } from "@/lib/duplicates";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
@@ -906,16 +906,8 @@ function factualFromSnapshot(m: any, school_id: string | null) {
 }
 
 async function routeSchoolId(db: ReturnType<typeof createServiceClient>, universityRaw: string | null) {
-  const name = routeToSchoolName(universityRaw);
-  if (!name) return null;
   const { data: rows } = await db.from("schools").select("id, name, tier");
-  const schools = rows ?? [];
-  const matched = schools.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
-  if (!matched) return null;
-  if (matched.tier === "satellite" || matched.tier === "bonus") {
-    return representativeSchoolId(schools as any[], matched.tier) ?? matched.id;
-  }
-  return matched.id;
+  return expectedSchoolIdForRaw(universityRaw, (rows ?? []) as any[]);
 }
 
 // Approve a name-only match: link the JazzHR applicant to the suspected candidate.

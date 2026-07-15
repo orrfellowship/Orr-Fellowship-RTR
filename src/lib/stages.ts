@@ -88,10 +88,31 @@ export function mostAdvancedStage(progressValues: string[]): string | null {
 // ----------------------------------------------------------------------------
 interface SchoolMatch { school_name: string; match: string[]; }
 
-// NB: school_name values map to the seeded `schools.name` rows.
+// Regional IU/Purdue campuses belong to the SATELLITE SCHOOLS group, not to the
+// flagship core rows below. Checked BEFORE SCHOOL_MATCH so "IU Indianapolis"
+// never falls through to the flagship "iu"/"purdue" patterns.
+export const SATELLITE_CAMPUS_MATCH: string[] = [
+  // IUPUI and its successors / long forms
+  "indiana university purdue university", "iupui", "iupuc", "pui", "iui",
+  // IU regional campuses
+  "indiana university indianapolis", "indiana university indy", "indiana university south bend",
+  "indiana university east", "indiana university kokomo", "indiana university northwest",
+  "indiana university southeast", "indiana university columbus", "indiana university fort wayne",
+  "iu indianapolis", "iu indy", "iu south bend", "iu east", "iu kokomo",
+  "iu northwest", "iu southeast", "iu columbus", "iu fort wayne",
+  "iusb", "iue", "iuk", "iun", "ius",
+  // Purdue regional campuses
+  "purdue university indianapolis", "purdue university fort wayne", "purdue university northwest",
+  "purdue indianapolis", "purdue indy", "purdue fort wayne", "purdue northwest",
+  "pfw", "ipfw", "pnw",
+];
+
+// NB: school_name values map to the seeded `schools.name` rows. Purdue and IU
+// here are the FLAGSHIPS only (West Lafayette / Bloomington) — regional
+// campuses are intercepted by SATELLITE_CAMPUS_MATCH above.
 export const SCHOOL_MATCH: SchoolMatch[] = [
-  { school_name: "Purdue", match: ["purdue university indianapolis", "purdue university fort wayne", "purdue university", "purdue fort wayne", "purdue", "iupui", "pui"] },
-  { school_name: "IU", match: ["indiana university bloomington", "indiana university indianapolis", "indiana university south bend", "indiana university east", "indiana university", "iu bloomington", "iu indianapolis", "iu south bend", "iu east", "iu kokomo", "iu northwest", "iu southeast", "iu columbus", "iu fort wayne", "iu online", "iub", "iui", "iu"] },
+  { school_name: "Purdue", match: ["purdue university west lafayette", "purdue west lafayette", "purdue university", "purdue"] },
+  { school_name: "IU", match: ["indiana university bloomington", "indiana university", "iu bloomington", "iub", "iu"] },
   { school_name: "Ball State", match: ["ball state university", "ball state"] },
   { school_name: "Indiana State", match: ["indiana state university", "indiana state", "isu terre haute"] },
   { school_name: "USI", match: ["university of southern indiana", "usi", "southern indiana"] },
@@ -147,14 +168,36 @@ function termMatches(u: string, term: string): boolean {
   return u.includes(term);
 }
 
-// Returns the seeded school NAME this university routes to, or null (unrouted).
-export function routeToSchoolName(university: string | null): string | null {
+// Where a raw university string belongs: a seeded school row (by name), the
+// Satellite Schools group (regional IU/Purdue campuses), or nowhere (null →
+// callers decide; bulk import sends unknowns to the Bonus group).
+export type UniversityRoute = { school: string } | { group: "satellite" };
+export function routeUniversity(university: string | null): UniversityRoute | null {
   if (!university) return null;
   const u = normalizeUniversity(university);
+  if (SATELLITE_CAMPUS_MATCH.some((m) => termMatches(u, m))) return { group: "satellite" };
   for (const entry of SCHOOL_MATCH) {
-    if (entry.match.some((m) => termMatches(u, m))) return entry.school_name;
+    if (entry.match.some((m) => termMatches(u, m))) return { school: entry.school_name };
   }
   return null;
+}
+
+// Returns the seeded school NAME this university routes to, or null. Regional
+// IU/Purdue campuses return null here (they route to the satellite GROUP, not
+// a named row) — use routeUniversity when the group matters.
+export function routeToSchoolName(university: string | null): string | null {
+  const r = routeUniversity(university);
+  return r && "school" in r ? r.school : null;
+}
+
+// Canonical key for "same school?" comparisons (JazzHR ↔ sourced matching):
+// seeded-school routes compare by school name, everything else (satellite
+// campuses, unrouted) by the normalized raw text — so "IU South Bend" matches
+// "IU-South Bend" but never "IU East".
+export function universityMatchKey(university: string | null): string {
+  const name = routeToSchoolName(university);
+  if (name) return name;
+  return university ? normalizeUniversity(university) : "";
 }
 
 // ----------------------------------------------------------------------------
@@ -239,13 +282,17 @@ export function resolveCandidateSchool(
   }
 
   const exact = schools.find((s) => s.name.toLowerCase() === lc);
-  if (exact?.tier === "core") return { school_id: exact.id, university_raw: null };
+  // Core matches keep the typed text too — provenance for later routing review.
+  if (exact?.tier === "core") return { school_id: exact.id, university_raw: t };
   if (exact?.tier === "satellite" || exact?.tier === "bonus") return { school_id: firstByTier(exact.tier)?.id ?? exact.id, university_raw: t };
   if (!exact) {
-    const routed = routeToSchoolName(t);
-    if (routed) {
-      const rs = schools.find((s) => s.name.toLowerCase() === routed.toLowerCase());
-      if (rs?.tier === "core") return { school_id: rs.id, university_raw: null };
+    const route = routeUniversity(t);
+    // Regional IU/Purdue campuses ("IU Indy", "Purdue Fort Wayne", "IUPUI"…)
+    // belong to the Satellite Schools group, not the flagship rows.
+    if (route && "group" in route) return { school_id: firstByTier(route.group)?.id ?? null, university_raw: t };
+    if (route && "school" in route) {
+      const rs = schools.find((s) => s.name.toLowerCase() === route.school.toLowerCase());
+      if (rs?.tier === "core") return { school_id: rs.id, university_raw: t };
       if (rs?.tier === "satellite" || rs?.tier === "bonus") return { school_id: firstByTier(rs.tier)?.id ?? rs.id, university_raw: t };
     }
   }
