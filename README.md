@@ -87,3 +87,26 @@ Before running scripts, API routes, sync flows, or SQL, confirm which Supabase p
 7. Apply [`db/phase15.sql`](db/phase15.sql) in the target Supabase project's SQL editor before deploying the code.
 
 The OAuth `hd` hint prefers `orrfellowship.org`, but the callback independently verifies the returned Google email. Refresh tokens are encrypted with AES-256-GCM before storage. The credential table is inaccessible to browser roles; only safe connection status fields are returned by the application.
+
+### Local one-message Gmail test (Phase 2)
+
+Phase 2 adds a deliberately restricted development-only proof that a connected account can send one real plain-text message through the Gmail API. It does not send campaigns, read candidate data, loop over recipients, schedule delivery, retry failures, or change the existing Resend integration.
+
+The endpoint is `POST /api/google/test-send`. It is unavailable whenever `NODE_ENV=production` and defaults to disabled in development. To enable the developer test panel locally, add this to `.env.local` and restart the development server:
+
+```sh
+ENABLE_GMAIL_TEST_SEND=true
+```
+
+Local manual test:
+
+1. Keep the Google OAuth project in Testing mode and ensure the intended `@orrfellowship.org` account is an allowed test user.
+2. Start the app with `npm run dev` and sign in to RTR.
+3. Open `/console/email-campaigns` and connect Gmail if needed.
+4. In **Developer Gmail test**, enter exactly one recipient, a subject, and a plain-text message.
+5. Check **I understand this will send one real email**.
+6. Click **Send one Gmail test** once.
+7. Confirm the UI shows the Gmail message ID and verify that the recipient received one message from the displayed connected account.
+8. Return `ENABLE_GMAIL_TEST_SEND=false` when testing is complete.
+
+The route refreshes the stored encrypted OAuth credential entirely on the server. Neither access tokens, refresh tokens, MIME content, nor raw Google responses are returned to the browser.

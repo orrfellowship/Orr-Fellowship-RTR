@@ -6,6 +6,7 @@ import {
   ChevronRight, CircleAlert, Clock3, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound, X,
 } from "lucide-react";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
+import GmailTestSendPanel from "@/components/GmailTestSendPanel";
 
 type DemoCandidate = {
   id: string;
@@ -124,9 +125,11 @@ function gmailNoticeText(notice: GmailNotice) {
 export default function EmailCampaignsClient({
   gmailConnection = DEFAULT_GMAIL_STATUS,
   gmailNotice = {},
+  gmailTestSendEnabled = false,
 }: {
   gmailConnection?: GmailConnectionStatus;
   gmailNotice?: GmailNotice;
+  gmailTestSendEnabled?: boolean;
 }) {
   const eligibleIds = useMemo(() => DEMO_CANDIDATES.filter(isEligible).map((candidate) => candidate.id), []);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(eligibleIds));
@@ -244,6 +247,8 @@ export default function EmailCampaignsClient({
           <a className="gmail-action" href="/api/google/connect"><Link2 size={15} /> Connect Gmail</a>
         )}
       </section>
+
+      {gmailTestSendEnabled && <GmailTestSendPanel connection={gmailConnection} />}
 
       <div className="stepper" aria-label="Campaign steps">
         {STEPS.map((label, index) => {

@@ -18,6 +18,7 @@ import SectionSkeleton from "@/components/nav/SectionSkeleton";
 import EmailCampaignsClient from "@/components/EmailCampaignsClient";
 import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
+import { isGmailTestSendEnabled } from "@/lib/gmail/test-send.server";
 
 export default async function ConsoleSection({
   params,
@@ -65,10 +66,14 @@ async function ConsoleSectionData({
     } catch {
       statusUnavailable = true;
     }
-    return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{
-      result: gmailQuery.gmail,
-      error: gmailQuery.gmail_error ?? (statusUnavailable ? "status_unavailable" : undefined),
-    }} />;
+    return <EmailCampaignsClient
+      gmailConnection={gmailConnection}
+      gmailNotice={{
+        result: gmailQuery.gmail,
+        error: gmailQuery.gmail_error ?? (statusUnavailable ? "status_unavailable" : undefined),
+      }}
+      gmailTestSendEnabled={isGmailTestSendEnabled()}
+    />;
   }
 
   // Admin Weekly Snapshot: categorized tasks (open help requests + candidates
