@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteCandidate } from "@/app/(app)/console/actions";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
-import { norm, nameSchoolKey } from "@/lib/duplicates";
+import { norm, nameSchoolKey, findDuplicateGroups, type DupCand } from "@/lib/duplicates";
 
 // Finds candidate records that look like duplicates of each other — regardless
 // of source (manual entry, bulk import, or JazzHR) — by matching on email or on
@@ -17,46 +17,38 @@ const C = {
 };
 const HEAD = "'Cabin', sans-serif";
 
-export type DupCand = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null; source: string | null };
-
 // Re-exported so existing importers (ImportTable, ConsoleClient) keep their paths.
-export { norm, nameSchoolKey };
+export { norm, nameSchoolKey, findDuplicateGroups };
+export type { DupCand };
 
-// Groups of 2+ candidates that share `key`. Name groups whose members all share
-// one email are dropped (already covered by the email group).
-export function findDuplicateGroups(candidates: DupCand[]): { reason: "email" | "name"; key: string; members: DupCand[] }[] {
-  const byEmail = new Map<string, DupCand[]>();
-  const byName = new Map<string, DupCand[]>();
-  for (const c of candidates) {
-    if (c.email && norm(c.email)) (byEmail.get(norm(c.email)) ?? byEmail.set(norm(c.email), []).get(norm(c.email))!).push(c);
-    if (norm(c.name)) {
-      const k = nameSchoolKey(c.name, c.school_id);
-      (byName.get(k) ?? byName.set(k, []).get(k)!).push(c);
-    }
-  }
-  const groups: { reason: "email" | "name"; key: string; members: DupCand[] }[] = [];
-  for (const [key, members] of byEmail) if (members.length > 1) groups.push({ reason: "email", key, members });
-  for (const [key, members] of byName) {
-    if (members.length <= 1) continue;
-    const emails = new Set(members.map((m) => norm(m.email)).filter(Boolean));
-    if (emails.size === 1 && members.every((m) => m.email)) continue; // already an email group
-    groups.push({ reason: "name", key, members });
-  }
-  return groups;
-}
-
-export default function DuplicateReview({ candidates, schools }: {
+export default function DuplicateReview({ candidates, schools, onDeleted }: {
   candidates: DupCand[];
   schools: { id: string; name: string; tier?: string | null }[];
+  // Lets the parent drop the row from its own candidate state — the list here
+  // comes from a client-side snapshot that router.refresh() alone can't update.
+  onDeleted?: (id: string) => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const groups = useMemo(() => findDuplicateGroups(candidates), [candidates]);
+  // Deleted ids are filtered out locally so the row disappears the moment the
+  // server confirms the delete, even before any parent state/refresh lands.
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const groups = useMemo(
+    () => findDuplicateGroups(candidates.filter((c) => !deletedIds.has(c.id))),
+    [candidates, deletedIds],
+  );
   const schoolName = (c: DupCand) => candidateSchoolDisplay(c, schools).label;
 
   const del = (c: DupCand) => {
     if (!confirm(`Delete "${c.name}"? This removes the record and its outreach/intros.`)) return;
-    startTransition(() => { deleteCandidate(c.id).then((r: any) => { if (r?.error) alert(r.error); else router.refresh(); }); });
+    startTransition(() => {
+      deleteCandidate(c.id).then((r: any) => {
+        if (r?.error) { alert(r.error); return; }
+        setDeletedIds((prev) => new Set(prev).add(c.id));
+        onDeleted?.(c.id);
+        router.refresh();
+      });
+    });
   };
 
   if (groups.length === 0) {

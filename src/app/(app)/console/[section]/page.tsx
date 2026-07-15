@@ -12,7 +12,8 @@ import ConsoleClient from "../ConsoleClient";
 import AdminSnapshotClient from "../AdminSnapshotClient";
 import { isActive } from "@/lib/stages";
 import { listCandidates } from "../actions";
-import { candidateSchoolDisplay } from "@/lib/candidateSchool";
+import { candidateSchoolDisplay, findMisrouted } from "@/lib/candidateSchool";
+import { findDuplicateGroups } from "@/lib/duplicates";
 import SectionSkeleton from "@/components/nav/SectionSkeleton";
 import EmailCampaignsClient from "@/components/EmailCampaignsClient";
 
@@ -84,7 +85,14 @@ async function ConsoleSectionData({ section, profile }: { section: string; profi
         .sort((a, b) => (b.flaggedAt ?? "").localeCompare(a.flaggedAt ?? ""));
     }
 
-    return <AdminSnapshotClient helpRequests={helpRequests} missingLinkedin={missingLinkedin} directPlacement={directPlacement} isSuper={sup} />;
+    // Data-quality tasks: possible duplicate records and candidates filed
+    // somewhere other than where their imported school text routes. Both link
+    // to the review panels on the Candidates tab.
+    const dupRows = (candRows ?? []).map((c) => ({ id: c.id, name: c.name, email: c.email, school_id: c.school_id, university_raw: c.university_raw, stage: c.stage, source: null }));
+    const duplicateGroups = findDuplicateGroups(dupRows).length;
+    const misrouted = findMisrouted(candRows ?? [], schools ?? []).length;
+
+    return <AdminSnapshotClient helpRequests={helpRequests} missingLinkedin={missingLinkedin} directPlacement={directPlacement} duplicateGroups={duplicateGroups} misrouted={misrouted} isSuper={sup} />;
   }
 
   const need = {

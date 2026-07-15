@@ -21,7 +21,7 @@ import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
 import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
-import { representativeSchoolId } from "@/lib/candidateSchool";
+import { representativeSchoolId, findMisrouted } from "@/lib/candidateSchool";
 import { planDuplicateDeletions } from "@/lib/duplicates";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
@@ -341,6 +341,33 @@ export async function bulkImportCandidates(
   revalidatePath("/console");
   revalidatePath("/workspace");
   return { ok: true, count: inserted };
+}
+
+// Re-route candidates whose stored school no longer matches where their raw
+// university text routes (e.g. "IU Indianapolis" stuck in the Bonus group).
+// Recomputes server-side with the shared findMisrouted rule — only unrouted or
+// group-routed assignments move; explicit admin placements are left alone.
+// Pass ids to fix specific candidates, or omit to fix everything flagged.
+export async function fixMisroutedCandidates(ids?: string[]): Promise<{ ok?: true; moved: number; error?: string }> {
+  if (isPreviewing()) return { error: "Exit preview to make changes.", moved: 0 };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden", moved: 0 };
+  const db = createServiceClient();
+  const { data: schoolRows } = await db.from("schools").select("id, name, tier");
+  const schools = (schoolRows ?? []) as { id: string; name: string; tier: string | null }[];
+  let rows = await fetchAllRows<{ id: string; school_id: string | null; university_raw: string | null }>(
+    (from, to) => db.from("candidates").select("id, school_id, university_raw").not("university_raw", "is", null).range(from, to),
+  );
+  if (ids?.length) { const want = new Set(ids); rows = rows.filter((r) => want.has(r.id)); }
+
+  let moved = 0;
+  for (const { candidate, expectedSchoolId } of findMisrouted(rows, schools)) {
+    const { error } = await db.from("candidates").update({ school_id: expectedSchoolId }).eq("id", candidate.id);
+    if (error) { bustCache([], ["/console", "/workspace"]); return { error: error.message, moved }; }
+    moved++;
+  }
+  bustCache([], ["/console", "/workspace"]);
+  return { ok: true, moved };
 }
 
 // ---- Server-side candidate pagination --------------------------------------

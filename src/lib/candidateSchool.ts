@@ -71,6 +71,49 @@ export function candidateSchoolDisplay(candidate: CandidateSchoolFields, schools
   };
 }
 
+// Where the routing table says a raw university string belongs today: a core
+// school's own row, or the representative row of its satellite/bonus tier.
+// null = the string doesn't route (unknown school → Bonus catch-all is fine).
+export function expectedSchoolIdForRaw(raw: string | null | undefined, schools: CandidateSchool[]): string | null {
+  const typed = (raw ?? "").trim();
+  if (!typed) return null;
+  const routed = routeToSchoolName(typed);
+  if (!routed) return null;
+  const target = schools.find((s) => s.name.toLowerCase() === routed.toLowerCase());
+  if (!target) return null;
+  return target.tier === "satellite" || target.tier === "bonus"
+    ? representativeSchoolId(schools, target.tier) ?? target.id
+    : target.id;
+}
+
+// True when school_id is the representative (alphabetically-first) row of the
+// satellite or bonus tier — i.e. an assignment produced by group routing, not a
+// deliberate admin placement on a specific school.
+export function isGroupRepresentativeSchool(schoolId: string, schools: CandidateSchool[]): boolean {
+  const s = schools.find((x) => x.id === schoolId);
+  if (!s || (s.tier !== "satellite" && s.tier !== "bonus")) return false;
+  return representativeSchoolId(schools, s.tier!) === schoolId;
+}
+
+// Candidates whose stored school no longer matches where their raw university
+// text routes — e.g. "IU Indianapolis" sitting in the Bonus group because the
+// routing table didn't recognize it at import time. Only unrouted candidates
+// and group-routed (tier-representative) assignments are flagged; a candidate
+// an admin explicitly placed on a specific school is never second-guessed.
+export function findMisrouted<T extends CandidateSchoolFields & { id: string }>(
+  candidates: T[],
+  schools: CandidateSchool[],
+): { candidate: T; expectedSchoolId: string }[] {
+  const out: { candidate: T; expectedSchoolId: string }[] = [];
+  for (const c of candidates) {
+    const expected = expectedSchoolIdForRaw(c.university_raw, schools);
+    if (!expected || expected === c.school_id) continue;
+    if (c.school_id && !isGroupRepresentativeSchool(c.school_id, schools)) continue;
+    out.push({ candidate: c, expectedSchoolId: expected });
+  }
+  return out;
+}
+
 export function candidateSchoolKey(candidate: CandidateSchoolFields, schools: CandidateSchool[]): string | null {
   if (!candidate.school_id) return null;
   const school = schools.find((s) => s.id === candidate.school_id);

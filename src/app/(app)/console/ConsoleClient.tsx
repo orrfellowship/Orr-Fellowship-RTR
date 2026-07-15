@@ -24,8 +24,9 @@ import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
 import MatchReview from "@/components/MatchReview";
 import DuplicateReview, { findDuplicateGroups, nameSchoolKey } from "@/components/DuplicateReview";
+import RoutingReview from "@/components/RoutingReview";
 import { phaseOf, routeToSchoolNameByEmail } from "@/lib/stages";
-import { candidateSchoolDisplay, candidateSchoolKey } from "@/lib/candidateSchool";
+import { candidateSchoolDisplay, candidateSchoolKey, findMisrouted } from "@/lib/candidateSchool";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -199,6 +200,28 @@ export default function ConsoleClient({
   });
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dupOpen, setDupOpen] = useState(false);
+  const [routingOpen, setRoutingOpen] = useState(false);
+
+  // Snapshot task links land on /console/applicants?review=duplicates|routing —
+  // open the matching panel so the admin isn't hunting for it.
+  useEffect(() => {
+    const want = new URLSearchParams(window.location.search).get("review");
+    if (want === "duplicates") setDupOpen(true);
+    if (want === "routing") setRoutingOpen(true);
+  }, []);
+
+  // The review panels read the client-side slim snapshot, which router.refresh()
+  // can't update — patch it (and the visible page) directly after a fix.
+  const handleCandidateDeleted = (id: string) => {
+    setCandidateFacets((f) => ({ ...f, slim: f.slim.filter((c) => c.id !== id) }));
+    setAppRows((rows) => rows.filter((c) => c.id !== id));
+    setAppTotal((t) => Math.max(0, t - 1));
+  };
+  const handleRoutingMoved = (moves: { id: string; school_id: string }[]) => {
+    const dest = new Map(moves.map((m) => [m.id, m.school_id]));
+    setCandidateFacets((f) => ({ ...f, slim: f.slim.map((c) => dest.has(c.id) ? { ...c, school_id: dest.get(c.id)! } : c) }));
+    setAppRows((rows) => rows.map((c) => dest.has(c.id) ? { ...c, school_id: dest.get(c.id)! } : c));
+  };
   const [inviteOpen, setInviteOpen] = useState(false);
   const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
@@ -566,7 +589,30 @@ export default function ConsoleClient({
                   </button>
                   {dupOpen && (
                     <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                      <DuplicateReview candidates={slimCandidateRows} schools={schools} />
+                      <DuplicateReview candidates={slimCandidateRows} schools={schools} onDeleted={handleCandidateDeleted} />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* School routing review — imported school text that routes elsewhere */}
+            {adminPlus && (() => {
+              const misroutedCount = findMisrouted(slimCandidateRows, schools).length;
+              if (misroutedCount === 0) return null;
+              return (
+                <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
+                  <button onClick={() => setRoutingOpen((v) => !v)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: C.canvas, cursor: "pointer", textAlign: "left" }}>
+                    <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
+                      School routing review · <span style={{ color: C.orange }}>{misroutedCount} candidate{misroutedCount === 1 ? "" : "s"}</span>
+                    </span>
+                    <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>Imported school text routes to a different school</span>
+                    <span style={{ color: C.grayMute, fontSize: 15 }}>{routingOpen ? "▲" : "▼"}</span>
+                  </button>
+                  {routingOpen && (
+                    <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
+                      <RoutingReview candidates={slimCandidateRows} schools={schools} onMoved={handleRoutingMoved} />
                     </div>
                   )}
                 </div>

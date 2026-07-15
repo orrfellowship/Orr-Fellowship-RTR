@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { LifeBuoy, Link2, ChevronDown, ChevronRight, CheckCircle2, Star } from "lucide-react";
+import { LifeBuoy, Link2, ChevronDown, ChevronRight, CheckCircle2, Star, CopyX, Route } from "lucide-react";
 import { setCandidateLinkedin, resolveHelpRequest, resolveDirectPlacement } from "./actions";
 
 const C = {
@@ -23,10 +23,12 @@ function timeAgo(iso: string): string {
   const d = Math.floor(h / 24); return d === 1 ? "yesterday" : `${d}d ago`;
 }
 
-export default function AdminSnapshotClient({ helpRequests, missingLinkedin, directPlacement = [], isSuper = false }: {
+export default function AdminSnapshotClient({ helpRequests, missingLinkedin, directPlacement = [], duplicateGroups = 0, misrouted = 0, isSuper = false }: {
   helpRequests: HelpRequest[];
   missingLinkedin: MissingLinkedinCand[];
   directPlacement?: DirectPlacementCand[];
+  duplicateGroups?: number;
+  misrouted?: number;
   isSuper?: boolean;
 }) {
   const [deckOpen, setDeckOpen] = useState(false);
@@ -37,6 +39,8 @@ export default function AdminSnapshotClient({ helpRequests, missingLinkedin, dir
   const cats = [
     ...(isSuper ? [{ id: "dpp", label: "Direct Placement Potential", count: directPlacement.length }] : []),
     { id: "help", label: "Help requests", count: helpRequests.length },
+    { id: "dups", label: "Potential duplicates", count: duplicateGroups },
+    { id: "routing", label: "School routing", count: misrouted },
     { id: "linkedin", label: "Missing LinkedIn", count: missingLinkedin.length },
   ];
   const total = cats.reduce((s, c) => s + c.count, 0);
@@ -62,6 +66,16 @@ export default function AdminSnapshotClient({ helpRequests, missingLinkedin, dir
       <div key={filter} style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 24 }}>
         {isSuper && show("dpp") && <DirectPlacementCategory candidates={directPlacement} defaultOpen={single} />}
         {show("help") && <HelpRequestsCategory requests={helpRequests} defaultOpen={single} />}
+        {show("dups") && (
+          <LinkCategory icon={<CopyX size={18} />} title="Review potential duplicates" count={duplicateGroups} tone={C.orange} defaultOpen={single}
+            blurb={`${duplicateGroups} group${duplicateGroups === 1 ? "" : "s"} of candidates share a name or email. Keep one record per person and delete the rest.`}
+            cta="Review duplicates →" href="/console/applicants?review=duplicates" />
+        )}
+        {show("routing") && (
+          <LinkCategory icon={<Route size={18} />} title="Review school routing" count={misrouted} tone={C.navy} defaultOpen={single}
+            blurb={`${misrouted} candidate${misrouted === 1 ? "" : "s"} are filed somewhere other than where their imported school text routes (e.g. an IU campus sitting in the Bonus group).`}
+            cta="Review routing →" href="/console/applicants?review=routing" />
+        )}
         {show("linkedin") && <MissingLinkedinCategory count={missingLinkedin.length} onOpen={() => setDeckOpen(true)} defaultOpen={single} />}
       </div>
 
@@ -159,6 +173,25 @@ function HelpRequestsCategory({ requests, defaultOpen }: { requests: HelpRequest
             </button>
           </div>
         ))}
+      </div>
+    </CategoryCard>
+  );
+}
+
+// A category whose work happens elsewhere — the body is a one-liner plus a
+// link to the page with the actual review tooling (Candidates tab panels).
+function LinkCategory({ icon, title, count, tone, blurb, cta, href, defaultOpen }: {
+  icon: React.ReactNode; title: string; count: number; tone: string; blurb: string; cta: string; href: string; defaultOpen?: boolean;
+}) {
+  const router = useRouter();
+  return (
+    <CategoryCard icon={icon} title={title} count={count} tone={tone} defaultOpen={defaultOpen}>
+      <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13, color: C.grayMute, flex: 1, minWidth: 220 }}>{blurb}</div>
+        <button onClick={() => router.push(href)}
+          style={{ flexShrink: 0, border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13, padding: "9px 16px", borderRadius: 9, cursor: "pointer" }}>
+          {cta}
+        </button>
       </div>
     </CategoryCard>
   );

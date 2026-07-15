@@ -17,6 +17,32 @@ export type DedupeCand = {
   jazz_id?: string | null;
 };
 
+export type DupCand = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null; source: string | null };
+
+// Groups of 2+ candidates that share `key`. Name groups whose members all share
+// one email are dropped (already covered by the email group). Used by the
+// Duplicate Review UI and the admin Weekly Snapshot count.
+export function findDuplicateGroups(candidates: DupCand[]): { reason: "email" | "name"; key: string; members: DupCand[] }[] {
+  const byEmail = new Map<string, DupCand[]>();
+  const byName = new Map<string, DupCand[]>();
+  for (const c of candidates) {
+    if (c.email && norm(c.email)) (byEmail.get(norm(c.email)) ?? byEmail.set(norm(c.email), []).get(norm(c.email))!).push(c);
+    if (norm(c.name)) {
+      const k = nameSchoolKey(c.name, c.school_id);
+      (byName.get(k) ?? byName.set(k, []).get(k)!).push(c);
+    }
+  }
+  const groups: { reason: "email" | "name"; key: string; members: DupCand[] }[] = [];
+  for (const [key, members] of byEmail) if (members.length > 1) groups.push({ reason: "email", key, members });
+  for (const [key, members] of byName) {
+    if (members.length <= 1) continue;
+    const emails = new Set(members.map((m) => norm(m.email)).filter(Boolean));
+    if (emails.size === 1 && members.every((m) => m.email)) continue; // already an email group
+    groups.push({ reason: "name", key, members });
+  }
+  return groups;
+}
+
 // Decide which candidate ids to delete so every email/name duplicate cluster
 // collapses to a single survivor. Candidates are linked when they share an email
 // OR a name+school; transitively-linked records form one cluster (union-find).
