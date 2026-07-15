@@ -38,14 +38,14 @@ async function run(req: NextRequest) {
   const db = createServiceClient();
 
   // One-shot deliverability check: ?job=test&to=you@example.com sends a single
-  // email through the same SMTP path the digests/flush use.
+  // email through the same transactional path the digests/flush use.
   if (job === "test") {
     const to = url.searchParams.get("to");
     if (!to) return NextResponse.json({ error: "Add ?to=your@email to send a test." }, { status: 400 });
     const res = await sendEmail({
       to,
       subject: "Orr Recruiting — test email",
-      html: emailLayout({ heading: "It works ✓", bodyHtml: "<div>If you're reading this, the cron route and SMTP are wired up correctly.</div>" }),
+      html: emailLayout({ heading: "It works ✓", bodyHtml: "<div>If you're reading this, the cron route and transactional email provider are wired up correctly.</div>" }),
     });
     return NextResponse.json({ ok: res.ok, emailConfigured: emailConfigured(), result: res });
   }

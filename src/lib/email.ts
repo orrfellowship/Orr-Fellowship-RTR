@@ -1,56 +1,42 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
-// Transactional email over the SMTP credentials configured in Supabase.
+// RTR transactional system email for fellows and RTR users only.
 // Env (add to .env.local and Vercel):
-//   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
-// If SMTP isn't configured we no-op gracefully so the rest of the app keeps
+//   RESEND_API_KEY, RESEND_FROM_EMAIL
+// Candidate outreach, recruiting campaigns, and mass email must use a separate system.
+// If Resend isn't configured we no-op gracefully so the rest of the app keeps
 // working (notifications still queue + show in-app; they just aren't emailed).
 
-let cached: nodemailer.Transporter | null = null;
+let cached: Resend | null = null;
 
-function transporter(): nodemailer.Transporter | null {
-  const host = process.env.SMTP_HOST;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  if (!host || !user || !pass) return null;
+function client(): Resend | null {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
   if (cached) return cached;
-  const port = Number(process.env.SMTP_PORT ?? 587);
-  cached = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465, // 465 = implicit TLS; 587 = STARTTLS
-    auth: { user, pass },
-    // Pool one authenticated connection and reuse it across messages. Without
-    // this, nodemailer logs in fresh for EVERY send — a bulk invite then trips
-    // Gmail's "454 Too many login attempts". Throttle to a few msgs/sec too.
-    pool: true,
-    maxConnections: 1,
-    maxMessages: 100,
-    rateDelta: 1000,
-    rateLimit: 3,
-  });
+  cached = new Resend(apiKey);
   return cached;
 }
 
 export function emailConfigured(): boolean {
-  return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  return !!(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
 }
 
 export async function sendEmail(opts: { to: string; subject: string; html: string; text?: string }): Promise<{ ok: true } | { ok: false; error: string }> {
-  const tx = transporter();
-  if (!tx) return { ok: false, error: "SMTP not configured" };
-  const from = process.env.SMTP_FROM ?? process.env.SMTP_USER!;
+  const resend = client();
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!resend || !from) return { ok: false, error: "Resend not configured" };
   try {
-    await tx.sendMail({
+    const { error } = await resend.emails.send({
       from,
       to: opts.to,
       subject: opts.subject,
       html: opts.html,
       text: opts.text ?? htmlToText(opts.html),
     });
+    if (error) return { ok: false, error: error.message };
     return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? "send failed" };
+  } catch (error: unknown) {
+    return { ok: false, error: error instanceof Error ? error.message : "send failed" };
   }
 }
 

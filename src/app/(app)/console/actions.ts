@@ -784,7 +784,7 @@ export async function inviteUser(email: string, full_name: string, role: string,
 
 // Self-service notification test. Inserts a real in-app notification for the
 // caller (so it shows in their own bell) and immediately emails it through the
-// same SMTP path the cron flush uses — so one click exercises both channels
+// same transactional email path the cron flush uses — so one click exercises both channels
 // end-to-end without waiting for the scheduled job. Only notifies the caller.
 export async function sendTestNotification() {
   const profile = await getCurrentProfile();
