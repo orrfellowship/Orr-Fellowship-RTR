@@ -42,6 +42,8 @@ const componentSource = readFileSync(new URL("./EmailCampaignsClient.tsx", impor
 check("developer Gmail test panel is removed", !componentSource.includes("GmailTestSendPanel") && !componentSource.includes("Developer Gmail test"));
 check("demo send and scheduling controls are removed", !componentSource.includes("Demo send only") && !componentSource.includes("Demo schedule only"));
 check("Review uses the Gmail campaign action", componentSource.includes("Send with Gmail") && componentSource.includes("/api/google/send-demo-campaign"));
+check("controlled smoke test starts with no recipients selected", componentSource.includes("useState<Set<string>>(() => new Set())"));
+check("controlled production-test wording is visible", componentSource.includes("controlled smoke test") && componentSource.includes("approved test inboxes"));
 
 console.log(failures === 0 ? "\nAll email campaign demo checks passed." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

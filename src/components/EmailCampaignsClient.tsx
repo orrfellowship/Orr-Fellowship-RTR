@@ -67,7 +67,7 @@ export default function EmailCampaignsClient({
   gmailCampaignSendEnabled?: boolean;
 }) {
   const eligibleIds = useMemo(() => DEMO_CANDIDATES.filter(isEligible).map((candidate) => candidate.id), []);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(DEMO_CANDIDATES.map((candidate) => candidate.id)));
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [step, setStep] = useState(0);
   const [maxReached, setMaxReached] = useState(0);
   const [campaignName, setCampaignName] = useState("Fall 2026 Fellowship Introduction");
@@ -168,13 +168,13 @@ export default function EmailCampaignsClient({
       if (!response.ok || payload.success !== true) {
         setSendError(payload.success === false && payload.error?.message
           ? payload.error.message
-          : "The local Gmail campaign test could not be completed.");
+          : "The controlled Gmail campaign test could not be completed.");
         return;
       }
       setCampaignResult(payload);
       setConfirmationFingerprint(null);
     } catch {
-      setSendError("The local Gmail campaign test could not be completed.");
+      setSendError("The controlled Gmail campaign test could not be completed.");
     } finally {
       inFlight.current = false;
       setSending(false);
@@ -191,7 +191,7 @@ export default function EmailCampaignsClient({
             <h1>Email Campaigns</h1>
             <span className="demo-badge">Demo mode</span>
           </div>
-          <p>This local-only Phase 3 test uses fictional candidates but sends real personalized Gmail messages only to controlled test inboxes.</p>
+          <p>This controlled smoke test uses fictional candidates but sends real personalized Gmail messages only to approved test inboxes.</p>
         </div>
         <div className="previewing-note"><UserRoundCheck size={17} /> <span>Previewing as: <strong>{MOCK_PRIMARY_CONTACT.name}</strong>, Primary Contact</span></div>
       </div>
@@ -215,9 +215,9 @@ export default function EmailCampaignsClient({
             </StatusPill>
           </div>
           {gmailConnection.connected ? (
-            <p><strong>{gmailConnection.connectedEmail}</strong> is connected for local mock-campaign delivery through Gmail.</p>
+            <p><strong>{gmailConnection.connectedEmail}</strong> is connected for controlled test delivery through Gmail.</p>
           ) : (
-            <p>Connect your Orr Fellowship account before sending this local mock-data Gmail campaign test.</p>
+            <p>Connect your Orr Fellowship account before sending this controlled Gmail campaign test.</p>
           )}
         </div>
         {gmailConnection.connected ? (
@@ -355,7 +355,7 @@ export default function EmailCampaignsClient({
         <section>
           <div className="section-title">
             <div><h2>Review campaign</h2><p>Confirm the fictional audience and content before sending real Gmail messages to controlled test inboxes.</p></div>
-            <StatusPill tone={gmailCampaignSendEnabled ? "good" : "warning"}>{gmailCampaignSendEnabled ? "Local Gmail test" : "Sending disabled"}</StatusPill>
+            <StatusPill tone={gmailCampaignSendEnabled ? "good" : "warning"}>{gmailCampaignSendEnabled ? "Controlled Gmail test" : "Sending disabled"}</StatusPill>
           </div>
           <div className="review-grid">
             <div className="review-main">
@@ -410,7 +410,7 @@ export default function EmailCampaignsClient({
               {gmailConnection.connected ? (
                 <p><strong>{gmailConnection.connectedEmail}</strong> will send {selectedCandidates.length} real personalized {selectedCandidates.length === 1 ? "message" : "messages"}.</p>
               ) : (
-                <p>Gmail must be connected before this local mock campaign can send.</p>
+                <p>Gmail must be connected before this controlled test campaign can send.</p>
               )}
               <div className="send-warning"><CircleAlert size={16} /><span>Fictional candidates may share the same controlled inbox. Each candidate still produces one separate Gmail message.</span></div>
               <label className="campaign-confirmation">
@@ -419,7 +419,7 @@ export default function EmailCampaignsClient({
               </label>
               <button type="button" className="primary-action" disabled={!canSend} onClick={handleCampaignSend}><Send size={16} /> {sending ? "Sending sequentially…" : "Send with Gmail"}</button>
               {!gmailConnection.connected && <a className="gmail-action review-connect" href="/api/google/connect"><Link2 size={15} /> Connect Gmail</a>}
-              {!gmailCampaignSendEnabled && <div className="safety-note"><CircleAlert size={15} /> Local Gmail sending is disabled in this environment.</div>}
+              {!gmailCampaignSendEnabled && <div className="safety-note"><CircleAlert size={15} /> Controlled Gmail test sending is disabled in this environment.</div>}
               {sendError && <div className="campaign-send-error" role="alert"><CircleAlert size={15} /> {sendError}</div>}
             </aside>
           </div>

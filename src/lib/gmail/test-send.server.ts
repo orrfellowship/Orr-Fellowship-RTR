@@ -163,8 +163,15 @@ export function safeTestSendError(error: unknown): SafeTestSendError {
   return { success: false, error: { code: known.code, message: known.message } };
 }
 
-export function isGmailTestSendEnabled(env: { NODE_ENV?: string; ENABLE_GMAIL_TEST_SEND?: string } = process.env): boolean {
-  return env.NODE_ENV !== "production" && env.ENABLE_GMAIL_TEST_SEND === "true";
+export function isGmailTestSendEnabled(env: {
+  NODE_ENV?: string;
+  ENABLE_GMAIL_TEST_SEND?: string;
+  ENABLE_GMAIL_PRODUCTION_TEST_SEND?: string;
+  [key: string]: string | undefined;
+} = process.env): boolean {
+  return env.NODE_ENV === "production"
+    ? env.ENABLE_GMAIL_PRODUCTION_TEST_SEND === "true"
+    : env.ENABLE_GMAIL_TEST_SEND === "true";
 }
 
 export async function refreshGoogleAccessToken(

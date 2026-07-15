@@ -94,11 +94,19 @@ Phase 3 connects the existing four-stage Email Campaigns prototype to real Gmail
 
 The endpoint is `POST /api/google/send-demo-campaign`. It resolves candidate IDs against the server-owned mock dataset, recalculates missing-email, unsubscribed, and Do Not Contact exclusions, renders merge variables separately, and sends sequentially. It accepts at most 10 selected mock candidates and never accepts browser-supplied recipient addresses. A short-lived in-memory idempotency record prevents an immediate retry of the same request identifier from sending duplicates.
 
-The route is unavailable whenever `NODE_ENV=production` and defaults to disabled in development. To enable the Review-stage **Send with Gmail** action locally, add this to `.env.local` and restart the development server:
+The route defaults to disabled in every environment. To enable the Review-stage **Send with Gmail** action locally, add this to `.env.local` and restart the development server:
 
 ```sh
 ENABLE_GMAIL_TEST_SEND=true
 ```
+
+For a narrowly scoped production OAuth/send smoke test, configure this separate Vercel Production variable and redeploy:
+
+```sh
+ENABLE_GMAIL_PRODUCTION_TEST_SEND=true
+```
+
+The production flag does not enable real candidate campaigns. The route still resolves candidate IDs only from the server-owned fictional dataset, sends only to the two hard-coded controlled inboxes, requires an active Admin or Super Admin session, blocks View As mode, permits exactly one selected candidate per production request, and never accepts recipient addresses from the browser. Set the flag back to `false` after the production test.
 
 Local manual test — this sends real email:
 
@@ -112,4 +120,4 @@ Local manual test — this sends real email:
 8. Confirm the attempted, sent, failed, and excluded summary plus each fictional candidate result. Verify that each eligible candidate produced one message in the controlled inbox, including candidates sharing an address.
 9. Return `ENABLE_GMAIL_TEST_SEND=false` when testing is complete.
 
-This phase uses no production candidate data, campaign tables, queues, schedules, retries, or campaign persistence. It does not update candidate contact history or stages and does not change the existing Resend transactional-email integration. Results exist only in the current client state. The Google OAuth project may remain in Testing mode for this local test. Access tokens, refresh tokens, MIME content, authorization headers, and raw Google responses never cross the server boundary.
+This phase uses no production candidate data, new database schemas, campaign tables, queues, schedules, retries, or campaign persistence. It does not update candidate contact history or stages and does not change the existing Resend transactional-email integration. Results exist only in the current client state. The Google OAuth project may remain in Testing mode for this controlled test. Access tokens, refresh tokens, MIME content, authorization headers, and raw Google responses never cross the server boundary.
