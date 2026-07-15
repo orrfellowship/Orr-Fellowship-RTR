@@ -21,7 +21,7 @@ import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
 import { queueClaimNudge } from "@/app/(app)/workspace/actions";
 import { evaluateCandidate } from "@/lib/triggers";
 import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
-import { representativeSchoolId, findMisrouted, expectedSchoolIdForRaw } from "@/lib/candidateSchool";
+import { findMisrouted, expectedSchoolIdForRaw } from "@/lib/candidateSchool";
 import { planDuplicateDeletions } from "@/lib/duplicates";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
@@ -133,13 +133,13 @@ async function routeSchoolByEmail(
   const name = routeToSchoolNameByEmail(email);
   if (!name) return { school_id: null, university_raw: null };
   const { data: rows } = await db.from("schools").select("id, name, tier");
-  const schools = rows ?? [];
-  const matched = schools.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
-  if (!matched) return { school_id: null, university_raw: null };
-  if (matched.tier === "satellite" || matched.tier === "bonus") {
-    return { school_id: representativeSchoolId(schools as any[], matched.tier) ?? matched.id, university_raw: matched.name };
-  }
-  return { school_id: matched.id, university_raw: null };
+  const schools = (rows ?? []) as { id: string; name: string; tier: string | null }[];
+  // The domain table returns campus names ("Purdue Fort Wayne") as well as
+  // seeded rows — expectedSchoolIdForRaw resolves both (campus → satellite rep).
+  const resolved = expectedSchoolIdForRaw(name, schools);
+  if (!resolved) return { school_id: null, university_raw: null };
+  const target = schools.find((s) => s.id === resolved);
+  return { school_id: resolved, university_raw: target?.tier === "core" ? null : name };
 }
 
 export async function addCandidate(data: {
@@ -209,42 +209,61 @@ export async function updateCandidate(id: string, fields: {
 // only when that field is currently blank (never overwrites), and rows whose
 // email isn't found are skipped. Currently fills in LinkedIn URLs.
 export async function importCandidateInfo(
-  rows: { email: string; linkedin?: string | null }[],
-): Promise<{ ok?: true; updated: number; skipped: number; error?: string }> {
-  if (await isPreviewing()) return { error: "Exit preview to make changes.", updated: 0, skipped: 0 };
+  rows: { email: string; linkedin?: string | null; school?: string | null }[],
+): Promise<{ ok?: true; updated: number; schoolsUpdated: number; skipped: number; error?: string }> {
+  if (await isPreviewing()) return { error: "Exit preview to make changes.", updated: 0, schoolsUpdated: 0, skipped: 0 };
   const profile = await getCurrentProfile();
-  if (!profile) return { error: "Not authenticated", updated: 0, skipped: 0 };
+  if (!profile) return { error: "Not authenticated", updated: 0, schoolsUpdated: 0, skipped: 0 };
 
-  const byEmail = new Map<string, { linkedin: string }>();
+  const byEmail = new Map<string, { linkedin: string; school: string }>();
   for (const r of rows) {
     const email = (r.email ?? "").trim().toLowerCase();
     const linkedin = (r.linkedin ?? "").trim();
-    if (email) byEmail.set(email, { linkedin });
+    const school = (r.school ?? "").trim();
+    if (email) byEmail.set(email, { linkedin, school });
   }
-  if (byEmail.size === 0) return { ok: true, updated: 0, skipped: rows.length };
+  if (byEmail.size === 0) return { ok: true, updated: 0, schoolsUpdated: 0, skipped: rows.length };
 
   const db = createServiceClient();
+  const { data: schoolRows } = await db.from("schools").select("id, name, tier");
+  const schools = (schoolRows ?? []) as { id: string; name: string; tier: string | null }[];
   // Match in memory (case-insensitive email), paging past the 1000-row cap.
-  const all = await fetchAllRows<{ id: string; email: string | null; linkedin: string | null }>(
-    (from, to) => db.from("candidates").select("id, email, linkedin").not("email", "is", null).range(from, to),
+  const all = await fetchAllRows<{ id: string; email: string | null; linkedin: string | null; school_id: string | null; university_raw: string | null }>(
+    (from, to) => db.from("candidates").select("id, email, linkedin, school_id, university_raw").not("email", "is", null).range(from, to),
   );
   const matched = new Set<string>();
-  let updated = 0;
+  let updated = 0, schoolsUpdated = 0;
   for (const c of all) {
     const email = (c.email ?? "").trim().toLowerCase();
     const inp = byEmail.get(email);
     if (!inp) continue;
     matched.add(email);
-    // Fill blanks only — never overwrite an existing LinkedIn.
-    if (inp.linkedin && !(c.linkedin ?? "").trim()) {
-      const { error } = await db.from("candidates").update({ linkedin: inp.linkedin }).eq("id", c.id);
-      if (!error) updated++;
+    const patch: Record<string, any> = {};
+    // LinkedIn fills blanks only — never overwrites.
+    if (inp.linkedin && !(c.linkedin ?? "").trim()) patch.linkedin = inp.linkedin;
+    // School RE-ROUTES the candidate: the sourcing sheet is authoritative for
+    // where its people belong, so a routable school value moves the candidate
+    // even off a core row (this is the repair path for records whose original
+    // school text was lost). Unroutable text is left alone — a repair pass
+    // should never dump anyone into the Bonus catch-all.
+    if (inp.school) {
+      const expected = expectedSchoolIdForRaw(inp.school, schools);
+      if (expected && (expected !== c.school_id || (c.university_raw ?? "").trim() !== inp.school)) {
+        patch.school_id = expected;
+        patch.university_raw = inp.school;
+      }
+    }
+    if (Object.keys(patch).length === 0) continue;
+    const { error } = await db.from("candidates").update(patch).eq("id", c.id);
+    if (!error) {
+      if (patch.linkedin) updated++;
+      if (patch.school_id) schoolsUpdated++;
     }
   }
   const skipped = byEmail.size - matched.size; // input emails with no candidate match
   revalidatePath("/console");
   revalidatePath("/workspace");
-  return { ok: true, updated, skipped };
+  return { ok: true, updated, schoolsUpdated, skipped };
 }
 
 export async function deleteCandidate(id: string) {
@@ -292,20 +311,16 @@ export async function bulkImportCandidates(
   // previous version issued one DB lookup per emailed row, which made big imports
   // crawl (and could time out) — the real cap on import size.
   const { data: schoolRows } = await db.from("schools").select("id, name, tier");
-  const schools = schoolRows ?? [];
-  const idByName = new Map<string, string>(schools.map((s: any) => [s.name, s.id]));
+  const schools = (schoolRows ?? []) as { id: string; name: string; tier: string | null }[];
   const routeByEmail = (email: string | null) => {
     const name = routeToSchoolNameByEmail(email);
     if (!name) return { school_id: null as string | null, university_raw: null as string | null };
-    const matched = schools.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
-    if (!matched) return { school_id: null as string | null, university_raw: null as string | null };
-    if (matched.tier === "satellite" || matched.tier === "bonus") {
-      return {
-        school_id: representativeSchoolId(schools as any[], matched.tier) ?? matched.id,
-        university_raw: matched.name as string,
-      };
-    }
-    return { school_id: idByName.get(name) ?? null, university_raw: null as string | null };
+    // The domain table returns campus names ("Purdue Fort Wayne") as well as
+    // seeded rows — expectedSchoolIdForRaw resolves both (campus → satellite rep).
+    const resolved = expectedSchoolIdForRaw(name, schools);
+    if (!resolved) return { school_id: null as string | null, university_raw: null as string | null };
+    const target = schools.find((s) => s.id === resolved);
+    return { school_id: resolved, university_raw: target?.tier === "core" ? null : name };
   };
 
   // Only team leads / admins may assign point people on import.

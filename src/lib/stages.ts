@@ -90,22 +90,31 @@ interface SchoolMatch { school_name: string; match: string[]; }
 
 // Regional IU/Purdue campuses belong to the SATELLITE SCHOOLS group, not to the
 // flagship core rows below. Checked BEFORE SCHOOL_MATCH so "IU Indianapolis"
-// never falls through to the flagship "iu"/"purdue" patterns.
-export const SATELLITE_CAMPUS_MATCH: string[] = [
-  // IUPUI and its successors / long forms
-  "indiana university purdue university", "iupui", "iupuc", "pui", "iui",
-  // IU regional campuses
-  "indiana university indianapolis", "indiana university indy", "indiana university south bend",
-  "indiana university east", "indiana university kokomo", "indiana university northwest",
-  "indiana university southeast", "indiana university columbus", "indiana university fort wayne",
-  "iu indianapolis", "iu indy", "iu south bend", "iu east", "iu kokomo",
-  "iu northwest", "iu southeast", "iu columbus", "iu fort wayne",
-  "iusb", "iue", "iuk", "iun", "ius",
-  // Purdue regional campuses
-  "purdue university indianapolis", "purdue university fort wayne", "purdue university northwest",
-  "purdue indianapolis", "purdue indy", "purdue fort wayne", "purdue northwest",
-  "pfw", "ipfw", "pnw",
-];
+// never falls through to the flagship "iu"/"purdue" patterns. Three signals,
+// tuned to the sourcing sheets' real naming conventions:
+//   1. campus abbreviations (whole-word): IUPUI, PFW, PNW, IUSB…
+//   2. an IU/Purdue family word ANYWHERE + a campus location word ANYWHERE —
+//      catches "Purdue University in Indianapolis", "IU Indianapolis / Kelley",
+//      "IU School of Social Work – Fort Wayne", "Purdue Global"… while leaving
+//      "University of Indianapolis" (no family word) and "IU Bloomington"
+//      (no campus word) alone.
+//   3. the whole string IS a campus location ("Indianapolis", "South Bend",
+//      "Southeast / New Albany") — how the satellite sheets abbreviate.
+const CAMPUS_ABBREVIATIONS = ["iupui", "iupuc", "pui", "iui", "pfw", "ipfw", "pnw", "iusb", "iue", "iuk", "iun", "ius"];
+const CAMPUS_FAMILY_RE = /\b(iu|indiana university|purdue)\b/;
+const CAMPUS_LOCATION_RE = /\b(indianapolis|indy|south bend|fort wayne|kokomo|columbus|northwest|southeast|east|new albany|gary|hammond|westville|richmond|global|online)\b/;
+const CAMPUS_EXACT = new Set([
+  "indianapolis", "indy", "south bend", "fort wayne", "kokomo", "columbus",
+  "northwest", "southeast", "east", "new albany", "southeast new albany",
+]);
+
+// `u` must already be normalized (normalizeUniversity).
+function isSatelliteCampus(u: string): boolean {
+  if (CAMPUS_ABBREVIATIONS.some((m) => termMatches(u, m))) return true;
+  if (u.includes("indiana university purdue university")) return true; // IUPUI long form
+  if (CAMPUS_FAMILY_RE.test(u) && CAMPUS_LOCATION_RE.test(u)) return true;
+  return CAMPUS_EXACT.has(u);
+}
 
 // NB: school_name values map to the seeded `schools.name` rows. Purdue and IU
 // here are the FLAGSHIPS only (West Lafayette / Bloomington) — regional
@@ -150,7 +159,7 @@ export const SCHOOL_MATCH: SchoolMatch[] = [
 function normalizeUniversity(raw: string): string {
   return raw
     .toLowerCase()
-    .replace(/[.,\-()&]/g, " ")            // punctuation → space
+    .replace(/[.,\-()&/–—]/g, " ")         // punctuation (incl. slash + dashes) → space
     .replace(/\bft\b/g, "fort")            // Ft. Wayne → fort wayne
     .replace(/\bst\b/g, "saint")           // St. → saint (avoid matching "state")
     .replace(/\bu\b(?=\s|$)/g, "university")  // trailing "U" → university
@@ -175,7 +184,7 @@ export type UniversityRoute = { school: string } | { group: "satellite" };
 export function routeUniversity(university: string | null): UniversityRoute | null {
   if (!university) return null;
   const u = normalizeUniversity(university);
-  if (SATELLITE_CAMPUS_MATCH.some((m) => termMatches(u, m))) return { group: "satellite" };
+  if (isSatelliteCampus(u)) return { group: "satellite" };
   for (const entry of SCHOOL_MATCH) {
     if (entry.match.some((m) => termMatches(u, m))) return { school: entry.school_name };
   }
@@ -209,9 +218,21 @@ export function universityMatchKey(university: string | null): string {
 // ----------------------------------------------------------------------------
 interface SchoolEmailMatch { school_name: string; domains: string[]; }
 
+// NB: school_name here is fed back through routeUniversity by the callers, so
+// campus entries use the campus NAME (→ Satellite group), not a seeded row.
+// iu.edu / purdue.edu are shared by regional campuses too — flagship is the
+// best available guess when the person typed no school.
 export const SCHOOL_EMAIL_DOMAINS: SchoolEmailMatch[] = [
-  { school_name: "Purdue", domains: ["purdue.edu", "pfw.edu"] },
-  { school_name: "IU", domains: ["iu.edu", "indiana.edu", "iupui.edu"] },
+  { school_name: "Purdue Fort Wayne", domains: ["pfw.edu", "ipfw.edu"] },
+  { school_name: "Purdue Northwest", domains: ["pnw.edu"] },
+  { school_name: "IUPUI", domains: ["iupui.edu"] },
+  { school_name: "IU South Bend", domains: ["iusb.edu"] },
+  { school_name: "IU East", domains: ["iue.edu"] },
+  { school_name: "IU Kokomo", domains: ["iuk.edu"] },
+  { school_name: "IU Northwest", domains: ["iun.edu"] },
+  { school_name: "IU Southeast", domains: ["ius.edu"] },
+  { school_name: "Purdue", domains: ["purdue.edu"] },
+  { school_name: "IU", domains: ["iu.edu", "indiana.edu"] },
   { school_name: "Ball State", domains: ["bsu.edu"] },
   { school_name: "Indiana State", domains: ["indstate.edu", "sycamores.indstate.edu"] },
   { school_name: "USI", domains: ["usi.edu", "eagles.usi.edu"] },

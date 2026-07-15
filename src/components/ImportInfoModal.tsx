@@ -5,9 +5,12 @@ import { useRouter } from "next/navigation";
 import { importCandidateInfo } from "@/app/(app)/console/actions";
 
 // Import partial info for candidates already in the system. Match is by email;
-// values fill blanks only (never overwrite); emails not found are skipped.
-// Currently fills in LinkedIn URLs (paste or upload a CSV/Excel with email +
-// linkedin columns).
+// emails not found are skipped. Two kinds of columns:
+//  - LinkedIn: fills blanks only (never overwrites).
+//  - School: RE-ROUTES the candidate — a sourcing sheet is authoritative for
+//    where its people belong, so a recognizable school value moves the
+//    candidate (e.g. "Purdue Fort Wayne" → Satellite Schools) even off a core
+//    row. Unrecognized school text leaves the candidate untouched.
 
 const C = {
   navy: "#11123E", navy3: "#8591AD", canvas: "#F4F6FB",
@@ -15,8 +18,8 @@ const C = {
 };
 const HEAD = "'Cabin', sans-serif";
 
-type Row = { email: string; linkedin: string };
-const emptyRow = (): Row => ({ email: "", linkedin: "" });
+type Row = { email: string; linkedin: string; school: string };
+const emptyRow = (): Row => ({ email: "", linkedin: "", school: "" });
 
 function parseRows(text: string): Row[] {
   const lines = text.trim().split(/\r?\n/).filter((l) => l.trim());
@@ -24,15 +27,22 @@ function parseRows(text: string): Row[] {
   const delim = lines[0].includes("\t") ? "\t" : ",";
   const cells = lines.map((line) => line.split(delim).map((c) => c.trim().replace(/^"(.*)"$/, "$1").trim()));
   const header = cells[0].map((h) => h.toLowerCase());
-  const hasHeader = header.some((h) => h.includes("email") || h.includes("linkedin"));
+  const hasHeader = header.some((h) => h.includes("email") || h.includes("linkedin") || h.includes("school"));
   const data = hasHeader ? cells.slice(1) : cells;
   const findCol = (keys: string[], fallback: number) =>
     hasHeader ? Math.max(...keys.map((k) => header.findIndex((h) => h.includes(k)))) : fallback;
   const iEmail = findCol(["email"], 0);
   const iLink = findCol(["linkedin", "li url", "linked in"], 1);
+  // School only reads from a named header — never positional — so a pasted
+  // two-column email+linkedin sheet can't misread a stray column as a school.
+  const iSchool = hasHeader ? header.findIndex((h) => h.includes("school") || h.includes("university") || h.includes("campus")) : -1;
   return data
     .filter((r) => (r[iEmail] ?? "").trim())
-    .map((r) => ({ email: r[iEmail] ?? "", linkedin: iLink >= 0 ? (r[iLink] ?? "") : "" }));
+    .map((r) => ({
+      email: r[iEmail] ?? "",
+      linkedin: iLink >= 0 ? (r[iLink] ?? "") : "",
+      school: iSchool >= 0 ? (r[iSchool] ?? "") : "",
+    }));
 }
 
 export default function ImportInfoModal({ onClose }: { onClose: () => void }) {
@@ -77,15 +87,19 @@ export default function ImportInfoModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const valid = rows.filter((r) => r.email.trim() && r.linkedin.trim());
+  const valid = rows.filter((r) => r.email.trim() && (r.linkedin.trim() || r.school.trim()));
 
   const doImport = () => {
-    if (!valid.length) { setError("Add at least one row with an email and a LinkedIn URL."); return; }
+    if (!valid.length) { setError("Add at least one row with an email plus a LinkedIn URL or a school."); return; }
     setError(null); setPending(true);
-    importCandidateInfo(valid.map((r) => ({ email: r.email.trim(), linkedin: r.linkedin.trim() }))).then((r) => {
+    importCandidateInfo(valid.map((r) => ({ email: r.email.trim(), linkedin: r.linkedin.trim() || null, school: r.school.trim() || null }))).then((r) => {
       setPending(false);
       if (r.error) { setError(r.error); return; }
-      setResult(`✓ Filled in ${r.updated} LinkedIn URL${r.updated !== 1 ? "s" : ""}.${r.skipped > 0 ? ` ${r.skipped} email${r.skipped !== 1 ? "s were" : " was"} not found and skipped.` : ""}`);
+      const parts = [];
+      if (r.updated > 0) parts.push(`filled in ${r.updated} LinkedIn URL${r.updated !== 1 ? "s" : ""}`);
+      if (r.schoolsUpdated > 0) parts.push(`re-routed ${r.schoolsUpdated} school${r.schoolsUpdated !== 1 ? "s" : ""}`);
+      if (parts.length === 0) parts.push("no changes needed — everything already matched");
+      setResult(`✓ ${parts.join(" · ")}.${r.skipped > 0 ? ` ${r.skipped} email${r.skipped !== 1 ? "s were" : " was"} not found and skipped.` : ""}`);
       router.refresh();
     });
   };
@@ -101,7 +115,7 @@ export default function ImportInfoModal({ onClose }: { onClose: () => void }) {
           <div>
             <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 4px" }}>Import additional info</h2>
             <p style={{ fontSize: 13, color: C.grayMute, margin: 0 }}>
-              Add LinkedIn URLs to candidates already in the system. Matched by <b>email</b> · only fills blanks (won&apos;t overwrite) · emails not found are skipped.
+              Update candidates already in the system, matched by <b>email</b>. LinkedIn fills blanks only (won&apos;t overwrite). A <b>school</b> value re-routes the candidate — use this to fix placements from a sourcing sheet (e.g. &ldquo;Purdue Fort Wayne&rdquo; → Satellite Schools). Emails not found are skipped.
             </p>
           </div>
           <button onClick={onClose} style={{ border: "none", background: "none", fontSize: 22, color: C.grayMute, cursor: "pointer", padding: "0 4px", lineHeight: 1, flexShrink: 0 }}>×</button>
@@ -112,15 +126,15 @@ export default function ImportInfoModal({ onClose }: { onClose: () => void }) {
             ⬆ Upload CSV / Excel
             <input type="file" accept=".csv,.xlsx" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} style={{ display: "none" }} />
           </label>
-          <span style={{ fontSize: 12.5, color: C.grayMute }}>or type / paste rows below (columns: email, linkedin).</span>
+          <span style={{ fontSize: 12.5, color: C.grayMute }}>or type / paste rows below (columns: email, linkedin, school — school is read from a named header).</span>
         </div>
 
         <div onPaste={onPaste} style={{ overflowY: "auto", border: `1px solid ${C.line}`, borderRadius: 10, flex: 1 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
-            <colgroup><col style={{ width: "42%" }} /><col style={{ width: "53%" }} /><col style={{ width: "5%" }} /></colgroup>
+            <colgroup><col style={{ width: "32%" }} /><col style={{ width: "36%" }} /><col style={{ width: "27%" }} /><col style={{ width: "5%" }} /></colgroup>
             <thead>
               <tr style={{ background: C.canvas, borderBottom: `2px solid ${C.line}` }}>
-                {(["Email *", "LinkedIn URL *"] as const).map((h) => (
+                {(["Email *", "LinkedIn URL", "School"] as const).map((h) => (
                   <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.6, borderRight: `1px solid ${C.line}` }}>{h}</th>
                 ))}
                 <th />
@@ -131,6 +145,7 @@ export default function ImportInfoModal({ onClose }: { onClose: () => void }) {
                 <tr key={i} style={{ borderBottom: `1px solid ${C.line}`, background: i % 2 === 0 ? "#fff" : "#FAFBFE" }}>
                   <td style={cell}><input value={row.email} onChange={(e) => update(i, { email: e.target.value })} placeholder="email@school.edu" style={{ ...inp, color: row.email ? C.gray : C.grayMute }} /></td>
                   <td style={cell}><input value={row.linkedin} onChange={(e) => update(i, { linkedin: e.target.value })} placeholder="https://linkedin.com/in/…" style={{ ...inp, color: row.linkedin ? C.gray : C.grayMute }} /></td>
+                  <td style={cell}><input value={row.school} onChange={(e) => update(i, { school: e.target.value })} placeholder="e.g. IU Indianapolis" style={{ ...inp, color: row.school ? C.gray : C.grayMute }} /></td>
                   <td style={{ padding: "0 6px", textAlign: "center" }}>
                     <button onClick={() => delRow(i)} title="Remove row" style={{ border: "none", background: "none", color: C.grayMute, cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "2px 4px" }}>×</button>
                   </td>
