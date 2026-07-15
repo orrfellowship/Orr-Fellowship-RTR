@@ -19,6 +19,7 @@ import {
   type GmailSendResult,
   type GmailSendSession,
 } from "./test-send.server";
+import type { EnqueueRecipient } from "./outreach-queue.server";
 
 export type DemoCampaignInput = {
   campaignName: string;
@@ -231,6 +232,58 @@ export async function sendDemoCampaignForUser(
 
 export function resetDemoCampaignIdempotencyForTests(): void {
   idempotencyEntries.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Queue-based demo campaign (Phase 16 diff 3): instead of sending synchronously,
+// resolve the selected fictional candidates into ready-to-enqueue recipients.
+// The drainer sends them in the background so the fellow can walk away.
+// ---------------------------------------------------------------------------
+
+// Comma/space/newline-separated test inboxes from GMAIL_TEST_RECIPIENTS, so a
+// tester can point the demo at real addresses WITHOUT committing them to the
+// repo. Empty → the fictional candidates' own (committed, controlled) addresses.
+export function parseTestRecipients(raw: string | undefined | null): string[] {
+  return (raw ?? "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+// Applies the same demo exclusions as the synchronous path (missing email /
+// unsubscribed / do-not-contact), renders per candidate, and assigns each
+// eligible recipient the next test inbox (by index) when one is configured.
+// A malformed test address is intentionally passed through unchanged so the
+// queue engine records it as a failed send (the deliberate failure demo).
+export function prepareDemoEnqueueRecipients(
+  input: DemoCampaignInput,
+  testRecipients: string[] = [],
+): { recipients: EnqueueRecipient[]; excluded: DemoCampaignRecipientResult[] } {
+  const candidateById = new Map(DEMO_CANDIDATES.map((candidate) => [candidate.id, candidate]));
+  const recipients: EnqueueRecipient[] = [];
+  const excluded: DemoCampaignRecipientResult[] = [];
+  let eligibleIndex = 0;
+
+  for (const candidateId of input.selectedCandidateIds) {
+    const candidate = candidateById.get(candidateId)!;
+    const exclusionReason = getAutomaticExclusionReason(candidate);
+    if (exclusionReason) {
+      excluded.push({
+        candidateId,
+        candidateName: demoCandidateFullName(candidate),
+        maskedRecipient: maskDemoRecipient(candidate.email),
+        status: "excluded",
+        exclusionReason,
+      });
+      continue;
+    }
+    const toEmail = testRecipients[eligibleIndex] ?? candidate.email!;
+    eligibleIndex++;
+    recipients.push({
+      candidateId: null, // fictional demo candidates aren't real DB rows
+      toEmail,
+      renderedSubject: renderTemplate(input.subject, candidate),
+      renderedBody: renderTemplate(input.body, candidate),
+    });
+  }
+  return { recipients, excluded };
 }
 
 export type { DemoCampaignDependencies };

@@ -19,8 +19,8 @@ function check(name: string, condition: boolean) {
 
 const eligible = DEMO_CANDIDATES.filter(isEligible);
 check("campaign retains the four required stages", JSON.stringify(CAMPAIGN_STEPS) === JSON.stringify(["My Candidates", "Compose", "Preview", "Review"]));
-check("demo audience has 10 assigned candidates", DEMO_CANDIDATES.length === 10);
-check("default audience has 7 eligible recipients", eligible.length === 7);
+check("demo audience has 13 assigned candidates", DEMO_CANDIDATES.length === 13);
+check("default audience has 10 eligible recipients", eligible.length === 10);
 check("eligible candidates use only the two controlled addresses", eligible.every((candidate, index) => candidate.email === (index % 2 === 0 ? "samuel.brumley@orrfellowship.org" : "sam@brumley.cloud")));
 check("missing-email candidate is excluded", DEMO_CANDIDATES.some((candidate) => !candidate.email && !isEligible(candidate)));
 check("unsubscribed candidate is excluded", DEMO_CANDIDATES.some((candidate) => candidate.unsubscribed && !isEligible(candidate)));
@@ -41,7 +41,8 @@ check("supported merge variables are accepted", findUnsupportedMergeVariables("H
 const componentSource = readFileSync(new URL("./EmailCampaignsClient.tsx", import.meta.url), "utf8");
 check("developer Gmail test panel is removed", !componentSource.includes("GmailTestSendPanel") && !componentSource.includes("Developer Gmail test"));
 check("demo send and scheduling controls are removed", !componentSource.includes("Demo send only") && !componentSource.includes("Demo schedule only"));
-check("Review uses the Gmail campaign action", componentSource.includes("Send with Gmail") && componentSource.includes("/api/google/send-demo-campaign"));
+check("Review uses the Gmail campaign action", componentSource.includes("Send with Gmail") && componentSource.includes("/api/google/enqueue-campaign"));
+check("send flow enqueues and polls campaign status", componentSource.includes("/api/google/campaign-status"));
 check("controlled smoke test starts with no recipients selected", componentSource.includes("useState<Set<string>>(() => new Set())"));
 check("controlled production-test wording is visible", componentSource.includes("controlled smoke test") && componentSource.includes("approved test inboxes"));
 

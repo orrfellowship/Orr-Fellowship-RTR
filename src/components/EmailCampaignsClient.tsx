@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowLeft, ArrowRight, Ban, Check, CheckCircle2, ChevronLeft,
   ChevronRight, CircleAlert, Clock3, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound, X,
@@ -33,6 +33,11 @@ function formatDate(value: string | null) {
 }
 
 type GmailNotice = { result?: string; error?: string };
+
+type ProgressRecipient = { candidateName: string; maskedRecipient: string | null; status: "sent" | "failed" | "excluded" | "pending"; messageId?: string; failureReason?: string; exclusionReason?: string };
+type CampaignProgress = { status: string; total: number; sent: number; failed: number; skipped: number; pending: number; done: boolean; recipients: ProgressRecipient[] };
+type EnqueuedExclusion = { candidateName: string; maskedRecipient: string | null; exclusionReason?: string };
+type EnqueueResponse = { success: true; campaignId: string; total: number; queued: number; invalid: number; replayed: boolean; excluded: EnqueuedExclusion[] };
 
 const DEFAULT_GMAIL_STATUS: GmailConnectionStatus = {
   connected: false,
@@ -79,6 +84,11 @@ export default function EmailCampaignsClient({
   const [sending, setSending] = useState(false);
   const [campaignResult, setCampaignResult] = useState<DemoCampaignResult | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  // Queue flow: after enqueue we hold the campaign id + the demo exclusions and
+  // poll for live progress until the background drainer empties the queue.
+  const [campaignId, setCampaignId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<CampaignProgress | null>(null);
+  const [enqueuedExcluded, setEnqueuedExcluded] = useState<EnqueuedExclusion[]>([]);
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const inFlight = useRef(false);
@@ -149,6 +159,9 @@ export default function EmailCampaignsClient({
     });
   }
 
+  // Enqueue the campaign (returns immediately) and switch to the live progress
+  // screen. The fellow can close the tab from here — the background drainer +
+  // every-minute cron finish the batch regardless.
   async function handleCampaignSend() {
     if (!canSend || inFlight.current) return;
     const idempotencyKey = submission.current?.fingerprint === campaignFingerprint
@@ -159,33 +172,72 @@ export default function EmailCampaignsClient({
     setSending(true);
     setSendError(null);
     try {
-      const response = await fetch("/api/google/send-demo-campaign", {
+      const response = await fetch("/api/google/enqueue-campaign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ campaignName, subject, body, selectedCandidateIds, idempotencyKey }),
       });
-      const payload = await response.json() as DemoCampaignResult | { success: false; error?: { message?: string } };
+      const payload = await response.json() as EnqueueResponse | { success: false; error?: { message?: string } };
       if (!response.ok || payload.success !== true) {
-        setSendError(payload.success === false && payload.error?.message
-          ? payload.error.message
-          : "The controlled Gmail campaign test could not be completed.");
+        setSendError("error" in payload && payload.error?.message ? payload.error.message : "The campaign could not be queued.");
         return;
       }
-      setCampaignResult(payload);
+      setEnqueuedExcluded(payload.excluded ?? []);
       setConfirmationFingerprint(null);
+      setProgress({ status: "queued", total: payload.total, sent: 0, failed: 0, skipped: 0, pending: payload.total, done: false, recipients: [] });
+      setCampaignId(payload.campaignId); // starts polling
     } catch {
-      setSendError("The controlled Gmail campaign test could not be completed.");
+      setSendError("The campaign could not be queued.");
     } finally {
       inFlight.current = false;
       setSending(false);
     }
   }
 
+  // Poll live progress while a campaign is draining; resolve to the Sent screen
+  // once the queue is empty.
+  useEffect(() => {
+    if (!campaignId || campaignResult) return;
+    let active = true;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/google/campaign-status?id=${encodeURIComponent(campaignId)}`, { cache: "no-store" });
+        const data = await res.json() as CampaignProgress & { success: boolean };
+        if (!active || !data.success) return;
+        setProgress(data);
+        if (data.done) {
+          const excludedRecipients = enqueuedExcluded.map((e) => ({
+            candidateId: e.candidateName, candidateName: e.candidateName, maskedRecipient: e.maskedRecipient,
+            status: "excluded" as const, exclusionReason: e.exclusionReason,
+          }));
+          setCampaignResult({
+            success: true,
+            attempted: data.total,
+            sent: data.sent,
+            failed: data.failed,
+            excluded: enqueuedExcluded.length + data.skipped,
+            recipients: [
+              ...data.recipients.map((r, i) => ({ candidateId: `q-${i}`, candidateName: r.candidateName, maskedRecipient: r.maskedRecipient, status: (r.status === "pending" ? "sent" : r.status) as "sent" | "failed" | "excluded", messageId: r.messageId, failureReason: r.failureReason, exclusionReason: r.exclusionReason })),
+              ...excludedRecipients,
+            ],
+          });
+          setCampaignId(null);
+        }
+      } catch { /* transient — next tick retries */ }
+    };
+    void tick();
+    const timer = setInterval(tick, 2500);
+    return () => { active = false; clearInterval(timer); };
+  }, [campaignId, campaignResult, enqueuedExcluded]);
+
   // Clear the result and return to a fresh wizard for another campaign. The
   // composed template (name/subject/body) is kept so a follow-up send can reuse
   // it; only the audience, confirmation, and result are reset.
   function startAnotherCampaign() {
     setCampaignResult(null);
+    setCampaignId(null);
+    setProgress(null);
+    setEnqueuedExcluded([]);
     setSelectedIds(new Set());
     setConfirmationFingerprint(null);
     setPreviewIndex(0);
@@ -194,9 +246,11 @@ export default function EmailCampaignsClient({
     submission.current = null;
   }
 
-  // A successful send takes over the screen with a clear confirmation instead of
-  // leaving the sender on the review step wondering whether it worked.
+  // A finished send takes over the screen with a clear confirmation; while it's
+  // still draining, the live "Sending…" screen does. Either way the wizard is
+  // hidden so the sender isn't left wondering whether it worked.
   const showSent = campaignResult?.success === true;
+  const showSending = !showSent && !!campaignId;
 
   return (
     <div className="email-campaigns-page">
@@ -289,7 +343,35 @@ export default function EmailCampaignsClient({
         </section>
       )}
 
-      {!showSent && (<>
+      {showSending && progress && (() => {
+        const done = progress.sent + progress.failed + progress.skipped;
+        const pct = progress.total > 0 ? Math.round((done / progress.total) * 100) : 0;
+        return (
+          <section className="sent-screen" role="status" aria-live="polite">
+            <div className="sent-hero">
+              <div className="sent-badge sending"><Send size={30} /></div>
+              <h2>Sending your campaign…</h2>
+              <p>
+                {progress.sent} of {progress.total} sent{progress.failed > 0 ? ` · ${progress.failed} failed` : ""}.
+                <br /><strong>You can close this tab</strong> — sending continues in the background and finishes on its own.
+              </p>
+            </div>
+            <div className="send-progress" aria-label={`${pct}% complete`}>
+              <div className="send-progress-bar" style={{ width: `${pct}%` }} />
+            </div>
+            <div className="review-card">
+              <div className="result-metrics">
+                <ResultMetric label="Sent" value={progress.sent} tone="good" />
+                <ResultMetric label="Failed" value={progress.failed} tone="warning" />
+                <ResultMetric label="Remaining" value={progress.pending} />
+                <ResultMetric label="Total" value={progress.total} />
+              </div>
+            </div>
+          </section>
+        );
+      })()}
+
+      {!showSent && !showSending && (<>
       <div className="stepper" aria-label="Campaign steps">
         {CAMPAIGN_STEPS.map((label, index) => {
           const accessible = index <= maxReached;
@@ -453,7 +535,7 @@ export default function EmailCampaignsClient({
                 <input type="checkbox" checked={confirmed} disabled={!gmailCampaignSendEnabled || !gmailConnection.connected || sending} onChange={(event) => setConfirmationFingerprint(event.target.checked ? campaignFingerprint : null)} />
                 <span>I understand this will send {selectedCandidates.length} real personalized emails through {gmailConnection.connectedEmail ?? "the connected Gmail account"}.</span>
               </label>
-              <button type="button" className="primary-action" disabled={!canSend} onClick={handleCampaignSend}><Send size={16} /> {sending ? "Sending sequentially…" : "Send with Gmail"}</button>
+              <button type="button" className="primary-action" disabled={!canSend} onClick={handleCampaignSend}><Send size={16} /> {sending ? "Queuing…" : "Send with Gmail"}</button>
               {!gmailConnection.connected && <a className="gmail-action review-connect" href="/api/google/connect"><Link2 size={15} /> Connect Gmail</a>}
               {!gmailCampaignSendEnabled && <div className="safety-note"><CircleAlert size={15} /> Controlled Gmail test sending is disabled in this environment.</div>}
               {sendError && <div className="campaign-send-error" role="alert"><CircleAlert size={15} /> {sendError}</div>}
@@ -511,6 +593,9 @@ const styles = `
   .sent-badge { display: grid; place-items: center; width: 68px; height: 68px; border-radius: 20px; }
   .sent-badge.good { color: ${C.good}; background: #E6F3EC; }
   .sent-badge.partial { color: ${C.orange}; background: #FBE7DF; }
+  .sent-badge.sending { color: ${C.navy2}; background: #EAF0FA; }
+  .send-progress { height: 10px; border-radius: 99px; background: ${C.line}; overflow: hidden; }
+  .send-progress-bar { height: 100%; background: ${C.good}; border-radius: 99px; transition: width .4s ease; }
   .sent-hero h2 { color: ${C.navy}; font-family: ${HEAD}; font-size: 25px; margin: 4px 0 0; }
   .sent-hero p { color: ${C.muted}; font-size: 13.5px; line-height: 1.55; margin: 0; max-width: 480px; }
   .sent-actions { display: flex; justify-content: center; }

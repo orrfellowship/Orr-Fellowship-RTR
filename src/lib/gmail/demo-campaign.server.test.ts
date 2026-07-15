@@ -60,7 +60,7 @@ function decodeMime(raw: string): { headers: string; body: string } {
 async function main() {
   rejects("unknown candidate IDs are rejected", () => validateDemoCampaignInput(input({ selectedCandidateIds: ["unknown-id"] })), "unknown_candidate");
   rejects("duplicate candidate IDs are rejected", () => validateDemoCampaignInput(input({ selectedCandidateIds: ["ava-patel", "ava-patel"] })), "duplicate_candidate");
-  rejects("the 10-candidate maximum is enforced", () => validateDemoCampaignInput(input({ selectedCandidateIds: Array.from({ length: 11 }, (_, index) => `candidate-${index}`) })), "too_many_recipients");
+  rejects("the 13-candidate maximum is enforced", () => validateDemoCampaignInput(input({ selectedCandidateIds: Array.from({ length: 14 }, (_, index) => `candidate-${index}`) })), "too_many_recipients");
   rejects("unresolved merge variables are rejected", () => validateDemoCampaignInput(input({ subject: "Hello {{unsupported_value}}" })), "unsupported_merge_variable");
 
   resetDemoCampaignIdempotencyForTests();
@@ -105,9 +105,9 @@ async function main() {
       return { success: true, messageId: `message-${allSendCalls}`, threadId: null };
     },
   });
-  check("one Gmail request is made per eligible selected candidate", allSendCalls === 7 && allResult.attempted === 7);
+  check("one Gmail request is made per eligible selected candidate", allSendCalls === 10 && allResult.attempted === 10);
   check("server eligibility excludes missing, unsubscribed, and Do Not Contact candidates", allResult.excluded === 3 && allResult.recipients.filter((recipient) => recipient.status === "excluded").map((recipient) => recipient.exclusionReason).sort().join("|") === ["Marked Do Not Contact", "Missing email address", "Unsubscribed from email"].sort().join("|"));
-  check("partial Gmail failure returns mixed per-candidate results", allResult.sent === 6 && allResult.failed === 1 && allResult.recipients.some((recipient) => recipient.status === "sent") && allResult.recipients.some((recipient) => recipient.status === "failed"));
+  check("partial Gmail failure returns mixed per-candidate results", allResult.sent === 9 && allResult.failed === 1 && allResult.recipients.some((recipient) => recipient.status === "sent") && allResult.recipients.some((recipient) => recipient.status === "failed"));
   check("campaign results expose no access token or raw MIME", !JSON.stringify(allResult).includes("mock-access-token") && !JSON.stringify(allResult).includes("Content-Type:"));
 
   resetDemoCampaignIdempotencyForTests();

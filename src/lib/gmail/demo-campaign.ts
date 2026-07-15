@@ -35,7 +35,7 @@ export const DEMO_CAMPAIGN_LIMITS = {
   campaignName: 120,
   subject: 200,
   body: 10_000,
-  selectedCandidates: 10,
+  selectedCandidates: 13,
   idempotencyKey: 128,
 } as const;
 
@@ -57,6 +57,9 @@ export const DEMO_CANDIDATES: readonly DemoCandidate[] = [
   { id: "ethan-nguyen", firstName: "Ethan", lastName: "Nguyen", email: "samuel.brumley@orrfellowship.org", schoolName: "Purdue University", graduationYear: 2027, major: "Supply Chain Management", stage: "Finalist", lastContactedAt: "2026-07-10", unsubscribed: false, doNotContact: false },
   { id: "isabella-reed", firstName: "Isabella", lastName: "Reed", email: null, schoolName: "Butler University", graduationYear: 2028, major: "Strategic Communication", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
   { id: "caleb-brooks", firstName: "Caleb", lastName: "Brooks", email: "sam@brumley.cloud", schoolName: "Indiana University", graduationYear: 2027, major: "Accounting", stage: "Contacted", lastContactedAt: "2026-06-30", unsubscribed: true, doNotContact: false },
+  { id: "grace-okafor", firstName: "Grace", lastName: "Okafor", email: "sam@brumley.cloud", schoolName: "Purdue University", graduationYear: 2027, major: "Mechanical Engineering", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "daniel-mueller", firstName: "Daniel", lastName: "Mueller", email: "samuel.brumley@orrfellowship.org", schoolName: "DePauw University", graduationYear: 2028, major: "Data Science", stage: "Contacted", lastContactedAt: "2026-07-05", unsubscribed: false, doNotContact: false },
+  { id: "priya-shah", firstName: "Priya", lastName: "Shah", email: "sam@brumley.cloud", schoolName: "Butler University", graduationYear: 2027, major: "Entrepreneurship", stage: "Applied", lastContactedAt: "2026-06-28", unsubscribed: false, doNotContact: false },
 ];
 
 export const MERGE_VARIABLES = [
