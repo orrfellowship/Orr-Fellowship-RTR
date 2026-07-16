@@ -2,8 +2,44 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { getSchoolsCached } from "@/lib/queries";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 import { isAdminPlus, type AppRole } from "@/lib/types";
-import { candidateOutreachTokens, renderOutreachTemplate } from "./candidate-tokens";
+import { candidateOutreachTokens, renderOutreachTemplate, findUnsupportedOutreachVariables } from "./candidate-tokens";
 import { enqueueOutreachCampaign, type EnqueueRecipient, type EnqueueResult } from "./outreach-queue.server";
+import { GmailTestSendError } from "./test-send.server";
+
+// Shared input validation for the live outreach routes. Throws GmailTestSendError
+// (same shape the routes already translate to JSON) so a bad payload — or a
+// typo'd merge token — fails loudly before anything is enqueued.
+export const OUTREACH_LIMITS = { campaignName: 120, subject: 200, body: 20_000, maxRecipients: 1000, idempotencyKey: 128 } as const;
+
+export type ValidatedOutreachInput = { campaignName: string; subject: string; body: string; ids: string[]; idempotencyKey: string };
+
+export function validateOutreachInput(value: unknown): ValidatedOutreachInput {
+  const bad = (code: string, msg: string): never => { throw new GmailTestSendError(code, msg, 400); };
+  if (!value || typeof value !== "object" || Array.isArray(value)) bad("invalid_campaign", "Send valid campaign content.");
+  const v = value as Record<string, unknown>;
+  const ids = v.selectedIds ?? v.selectedCandidateIds ?? v.selectedUserIds;
+  if (typeof v.campaignName !== "string" || typeof v.subject !== "string" || typeof v.body !== "string" || !Array.isArray(ids) || typeof v.idempotencyKey !== "string") {
+    bad("invalid_campaign", "Send valid campaign content and a recipient selection.");
+  }
+  const campaignName = (v.campaignName as string).trim();
+  const subject = (v.subject as string).trim();
+  const body = v.body as string;
+  if (!campaignName || !subject || !body.trim()) bad("invalid_campaign", "Campaign name, subject, and message are required.");
+  if (campaignName.length > OUTREACH_LIMITS.campaignName) bad("invalid_campaign", "Campaign name is too long.");
+  if (subject.length > OUTREACH_LIMITS.subject) bad("invalid_campaign", "Subject is too long.");
+  if (/[\r\n]/.test(subject)) bad("invalid_campaign", "Subject cannot contain line breaks.");
+  if (body.length > OUTREACH_LIMITS.body) bad("invalid_campaign", "Message is too long.");
+  const unsupported = [...findUnsupportedOutreachVariables(subject), ...findUnsupportedOutreachVariables(body)];
+  if (unsupported.length) bad("unsupported_merge_variable", `Unknown merge field(s): ${unsupported.join(", ")}. Fix them before sending.`);
+  const list = ids as unknown[];
+  if (!list.length) bad("missing_recipients", "Select at least one recipient.");
+  if (list.length > OUTREACH_LIMITS.maxRecipients) bad("too_many_recipients", `Select no more than ${OUTREACH_LIMITS.maxRecipients} recipients.`);
+  if (list.some((id) => typeof id !== "string" || !id)) bad("invalid_recipient", "Recipient selection is invalid.");
+  if (new Set(list as string[]).size !== list.length) bad("duplicate_recipient", "A recipient was selected more than once.");
+  const idempotencyKey = (v.idempotencyKey as string).trim();
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey)) bad("invalid_idempotency_key", "Invalid request identifier.");
+  return { campaignName, subject, body, ids: list as string[], idempotencyKey };
+}
 
 // Real-candidate outreach (Phase 4). Turns a sender's selected candidates into
 // enqueued sends, enforcing the core rule: you may only email candidates you're
