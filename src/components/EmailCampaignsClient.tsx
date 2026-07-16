@@ -146,6 +146,9 @@ export default function EmailCampaignsClient({
     && unsupportedVariables.length === 0;
   const canContinue = step === 0 ? selectedRecipients.length > 0 : step === 1 ? !!composeReady : true;
   const connectionNotice = gmailNoticeText(gmailNotice);
+  // Reply/bounce tracking needs the gmail.metadata scope (added in Phase 6).
+  // A connection made before that was requested is send-only until reconnect.
+  const canTrackReplies = !!gmailConnection.grantedScopes?.includes("https://www.googleapis.com/auth/gmail.metadata");
   const canSend = gmailCampaignSendEnabled
     && gmailConnection.connected
     && selectedRecipients.length > 0
@@ -330,15 +333,21 @@ export default function EmailCampaignsClient({
             </StatusPill>
           </div>
           {gmailConnection.connected ? (
-            <p><strong>{gmailConnection.connectedEmail}</strong> is connected for controlled test delivery through Gmail.</p>
+            <p><strong>{gmailConnection.connectedEmail}</strong> is connected — outreach sends from your own Gmail.
+              {!canTrackReplies && <span className="reconnect-hint"> Reconnect to enable automatic reply &amp; bounce tracking.</span>}
+            </p>
           ) : (
-            <p>Connect your Orr Fellowship account before sending this controlled Gmail campaign test.</p>
+            <p>Connect your Orr Fellowship Gmail to send outreach from your own account.</p>
           )}
         </div>
         {gmailConnection.connected ? (
-          <form method="post" action="/api/google/disconnect">
-            <button type="submit" className="gmail-action secondary"><Unplug size={15} /> Disconnect Gmail</button>
-          </form>
+          !canTrackReplies ? (
+            <a className="gmail-action" href="/api/google/connect"><Link2 size={15} /> Reconnect</a>
+          ) : (
+            <form method="post" action="/api/google/disconnect">
+              <button type="submit" className="gmail-action secondary"><Unplug size={15} /> Disconnect Gmail</button>
+            </form>
+          )
         ) : (
           <a className="gmail-action" href="/api/google/connect"><Link2 size={15} /> Connect Gmail</a>
         )}
@@ -695,6 +704,7 @@ const styles = `
   .aud-action.ghost { border-color: ${C.line}; color: ${C.muted}; } .aud-action:disabled { opacity: .45; cursor: not-allowed; }
   .candidate-empty { padding: 26px 18px; text-align: center; color: ${C.muted}; font-size: 13px; }
   .compose-warn { display: flex; align-items: center; gap: 8px; background: #FBE7DF; border: 1px solid ${C.orange}; color: #8A3A1E; border-radius: 9px; padding: 9px 12px; font-size: 12.5px; margin-top: 4px; }
+  .reconnect-hint { color: ${C.orange}; font-weight: 600; }
   .candidate-table { display: grid; grid-template-columns: 56px 1.35fr 1.15fr .75fr 1.1fr .8fr; gap: 12px; align-items: center; min-width: 860px; }
   .candidate-table-wrap { overflow-x: auto; } .candidate-head { padding: 10px 18px; border-bottom: 1px solid ${C.line}; color: ${C.muted}; background: #FAFBFE; font: 600 10.5px ${HEAD}; text-transform: uppercase; letter-spacing: .25px; }
   .candidate-row { padding: 12px 18px; border-bottom: 1px solid ${C.line}; font-size: 12.5px; } .candidate-row:last-child { border-bottom: 0; } .candidate-row.excluded { background: #FBFBFC; color: #8E919B; }

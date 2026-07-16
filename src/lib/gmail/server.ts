@@ -10,7 +10,18 @@ import type { GmailConnectionStatus } from "./types";
 import { isAdminPlus, type AppRole } from "@/lib/types";
 
 export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+// Read-only headers/labels (no message bodies) — powers reply + bounce
+// detection (Phase 7). Restricted scope, but the consent screen is Internal so
+// no Google verification is required.
+export const GMAIL_METADATA_SCOPE = "https://www.googleapis.com/auth/gmail.metadata";
 export const GOOGLE_IDENTITY_SCOPES = ["openid", "email"] as const;
+
+// A connection can send + track replies only if it granted BOTH scopes. A
+// connection made before the metadata scope was added has send only, and needs
+// a reconnect to enable reply/bounce tracking.
+export function hasReplyTrackingScope(grantedScopes: string[] | undefined): boolean {
+  return !!grantedScopes?.includes(GMAIL_METADATA_SCOPE);
+}
 export const GMAIL_RETURN_TO = "/console/email-campaigns";
 export const GOOGLE_STATE_COOKIE = "orr_google_oauth_state";
 
@@ -97,7 +108,7 @@ export function googleAuthorizationUrl(config: GoogleOAuthConfig, state: string)
     client_id: config.clientId,
     redirect_uri: config.redirectUri,
     response_type: "code",
-    scope: [...GOOGLE_IDENTITY_SCOPES, GMAIL_SEND_SCOPE].join(" "),
+    scope: [...GOOGLE_IDENTITY_SCOPES, GMAIL_SEND_SCOPE, GMAIL_METADATA_SCOPE].join(" "),
     access_type: "offline",
     prompt: "consent",
     include_granted_scopes: "true",
