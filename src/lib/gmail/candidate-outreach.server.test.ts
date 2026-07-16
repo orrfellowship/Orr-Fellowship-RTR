@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildCandidateRecipients, enqueueCandidateCampaign, buildUserRecipients, enqueueUsersCampaign, type OutreachCandidate } from "./candidate-outreach.server";
+import { buildCandidateRecipients, enqueueCandidateCampaign, buildUserRecipients, enqueueUsersCampaign, excludePreviouslyEmailedUsers, type OutreachCandidate } from "./candidate-outreach.server";
 
 let failures = 0;
 function check(name: string, cond: boolean) {
@@ -71,6 +71,12 @@ async function run() {
     { subject: "Congrats {{first_name}}!", body: "So proud of you, {{full_name}}." },
   );
   check("team recipients render name tokens and carry no candidate id", teamRecipients[0].renderedSubject === "Congrats Dana!" && teamRecipients[1].renderedBody === "So proud of you, Sam." && teamRecipients.every((r) => r.candidateId === null));
+
+  const neverEmailed = excludePreviouslyEmailedUsers(
+    [{ id: "u1", email: "DANA@orrfellowship.org" }, { id: "u2", email: "sam@orrfellowship.org" }, { id: "u3", email: null }],
+    [" dana@orrfellowship.org "],
+  );
+  check("whole-team test audience excludes every previously sent address", neverEmailed.length === 1 && neverEmailed[0].id === "u2");
 
   let teamEnqueuedFor = "";
   const teamResult = await enqueueUsersCampaign("admin-1", "admin", {
