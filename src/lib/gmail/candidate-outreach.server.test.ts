@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildCandidateRecipients, enqueueCandidateCampaign, type OutreachCandidate } from "./candidate-outreach.server";
+import { buildCandidateRecipients, enqueueCandidateCampaign, buildUserRecipients, enqueueUsersCampaign, type OutreachCandidate } from "./candidate-outreach.server";
 
 let failures = 0;
 function check(name: string, cond: boolean) {
@@ -64,6 +64,28 @@ async function run() {
   check("only the fellow's own assignment is enqueued", enqueuedRecipients.length === 1 && enqueuedRecipients[0].candidateId === "mine");
   check("the other fellow's candidate is reported skipped-unassigned", result.skippedUnassigned.includes("theirs"));
   check("school token resolves to the specific campus, not the tier group", enqueuedRecipients[0].renderedBody === "From IU Indianapolis");
+
+  // Whole-team audience: build user recipients (candidate_id null) + admin gate.
+  const teamRecipients = buildUserRecipients(
+    [{ id: "u1", fullName: "Dana Fellow", email: "dana@orrfellowship.org" }, { id: "u2", fullName: "Sam", email: "sam@orrfellowship.org" }],
+    { subject: "Congrats {{first_name}}!", body: "So proud of you, {{full_name}}." },
+  );
+  check("team recipients render name tokens and carry no candidate id", teamRecipients[0].renderedSubject === "Congrats Dana!" && teamRecipients[1].renderedBody === "So proud of you, Sam." && teamRecipients.every((r) => r.candidateId === null));
+
+  let teamEnqueuedFor = "";
+  const teamResult = await enqueueUsersCampaign("admin-1", "admin", {
+    campaignName: "Cohort celebration", subject: "Congrats {{first_name}}", body: "🎉",
+  }, {
+    loadUsers: async (ids) => { void ids; return [{ id: "u1", fullName: "Dana", email: "dana@orrfellowship.org" }]; },
+    enqueue: async (sender, inp) => { teamEnqueuedFor = sender; return { campaignId: "camp-team", queued: inp.recipients.length, skippedDnc: 0, skippedQuota: 0, invalid: 0, replayed: false }; },
+  });
+  check("an admin can email the whole team", teamEnqueuedFor === "admin-1" && teamResult.queued === 1 && !teamResult.forbidden);
+
+  const blocked = await enqueueUsersCampaign("fellow-1", "fellow", { campaignName: "x", subject: "x", body: "x" }, {
+    loadUsers: async () => { throw new Error("should not load users for a fellow"); },
+    enqueue: async () => { throw new Error("should not enqueue for a fellow"); },
+  });
+  check("a fellow is forbidden from emailing the whole team", blocked.forbidden === true && blocked.queued === 0);
 
   assert.equal(failures, 0);
   console.log(failures === 0 ? "\nAll candidate-outreach checks passed." : `\n${failures} candidate-outreach check(s) failed.`);

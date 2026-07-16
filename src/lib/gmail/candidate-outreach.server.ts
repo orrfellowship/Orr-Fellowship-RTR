@@ -107,3 +107,66 @@ async function defaultLoadProfileNames(ids: string[]): Promise<Map<string, strin
   const { data } = await db.from("profiles").select("id, full_name").in("id", ids);
   return new Map((data ?? []).map((p: any) => [p.id as string, p.full_name as string]));
 }
+
+// ---------------------------------------------------------------------------
+// "Whole team" audience — email the RTR users themselves (fellows), not
+// candidates. ADMIN/SUPER ONLY (e.g. a celebration note to the fellows). These
+// recipients aren't candidates, so per-candidate rules (do_not_contact, 2/week)
+// don't apply — candidate_id is null and only the 300/sender/day cap governs.
+// ---------------------------------------------------------------------------
+
+export type OutreachUser = { id: string; fullName: string | null; email: string | null };
+
+export function buildUserRecipients(
+  users: OutreachUser[],
+  opts: { subject: string; body: string },
+): EnqueueRecipient[] {
+  return users.map((u) => {
+    const tokens = candidateOutreachTokens({ name: u.fullName, stage: "", gradDate: "", school: "", pointPerson: "" });
+    return {
+      candidateId: null, // team members are not candidate rows
+      toEmail: (u.email ?? "").trim(),
+      renderedSubject: renderOutreachTemplate(opts.subject, tokens),
+      renderedBody: renderOutreachTemplate(opts.body, tokens),
+    };
+  });
+}
+
+export type UsersCampaignInput = {
+  campaignName: string; subject: string; body: string;
+  selectedUserIds?: string[]; // omit/empty → every active user with an email
+  idempotencyKey?: string | null;
+};
+
+export type UsersCampaignDeps = {
+  loadUsers?: (ids: string[] | null) => Promise<OutreachUser[]>;
+  enqueue?: typeof enqueueOutreachCampaign;
+};
+
+export async function enqueueUsersCampaign(
+  senderUserId: string,
+  role: AppRole,
+  input: UsersCampaignInput,
+  deps: UsersCampaignDeps = {},
+): Promise<EnqueueResult & { forbidden?: true }> {
+  // Emailing the whole team is an admin/super power — never a fellow's.
+  if (!isAdminPlus(role)) return { forbidden: true, campaignId: "", queued: 0, skippedDnc: 0, skippedQuota: 0, invalid: 0, replayed: false };
+  const loadUsers = deps.loadUsers ?? defaultLoadUsers;
+  const enqueue = deps.enqueue ?? enqueueOutreachCampaign;
+
+  const ids = input.selectedUserIds?.length ? input.selectedUserIds : null;
+  const users = await loadUsers(ids);
+  const recipients = buildUserRecipients(users, { subject: input.subject, body: input.body });
+  return enqueue(senderUserId, {
+    campaignName: input.campaignName, subject: input.subject, body: input.body,
+    recipients, idempotencyKey: input.idempotencyKey,
+  });
+}
+
+async function defaultLoadUsers(ids: string[] | null): Promise<OutreachUser[]> {
+  const db = createServiceClient();
+  let q = db.from("profiles").select("id, full_name, email").eq("is_active", true).not("email", "is", null);
+  if (ids) q = q.in("id", ids);
+  const { data } = await q;
+  return (data ?? []).map((p: any) => ({ id: p.id, fullName: p.full_name, email: p.email }));
+}
