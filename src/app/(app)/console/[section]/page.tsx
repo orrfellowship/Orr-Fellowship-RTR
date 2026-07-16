@@ -19,7 +19,6 @@ import EmailCampaignsClient from "@/components/EmailCampaignsClient";
 import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
 import { isGmailTestSendEnabled } from "@/lib/gmail/test-send.server";
-import { parseTestRecipients } from "@/lib/gmail/demo-campaign.server";
 
 export default async function ConsoleSection({
   params,
@@ -74,7 +73,6 @@ async function ConsoleSectionData({
         error: gmailQuery.gmail_error ?? (statusUnavailable ? "status_unavailable" : undefined),
       }}
       gmailCampaignSendEnabled={isGmailTestSendEnabled()}
-      gmailTestRecipients={parseTestRecipients(process.env.GMAIL_TEST_RECIPIENTS)}
     />;
   }
 

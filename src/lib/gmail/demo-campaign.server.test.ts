@@ -39,7 +39,7 @@ function input(overrides: Record<string, unknown> = {}) {
     campaignName: "Phase 3 mock campaign",
     subject: "Hello {{first_name}}",
     body: "Hi {{full_name}} from {{school_name}} — {{major}}.",
-    selectedCandidateIds: ["ava-patel"],
+    selectedCandidateIds: ["catherine-mazanek"],
     idempotencyKey: "phase3-test-key",
     ...overrides,
   };
@@ -59,7 +59,7 @@ function decodeMime(raw: string): { headers: string; body: string } {
 
 async function main() {
   rejects("unknown candidate IDs are rejected", () => validateDemoCampaignInput(input({ selectedCandidateIds: ["unknown-id"] })), "unknown_candidate");
-  rejects("duplicate candidate IDs are rejected", () => validateDemoCampaignInput(input({ selectedCandidateIds: ["ava-patel", "ava-patel"] })), "duplicate_candidate");
+  rejects("duplicate candidate IDs are rejected", () => validateDemoCampaignInput(input({ selectedCandidateIds: ["catherine-mazanek", "catherine-mazanek"] })), "duplicate_candidate");
   rejects("the 13-candidate maximum is enforced", () => validateDemoCampaignInput(input({ selectedCandidateIds: Array.from({ length: 14 }, (_, index) => `candidate-${index}`) })), "too_many_recipients");
   rejects("unresolved merge variables are rejected", () => validateDemoCampaignInput(input({ subject: "Hello {{unsupported_value}}" })), "unsupported_merge_variable");
 
@@ -73,24 +73,25 @@ async function main() {
     },
   });
   const controlledMime = decodeMime(arbitraryRecipientRaw[0]);
-  check("client-provided arbitrary recipient addresses cannot be used", controlledMime.headers.includes("To: samuel.brumley@orrfellowship.org") && !controlledMime.headers.includes("attacker@example.net"));
+  check("client-provided arbitrary recipient addresses cannot be used", controlledMime.headers.includes("To: catherine.mazanek@orrfellowship.org") && !controlledMime.headers.includes("attacker@example.net"));
 
   resetDemoCampaignIdempotencyForTests();
-  const sharedAddressMessages: string[] = [];
-  const sharedResult = await sendDemoCampaignForUser("user-1", input({
-    selectedCandidateIds: ["ava-patel", "elena-garcia"],
-    idempotencyKey: "shared-address-key",
+  const perRecipientMessages: string[] = [];
+  const twoResult = await sendDemoCampaignForUser("user-1", input({
+    selectedCandidateIds: ["catherine-mazanek", "jesse"],
+    idempotencyKey: "two-recipient-key",
   }), {
     createSession: async () => session,
     sendMessage: async (_token, raw) => {
-      sharedAddressMessages.push(raw);
-      return { success: true, messageId: `shared-${sharedAddressMessages.length}`, threadId: null };
+      perRecipientMessages.push(raw);
+      return { success: true, messageId: `msg-${perRecipientMessages.length}`, threadId: null };
     },
   });
-  const sharedDecoded = sharedAddressMessages.map(decodeMime);
-  check("two fictional candidates sharing one address produce two Gmail messages", sharedResult.sent === 2 && sharedAddressMessages.length === 2 && sharedDecoded.every((message) => message.headers.includes("To: samuel.brumley@orrfellowship.org")));
-  check("shared-address messages retain distinct subject personalization", sharedDecoded[0].headers.includes("Subject: Hello Ava") && sharedDecoded[1].headers.includes("Subject: Hello Elena"));
-  check("shared-address messages retain distinct body personalization", sharedDecoded[0].body.includes("Ava Patel") && sharedDecoded[1].body.includes("Elena Garcia"));
+  const twoDecoded = perRecipientMessages.map(decodeMime);
+  check("two recipients produce two Gmail messages", twoResult.sent === 2 && perRecipientMessages.length === 2);
+  check("each message is addressed to its own recipient", twoDecoded.some((m) => m.headers.includes("To: catherine.mazanek@orrfellowship.org")) && twoDecoded.some((m) => m.headers.includes("To: jesse@orrfellowship.org")));
+  check("messages retain distinct subject personalization", twoDecoded[0].headers.includes("Subject: Hello Catherine") && twoDecoded[1].headers.includes("Subject: Hello Jesse"));
+  check("messages retain distinct body personalization", twoDecoded[0].body.includes("Catherine Mazanek") && twoDecoded[1].body.includes("Jesse"));
 
   resetDemoCampaignIdempotencyForTests();
   let allSendCalls = 0;
@@ -105,9 +106,9 @@ async function main() {
       return { success: true, messageId: `message-${allSendCalls}`, threadId: null };
     },
   });
-  check("one Gmail request is made per eligible selected candidate", allSendCalls === 10 && allResult.attempted === 10);
-  check("server eligibility excludes missing, unsubscribed, and Do Not Contact candidates", allResult.excluded === 3 && allResult.recipients.filter((recipient) => recipient.status === "excluded").map((recipient) => recipient.exclusionReason).sort().join("|") === ["Marked Do Not Contact", "Missing email address", "Unsubscribed from email"].sort().join("|"));
-  check("partial Gmail failure returns mixed per-candidate results", allResult.sent === 9 && allResult.failed === 1 && allResult.recipients.some((recipient) => recipient.status === "sent") && allResult.recipients.some((recipient) => recipient.status === "failed"));
+  check("one Gmail request is made per selected recipient", allSendCalls === 8 && allResult.attempted === 8);
+  check("all test recipients are eligible (none excluded)", allResult.excluded === 0);
+  check("partial Gmail failure returns mixed per-recipient results", allResult.sent === 7 && allResult.failed === 1 && allResult.recipients.some((recipient) => recipient.status === "sent") && allResult.recipients.some((recipient) => recipient.status === "failed"));
   check("campaign results expose no access token or raw MIME", !JSON.stringify(allResult).includes("mock-access-token") && !JSON.stringify(allResult).includes("Content-Type:"));
 
   resetDemoCampaignIdempotencyForTests();
@@ -134,7 +135,7 @@ async function main() {
   const [firstResult, duplicateResult] = await Promise.all([firstRequest, duplicateRequest]);
   check("duplicate in-flight submission reuses one campaign operation", idempotentSendCalls === 1 && JSON.stringify(firstResult) === JSON.stringify(duplicateResult));
 
-  const safeRouteResult: DemoCampaignResult = { success: true, attempted: 1, sent: 1, failed: 0, excluded: 0, recipients: [{ candidateId: "ava-patel", candidateName: "Ava Patel", maskedRecipient: "sa***@example.com", status: "sent", messageId: "safe-message-id" }] };
+  const safeRouteResult: DemoCampaignResult = { success: true, attempted: 1, sent: 1, failed: 0, excluded: 0, recipients: [{ candidateId: "catherine-mazanek", candidateName: "Catherine Mazanek", maskedRecipient: "ca***@orrfellowship.org", status: "sent", messageId: "safe-message-id" }] };
   let productionSendCalls = 0;
   const productionResponse = await handleDemoCampaignRequest(new Request("https://rtr.orrfellowship.org/api/google/send-demo-campaign", {
     method: "POST", headers: { Origin: "https://rtr.orrfellowship.org", "Content-Type": "application/json" }, body: JSON.stringify(input()),
@@ -150,7 +151,7 @@ async function main() {
 
   const productionMultipleResponse = await handleDemoCampaignRequest(new Request("https://rtr.orrfellowship.org/api/google/send-demo-campaign", {
     method: "POST", headers: { Origin: "https://rtr.orrfellowship.org", "Content-Type": "application/json" },
-    body: JSON.stringify(input({ selectedCandidateIds: ["ava-patel", "elena-garcia"] })),
+    body: JSON.stringify(input({ selectedCandidateIds: ["catherine-mazanek", "jesse"] })),
   }), {
     nodeEnv: "production",
     enabledFlag: undefined,

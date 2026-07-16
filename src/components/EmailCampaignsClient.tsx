@@ -66,17 +66,13 @@ export default function EmailCampaignsClient({
   gmailConnection = DEFAULT_GMAIL_STATUS,
   gmailNotice = {},
   gmailCampaignSendEnabled = false,
-  gmailTestRecipients = [],
 }: {
   gmailConnection?: GmailConnectionStatus;
   gmailNotice?: GmailNotice;
   gmailCampaignSendEnabled?: boolean;
-  // Real inboxes from GMAIL_TEST_RECIPIENTS (server env). Shown so the tester
-  // can see exactly where the demo will send — the fictional candidates only
-  // supply the personalization; these addresses receive the mail.
-  gmailTestRecipients?: string[];
 }) {
   const eligibleIds = useMemo(() => DEMO_CANDIDATES.filter(isEligible).map((candidate) => candidate.id), []);
+  const eligibleRecipientEmails = useMemo(() => DEMO_CANDIDATES.filter(isEligible).map((candidate) => candidate.email ?? "").filter(Boolean), []);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [step, setStep] = useState(0);
   const [maxReached, setMaxReached] = useState(0);
@@ -265,11 +261,11 @@ export default function EmailCampaignsClient({
         <div>
           <div className="heading-line">
             <h1>Email Campaigns</h1>
-            <span className="demo-badge">Demo mode</span>
+            <span className="demo-badge">Test send</span>
           </div>
-          <p>This controlled smoke test uses fictional candidates but sends real personalized Gmail messages only to approved test inboxes.</p>
+          <p>Send a real test campaign to the recipients below through your connected Gmail.</p>
         </div>
-        <div className="previewing-note"><UserRoundCheck size={17} /> <span>Previewing as: <strong>{MOCK_PRIMARY_CONTACT.name}</strong>, Primary Contact</span></div>
+        <div className="previewing-note"><UserRoundCheck size={17} /> <span>Sending as: <strong>{gmailConnection.connectedEmail ?? MOCK_PRIMARY_CONTACT.email}</strong></span></div>
       </div>
 
       {connectionNotice && (
@@ -376,11 +372,11 @@ export default function EmailCampaignsClient({
         );
       })()}
 
-      {!showSent && !showSending && gmailTestRecipients.length > 0 && (
+      {!showSent && !showSending && eligibleRecipientEmails.length > 0 && (
         <div className="test-recipients-banner">
-          <div className="trb-head"><Mail size={16} /> Test delivery — this campaign sends to these {gmailTestRecipients.length} real {gmailTestRecipients.length === 1 ? "inbox" : "inboxes"}</div>
+          <div className="trb-head"><Mail size={16} /> This campaign sends to these {eligibleRecipientEmails.length} {eligibleRecipientEmails.length === 1 ? "inbox" : "inboxes"}</div>
           <div className="trb-list">
-            {gmailTestRecipients.map((addr, i) => {
+            {eligibleRecipientEmails.map((addr, i) => {
               const valid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr);
               return (
                 <div key={`${addr}-${i}`} className="trb-item">
@@ -391,7 +387,7 @@ export default function EmailCampaignsClient({
               );
             })}
           </div>
-          <div className="trb-note">Select {gmailTestRecipients.length} candidate{gmailTestRecipients.length === 1 ? "" : "s"} below — each one supplies the personalization for one of these inboxes, in order. The fictional names are only for the merge fields; the mail goes to the addresses above.</div>
+          <div className="trb-note">Select recipients below and compose your message. Each one still receives a personalized copy.</div>
         </div>
       )}
 
@@ -412,8 +408,8 @@ export default function EmailCampaignsClient({
       {step === 0 && (
         <section>
           <div className="section-title">
-            <div><h2>My Assigned Candidates</h2><p>You are the primary recruiting contact for these candidates.</p></div>
-            <span className="scope-pill"><UsersRound size={15} /> My assignments only</span>
+            <div><h2>Test Recipients</h2><p>These addresses will receive your test campaign.</p></div>
+            <span className="scope-pill"><UsersRound size={15} /> Test inboxes</span>
           </div>
 
           <div className="metrics-grid">
@@ -503,7 +499,7 @@ export default function EmailCampaignsClient({
                 <div><dt>Major</dt><dd>{currentPreview.major}</dd></div>
                 <div><dt>Graduation</dt><dd>{currentPreview.graduationYear}</dd></div>
               </dl>
-              <div className="personalization-note"><CheckCircle2 size={16} /><span>Merge variables are rendered with this candidate&apos;s fictional details.</span></div>
+              <div className="personalization-note"><CheckCircle2 size={16} /><span>Merge variables are rendered with this recipient&apos;s details.</span></div>
             </div>
             <article className="email-preview">
               <div className="email-toolbar"><span></span><span></span><span></span><div>Email preview</div></div>
@@ -521,7 +517,7 @@ export default function EmailCampaignsClient({
       {step === 3 && (
         <section>
           <div className="section-title">
-            <div><h2>Review campaign</h2><p>Confirm the fictional audience and content before sending real Gmail messages to controlled test inboxes.</p></div>
+            <div><h2>Review campaign</h2><p>Confirm the recipients and content before sending real Gmail messages.</p></div>
             <StatusPill tone={gmailCampaignSendEnabled ? "good" : "warning"}>{gmailCampaignSendEnabled ? "Controlled Gmail test" : "Sending disabled"}</StatusPill>
           </div>
           <div className="review-grid">
@@ -534,31 +530,6 @@ export default function EmailCampaignsClient({
                   <ReviewValue label="Automatic exclusions" value={`${automaticExcludedCandidates.length}`} />
                   <ReviewValue label="Subject" value={subject} wide />
                 </div>
-              </ReviewCard>
-              <ReviewCard title="Test delivery — where this actually sends">
-                {gmailTestRecipients.length === 0 ? (
-                  <div style={{ fontSize: 13, color: C.muted }}>
-                    No <code>GMAIL_TEST_RECIPIENTS</code> configured — this will send to the demo&apos;s built-in controlled inboxes.
-                    Set that env var (comma-separated) and redeploy to send to your own test addresses.
-                  </div>
-                ) : (
-                  <div className="recipient-list">
-                    {selectedCandidates.map((candidate, i) => {
-                      const target = gmailTestRecipients[i] ?? candidate.email ?? "";
-                      const looksValid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(target);
-                      return (
-                        <div key={candidate.id}>
-                          <span className="avatar">{i + 1}</span>
-                          <div>
-                            <strong>{target || "(no address)"}</strong>
-                            <small>personalized as {demoCandidateFullName(candidate)}{gmailTestRecipients[i] ? "" : " · demo fallback address"}</small>
-                          </div>
-                          {looksValid ? <CheckCircle2 size={17} /> : <StatusPill tone="warning">will fail</StatusPill>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </ReviewCard>
               <ReviewCard title={`Recipients (${selectedCandidates.length})`}>
                 <div className="recipient-list">

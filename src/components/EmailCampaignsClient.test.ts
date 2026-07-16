@@ -19,15 +19,11 @@ function check(name: string, condition: boolean) {
 
 const eligible = DEMO_CANDIDATES.filter(isEligible);
 check("campaign retains the four required stages", JSON.stringify(CAMPAIGN_STEPS) === JSON.stringify(["My Candidates", "Compose", "Preview", "Review"]));
-check("demo audience has 13 assigned candidates", DEMO_CANDIDATES.length === 13);
-check("default audience has 10 eligible recipients", eligible.length === 10);
-check("eligible candidates use only the two controlled addresses", eligible.every((candidate, index) => candidate.email === (index % 2 === 0 ? "samuel.brumley@orrfellowship.org" : "sam@brumley.cloud")));
-check("missing-email candidate is excluded", DEMO_CANDIDATES.some((candidate) => !candidate.email && !isEligible(candidate)));
-check("unsubscribed candidate is excluded", DEMO_CANDIDATES.some((candidate) => candidate.unsubscribed && !isEligible(candidate)));
-const doNotContactCandidate = DEMO_CANDIDATES.find((candidate) => candidate.doNotContact);
-check("Do Not Contact candidate remains in the assigned demo data", !!doNotContactCandidate);
-check("Do Not Contact candidate is automatically excluded", !!doNotContactCandidate && !isEligible(doNotContactCandidate));
-check("Do Not Contact exclusion uses the required reason", !!doNotContactCandidate && getAutomaticExclusionReason(doNotContactCandidate) === "Marked Do Not Contact");
+check("audience is the 8 test recipients", DEMO_CANDIDATES.length === 8);
+check("all recipients are eligible to email", eligible.length === 8);
+check("recipients are real addresses", eligible.every((candidate) => !!candidate.email && /@/.test(candidate.email)));
+check("recipients include the discussed inboxes", DEMO_CANDIDATES.some((c) => c.email === "catherine.mazanek@orrfellowship.org") && DEMO_CANDIDATES.some((c) => c.email === "sam@brumley.cloud"));
+check("no recipient is auto-excluded", DEMO_CANDIDATES.every((candidate) => getAutomaticExclusionReason(candidate) === null));
 
 const subjectTemplate = "{{first_name}} — {{major}}";
 const bodyTemplate = "Hi {{full_name}} at {{school_name}}, class of {{graduation_year}}.";
@@ -43,8 +39,8 @@ check("developer Gmail test panel is removed", !componentSource.includes("GmailT
 check("demo send and scheduling controls are removed", !componentSource.includes("Demo send only") && !componentSource.includes("Demo schedule only"));
 check("Review uses the Gmail campaign action", componentSource.includes("Send with Gmail") && componentSource.includes("/api/google/enqueue-campaign"));
 check("send flow enqueues and polls campaign status", componentSource.includes("/api/google/campaign-status"));
-check("controlled smoke test starts with no recipients selected", componentSource.includes("useState<Set<string>>(() => new Set())"));
-check("controlled production-test wording is visible", componentSource.includes("controlled smoke test") && componentSource.includes("approved test inboxes"));
+check("campaign starts with no recipients selected", componentSource.includes("useState<Set<string>>(() => new Set())"));
+check("test-send wording is visible", componentSource.includes("Test send") && componentSource.includes("Send a real test campaign"));
 
 console.log(failures === 0 ? "\nAll email campaign demo checks passed." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

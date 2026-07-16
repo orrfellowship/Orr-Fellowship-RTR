@@ -40,26 +40,24 @@ export const DEMO_CAMPAIGN_LIMITS = {
 } as const;
 
 export const MOCK_PRIMARY_CONTACT = {
-  name: "Sam Brumley",
-  firstName: "Sam",
-  email: "samuel.brumley@orrfellowship.org",
-  schoolName: "Purdue University",
+  name: "Mark Stolte",
+  firstName: "Mark",
+  email: "mark.stolte@orrfellowship.org",
+  schoolName: "Orr Fellowship",
 } as const;
 
+// The real test recipients. These addresses receive the campaign directly —
+// there are no fictional candidates and no GMAIL_TEST_RECIPIENTS env var needed.
+// To watch a failed send, flip one address to a malformed value (drop the .org).
 export const DEMO_CANDIDATES: readonly DemoCandidate[] = [
-  { id: "ava-patel", firstName: "Ava", lastName: "Patel", email: "samuel.brumley@orrfellowship.org", schoolName: "Purdue University", graduationYear: 2027, major: "Industrial Engineering", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
-  { id: "malik-johnson", firstName: "Malik", lastName: "Johnson", email: "sam@brumley.cloud", schoolName: "Indiana University", graduationYear: 2027, major: "Finance", stage: "Contacted", lastContactedAt: "2026-07-08", unsubscribed: false, doNotContact: false },
-  { id: "elena-garcia", firstName: "Elena", lastName: "Garcia", email: "samuel.brumley@orrfellowship.org", schoolName: "Butler University", graduationYear: 2028, major: "Marketing", stage: "Applied", lastContactedAt: "2026-06-24", unsubscribed: false, doNotContact: false },
-  { id: "noah-kim", firstName: "Noah", lastName: "Kim", email: "sam@brumley.cloud", schoolName: "Purdue University", graduationYear: 2027, major: "Computer Science", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
-  { id: "maya-thompson", firstName: "Maya", lastName: "Thompson", email: "samuel.brumley@orrfellowship.org", schoolName: "DePauw University", graduationYear: 2028, major: "Economics", stage: "Contacted", lastContactedAt: "2026-07-02", unsubscribed: false, doNotContact: false },
-  { id: "liam-obrien", firstName: "Liam", lastName: "O'Brien", email: "sam@brumley.cloud", schoolName: "Wabash College", graduationYear: 2027, major: "Political Science", stage: "Applied", lastContactedAt: "2026-06-18", unsubscribed: false, doNotContact: false },
-  { id: "zoe-williams", firstName: "Zoe", lastName: "Williams", email: "samuel.brumley@orrfellowship.org", schoolName: "Indiana University", graduationYear: 2028, major: "Information Systems", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: true },
-  { id: "ethan-nguyen", firstName: "Ethan", lastName: "Nguyen", email: "samuel.brumley@orrfellowship.org", schoolName: "Purdue University", graduationYear: 2027, major: "Supply Chain Management", stage: "Finalist", lastContactedAt: "2026-07-10", unsubscribed: false, doNotContact: false },
-  { id: "isabella-reed", firstName: "Isabella", lastName: "Reed", email: null, schoolName: "Butler University", graduationYear: 2028, major: "Strategic Communication", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
-  { id: "caleb-brooks", firstName: "Caleb", lastName: "Brooks", email: "sam@brumley.cloud", schoolName: "Indiana University", graduationYear: 2027, major: "Accounting", stage: "Contacted", lastContactedAt: "2026-06-30", unsubscribed: true, doNotContact: false },
-  { id: "grace-okafor", firstName: "Grace", lastName: "Okafor", email: "sam@brumley.cloud", schoolName: "Purdue University", graduationYear: 2027, major: "Mechanical Engineering", stage: "Sourced", lastContactedAt: null, unsubscribed: false, doNotContact: false },
-  { id: "daniel-mueller", firstName: "Daniel", lastName: "Mueller", email: "samuel.brumley@orrfellowship.org", schoolName: "DePauw University", graduationYear: 2028, major: "Data Science", stage: "Contacted", lastContactedAt: "2026-07-05", unsubscribed: false, doNotContact: false },
-  { id: "priya-shah", firstName: "Priya", lastName: "Shah", email: "sam@brumley.cloud", schoolName: "Butler University", graduationYear: 2027, major: "Entrepreneurship", stage: "Applied", lastContactedAt: "2026-06-28", unsubscribed: false, doNotContact: false },
+  { id: "catherine-mazanek", firstName: "Catherine", lastName: "Mazanek", email: "catherine.mazanek@orrfellowship.org", schoolName: "Purdue University", graduationYear: 2027, major: "—", stage: "Test", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "jesse", firstName: "Jesse", lastName: "", email: "jesse@orrfellowship.org", schoolName: "Indiana University", graduationYear: 2027, major: "—", stage: "Test", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "jordan-lee-caracci", firstName: "Jordan", lastName: "Lee-Caracci", email: "jordan.lee-caracci@orrfellowship.org", schoolName: "Butler University", graduationYear: 2027, major: "—", stage: "Test", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "olivia-lux", firstName: "Olivia", lastName: "Lux", email: "olivia.lux@orrfellowship.org", schoolName: "DePauw University", graduationYear: 2027, major: "—", stage: "Test", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "mark-gmail", firstName: "Mark", lastName: "", email: "markstolte02@gmail.com", schoolName: "Orr Fellowship", graduationYear: 2027, major: "—", stage: "Test", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "mark-stolte", firstName: "Mark", lastName: "Stolte", email: "mark.stolte@orrfellowship.org", schoolName: "Orr Fellowship", graduationYear: 2027, major: "—", stage: "Test", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "samuel-brumley", firstName: "Samuel", lastName: "Brumley", email: "samuel.brumley@orrfellowship.org", schoolName: "Purdue University", graduationYear: 2027, major: "—", stage: "Test", lastContactedAt: null, unsubscribed: false, doNotContact: false },
+  { id: "sam", firstName: "Sam", lastName: "", email: "sam@brumley.cloud", schoolName: "Indiana University", graduationYear: 2027, major: "—", stage: "Test", lastContactedAt: null, unsubscribed: false, doNotContact: false },
 ];
 
 export const MERGE_VARIABLES = [
@@ -85,7 +83,7 @@ Best,
 {{primary_contact_name}}`;
 
 export function demoCandidateFullName(candidate: DemoCandidate): string {
-  return `${candidate.firstName} ${candidate.lastName}`;
+  return `${candidate.firstName} ${candidate.lastName}`.trim();
 }
 
 export function getAutomaticExclusionReason(candidate: DemoCandidate): string | null {
