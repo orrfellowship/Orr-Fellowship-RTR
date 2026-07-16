@@ -159,6 +159,9 @@ export type OutreachStore = {
   candidateFlags: (candidateIds: string[], now: number) => Promise<Map<string, CandidateFlags>>;
   claimDueSends: (limit: number, now: number, leaseMs: number) => Promise<QueuedSend[]>;
   markSent: (id: string, r: { messageId: string; threadId: string | null; at: number }) => Promise<void>;
+  // Record a sent outreach on the candidate's contact timeline (outreach_log).
+  // Best-effort: a logging failure must never fail an email that already left.
+  logToTimeline: (r: { candidateId: string; authorId: string; subject: string }) => Promise<void>;
   markFailed: (id: string, r: { error: string; attempts: number }) => Promise<void>;
   markSkipped: (id: string, status: "skipped_dnc" | "skipped_quota") => Promise<void>;
   requeue: (id: string, r: { attempts: number; nextAttemptAt: number }) => Promise<void>;
@@ -295,6 +298,12 @@ export async function drainOutreachQueue(deps: DrainDeps = {}): Promise<DrainSum
     try {
       const result = await sendMessage(session.accessToken, raw, session.fetchImpl);
       await store.markSent(row.id, { messageId: result.messageId, threadId: result.threadId, at: nowFn() });
+      // Log to the candidate's timeline (real candidates only; team sends have
+      // no candidate_id). Best-effort — the email already left.
+      if (row.candidateId) {
+        try { await store.logToTimeline({ candidateId: row.candidateId, authorId: row.senderUserId, subject: row.renderedSubject }); }
+        catch { /* timeline logging is non-critical */ }
+      }
       summary.sent++;
       senderSent24h.set(row.senderUserId, (senderSent24h.get(row.senderUserId) ?? 0) + 1);
       if (row.candidateId && cf) cf.sends7d += 1;
@@ -398,6 +407,9 @@ function defaultStore(): OutreachStore {
     },
     async markSent(id, r) {
       await db().from("outreach_sends").update({ status: "sent", gmail_message_id: r.messageId, gmail_thread_id: r.threadId, sent_at: new Date(r.at).toISOString(), error: null }).eq("id", id);
+    },
+    async logToTimeline(r) {
+      await db().from("outreach_log").insert({ candidate_id: r.candidateId, author_id: r.authorId, body: `📧 Emailed — ${r.subject}` });
     },
     async markFailed(id, r) {
       await db().from("outreach_sends").update({ status: "failed", error: r.error, attempts: r.attempts }).eq("id", id);

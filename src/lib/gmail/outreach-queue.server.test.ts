@@ -55,10 +55,11 @@ check("failure notice flags rate limiting", /rate-limit/i.test(notice.body));
 type Row = QueuedSend & { status: string; error: string | null; sentAt: number | null; nextAttemptAt: number };
 function makeStore(seed: {
   rows?: Row[]; dnc?: Set<string>; sends7d?: Map<string, number>; senderSent24h?: number;
-} = {}): { store: OutreachStore; rows: Row[]; notifications: any[]; campaigns: Map<string, any> } {
+} = {}): { store: OutreachStore; rows: Row[]; notifications: any[]; campaigns: Map<string, any>; timeline: any[] } {
   const rows: Row[] = seed.rows ?? [];
   const campaigns = new Map<string, any>();
   const notifications: any[] = [];
+  const timeline: any[] = [];
   const store: OutreachStore = {
     async findCampaignByKey() { return null; },
     async insertCampaign(c) { const id = `camp-${campaigns.size + 1}`; campaigns.set(id, { ...c, status: "queued", total: 0 }); return id; },
@@ -81,6 +82,7 @@ function makeStore(seed: {
         .map((r) => ({ id: r.id, campaignId: r.campaignId, candidateId: r.candidateId, senderUserId: r.senderUserId, toEmail: r.toEmail, renderedSubject: r.renderedSubject, renderedBody: r.renderedBody, attempts: r.attempts }));
     },
     async markSent(id, r) { const row = rows.find((x) => x.id === id)!; row.status = "sent"; row.sentAt = r.at; },
+    async logToTimeline(r) { timeline.push(r); },
     async markFailed(id, r) { const row = rows.find((x) => x.id === id)!; row.status = "failed"; row.error = r.error; row.attempts = r.attempts; },
     async markSkipped(id, status) { rows.find((x) => x.id === id)!.status = status; },
     async requeue(id, r) { const row = rows.find((x) => x.id === id)!; row.status = "queued"; row.attempts = r.attempts; row.nextAttemptAt = r.nextAttemptAt; },
@@ -95,7 +97,7 @@ function makeStore(seed: {
     async loadAdminIds() { return ["admin-1"]; },
     async senderName() { return "Mark Stolte"; },
   };
-  return { store, rows, notifications, campaigns };
+  return { store, rows, notifications, campaigns, timeline };
 }
 
 const okSend = async () => ({ success: true as const, messageId: `m-${Math.random().toString(36).slice(2, 8)}`, threadId: "t-1" });
@@ -199,6 +201,19 @@ async function run() {
     const summary = await drainOutreachQueue({ store, createSession: session, sendMessage: okSend, sleep: noSleep, budgetMs: 10, now: () => (t += 6), notify: async () => ({}) });
     check("drain honors the time budget and reports remaining", summary.sent + summary.remaining <= 5 && summary.remaining > 0);
     check("unprocessed rows stay queued for the next tick", rows.filter((r) => r.status === "queued").length === summary.remaining);
+  }
+
+  // Phase 5: a candidate send logs to the timeline; a team send (null candidate) does not.
+  {
+    const seedRows: Row[] = [
+      { id: "s-1", campaignId: "camp-1", candidateId: "cand-9", senderUserId: "sender-1", toEmail: "a@x.org", renderedSubject: "Intro to Orr", renderedBody: "b", attempts: 0, status: "queued", error: null, sentAt: null, nextAttemptAt: 0 },
+      { id: "s-2", campaignId: "camp-1", candidateId: null, senderUserId: "sender-1", toEmail: "team@x.org", renderedSubject: "Congrats", renderedBody: "b", attempts: 0, status: "queued", error: null, sentAt: null, nextAttemptAt: 0 },
+    ];
+    const { store, timeline, campaigns } = makeStore({ rows: seedRows });
+    campaigns.set("camp-1", { name: "Camp", createdBy: "sender-1", status: "queued", total: 2 });
+    await drainOutreachQueue({ store, createSession: session, sendMessage: okSend, sleep: noSleep, now: () => Date.now(), notify: async () => ({}) });
+    check("a candidate send is logged to the timeline", timeline.length === 1 && timeline[0].candidateId === "cand-9" && timeline[0].subject === "Intro to Orr" && timeline[0].authorId === "sender-1");
+    check("a team send (no candidate) is not timeline-logged", !timeline.some((t) => t.candidateId === null));
   }
 
   assert.equal(failures, 0);

@@ -10,6 +10,7 @@ import {
   OUTREACH_MERGE_VARIABLES,
   renderOutreachTemplate,
   findUnsupportedOutreachVariables,
+  sendEtaLabel,
   type ComposerRecipient,
   type OutreachAudience,
 } from "@/lib/gmail/candidate-tokens";
@@ -395,7 +396,7 @@ export default function EmailCampaignsClient({
               <div className="sent-badge sending"><Send size={30} /></div>
               <h2>Sending your campaign…</h2>
               <p>
-                {progress.sent} of {progress.total} sent{progress.failed > 0 ? ` · ${progress.failed} failed` : ""}.
+                {progress.sent} of {progress.total} sent{progress.failed > 0 ? ` · ${progress.failed} failed` : ""}{progress.pending > 0 ? ` · ${sendEtaLabel(progress.pending)} remaining` : ""}.
                 <br /><strong>You can close this tab</strong> — sending continues in the background and finishes on its own.
               </p>
             </div>
@@ -580,7 +581,7 @@ export default function EmailCampaignsClient({
               <div className="send-icon"><Send size={22} /></div>
               <h3>Send with Gmail</h3>
               {gmailConnection.connected ? (
-                <p><strong>{gmailConnection.connectedEmail}</strong> will send {selectedRecipients.length} personalized {selectedRecipients.length === 1 ? "message" : "messages"}.</p>
+                <p><strong>{gmailConnection.connectedEmail}</strong> will send {selectedRecipients.length} personalized {selectedRecipients.length === 1 ? "message" : "messages"} — {sendEtaLabel(selectedRecipients.length)} to finish.</p>
               ) : (
                 <p>Connect your Gmail before sending.</p>
               )}

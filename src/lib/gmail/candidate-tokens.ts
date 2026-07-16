@@ -49,6 +49,15 @@ export function renderOutreachTemplate(template: string, tokens: OutreachTokens)
   });
 }
 
+// Effective send rate: 1.5s spacing + Gmail latency, ~50s per drain pass, once
+// a minute. Used only for the "about X minutes" ETA shown in the composer.
+export const ESTIMATED_SENDS_PER_MINUTE = 30;
+export function sendEtaLabel(count: number): string {
+  if (count <= 0) return "—";
+  const minutes = Math.ceil(count / ESTIMATED_SENDS_PER_MINUTE);
+  return minutes <= 1 ? "about a minute" : `about ${minutes} minutes`;
+}
+
 // A candidate's name is one column; split on the first space for first/last.
 export function splitName(name: string | null | undefined): { first: string; last: string } {
   const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
