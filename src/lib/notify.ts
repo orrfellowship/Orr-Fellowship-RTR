@@ -16,7 +16,9 @@ export type NotificationType =
   | "event_reminder"   // day-before reminder for an "attend" event
   | "help_request"     // a fellow/lead asked an admin for help
   | "missing_linkedin"  // admin nudge: active candidates missing a LinkedIn
-  | "outreach_error";  // an outreach campaign had failed sends (sender + admins)
+  | "outreach_error"    // an outreach campaign had failed sends (sender + admins)
+  | "outreach_reply"    // a candidate replied to your outreach
+  | "outreach_bounce";  // an outreach email bounced (bad address)
 
 export async function queueNotification(n: {
   recipientId: string;

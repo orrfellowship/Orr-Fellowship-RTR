@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
 import { evaluateCandidate, DIGEST_KINDS } from "@/lib/triggers";
 import { drainOutreachQueue } from "@/lib/gmail/outreach-queue.server";
+import { pollRepliesAndBounces } from "@/lib/gmail/reply-tracking.server";
 import { fetchAllRows } from "@/lib/queries";
 import { phaseOf } from "@/lib/stages";
 
@@ -57,6 +58,13 @@ async function run(req: NextRequest) {
   if (job === "outreach") {
     const outreach = await drainOutreachQueue();
     return NextResponse.json({ ok: true, job, outreach });
+  }
+
+  // Reply + bounce detection over sent outreach (Phase 7, gmail.metadata scope).
+  // Schedule every ~15 min via pg_cron (see db/phase17.sql).
+  if (job === "gmail-sync") {
+    const tracking = await pollRepliesAndBounces();
+    return NextResponse.json({ ok: true, job, tracking });
   }
 
   if (job === "digest") {

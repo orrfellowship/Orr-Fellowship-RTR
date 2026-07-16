@@ -1,0 +1,20 @@
+-- ============================================================================
+-- Orr RTR — Phase 17: reply & bounce tracking scheduler
+-- Run in the Supabase SQL editor. No schema changes — outreach_sends already
+-- has replied_at / bounced_at (phase16). This just schedules the poller.
+--
+-- The /api/cron?job=gmail-sync route reads Gmail metadata (headers/labels only,
+-- via the gmail.metadata scope) to stamp replied_at / bounced_at on sent
+-- outreach and notify the point person. Every ~15 minutes is plenty — replies
+-- and bounces aren't time-critical, and this keeps Gmail API usage modest.
+--
+-- Requires pg_cron + pg_net (already used by the flush/digest/outreach jobs).
+-- Replace BOTH placeholders, then run.
+-- ============================================================================
+-- select cron.schedule('orr-gmail-sync', '*/15 * * * *', $$
+--   select net.http_post(
+--     url     := 'https://YOUR_SITE_URL/api/cron?job=gmail-sync',
+--     headers := jsonb_build_object('Authorization', 'Bearer YOUR_CRON_SECRET')
+--   );
+-- $$);
+-- ============================================================================
