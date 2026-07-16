@@ -66,10 +66,15 @@ export default function EmailCampaignsClient({
   gmailConnection = DEFAULT_GMAIL_STATUS,
   gmailNotice = {},
   gmailCampaignSendEnabled = false,
+  gmailTestRecipients = [],
 }: {
   gmailConnection?: GmailConnectionStatus;
   gmailNotice?: GmailNotice;
   gmailCampaignSendEnabled?: boolean;
+  // Real inboxes from GMAIL_TEST_RECIPIENTS (server env). Shown so the tester
+  // can see exactly where the demo will send — the fictional candidates only
+  // supply the personalization; these addresses receive the mail.
+  gmailTestRecipients?: string[];
 }) {
   const eligibleIds = useMemo(() => DEMO_CANDIDATES.filter(isEligible).map((candidate) => candidate.id), []);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -510,6 +515,31 @@ export default function EmailCampaignsClient({
                   <ReviewValue label="Automatic exclusions" value={`${automaticExcludedCandidates.length}`} />
                   <ReviewValue label="Subject" value={subject} wide />
                 </div>
+              </ReviewCard>
+              <ReviewCard title="Test delivery — where this actually sends">
+                {gmailTestRecipients.length === 0 ? (
+                  <div style={{ fontSize: 13, color: C.muted }}>
+                    No <code>GMAIL_TEST_RECIPIENTS</code> configured — this will send to the demo&apos;s built-in controlled inboxes.
+                    Set that env var (comma-separated) and redeploy to send to your own test addresses.
+                  </div>
+                ) : (
+                  <div className="recipient-list">
+                    {selectedCandidates.map((candidate, i) => {
+                      const target = gmailTestRecipients[i] ?? candidate.email ?? "";
+                      const looksValid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(target);
+                      return (
+                        <div key={candidate.id}>
+                          <span className="avatar">{i + 1}</span>
+                          <div>
+                            <strong>{target || "(no address)"}</strong>
+                            <small>personalized as {demoCandidateFullName(candidate)}{gmailTestRecipients[i] ? "" : " · demo fallback address"}</small>
+                          </div>
+                          {looksValid ? <CheckCircle2 size={17} /> : <StatusPill tone="warning">will fail</StatusPill>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </ReviewCard>
               <ReviewCard title={`Recipients (${selectedCandidates.length})`}>
                 <div className="recipient-list">
