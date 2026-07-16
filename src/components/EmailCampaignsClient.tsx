@@ -376,6 +376,25 @@ export default function EmailCampaignsClient({
         );
       })()}
 
+      {!showSent && !showSending && gmailTestRecipients.length > 0 && (
+        <div className="test-recipients-banner">
+          <div className="trb-head"><Mail size={16} /> Test delivery — this campaign sends to these {gmailTestRecipients.length} real {gmailTestRecipients.length === 1 ? "inbox" : "inboxes"}</div>
+          <div className="trb-list">
+            {gmailTestRecipients.map((addr, i) => {
+              const valid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr);
+              return (
+                <div key={`${addr}-${i}`} className="trb-item">
+                  <span className="trb-num">{i + 1}</span>
+                  <span className="trb-addr">{addr}</span>
+                  {valid ? <CheckCircle2 size={15} color={C.good} /> : <StatusPill tone="warning">will fail</StatusPill>}
+                </div>
+              );
+            })}
+          </div>
+          <div className="trb-note">Select {gmailTestRecipients.length} candidate{gmailTestRecipients.length === 1 ? "" : "s"} below — each one supplies the personalization for one of these inboxes, in order. The fictional names are only for the merge fields; the mail goes to the addresses above.</div>
+        </div>
+      )}
+
       {!showSent && !showSending && (<>
       <div className="stepper" aria-label="Campaign steps">
         {CAMPAIGN_STEPS.map((label, index) => {
@@ -626,6 +645,13 @@ const styles = `
   .sent-badge.sending { color: ${C.navy2}; background: #EAF0FA; }
   .send-progress { height: 10px; border-radius: 99px; background: ${C.line}; overflow: hidden; }
   .send-progress-bar { height: 100%; background: ${C.good}; border-radius: 99px; transition: width .4s ease; }
+  .test-recipients-banner { border: 1px solid ${C.navy2}; background: #EAF0FA; border-radius: 12px; padding: 14px 16px; margin-bottom: 18px; }
+  .trb-head { display: flex; align-items: center; gap: 8px; font-family: ${HEAD}; font-weight: 700; font-size: 14px; color: ${C.navy}; margin-bottom: 10px; }
+  .trb-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; }
+  .trb-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: ${C.gray}; padding: 4px 0; }
+  .trb-num { flex-shrink: 0; width: 20px; height: 20px; border-radius: 6px; background: #fff; border: 1px solid ${C.line}; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: ${C.navy2}; }
+  .trb-addr { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: ${MONO}; font-size: 12px; }
+  .trb-note { margin-top: 10px; font-size: 12px; color: ${C.muted}; line-height: 1.5; }
   .sent-hero h2 { color: ${C.navy}; font-family: ${HEAD}; font-size: 25px; margin: 4px 0 0; }
   .sent-hero p { color: ${C.muted}; font-size: 13.5px; line-height: 1.55; margin: 0; max-width: 480px; }
   .sent-actions { display: flex; justify-content: center; }
