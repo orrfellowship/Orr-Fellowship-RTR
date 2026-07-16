@@ -1,8 +1,8 @@
 import { createServiceClient } from "@/lib/supabase/server";
-import { getSchoolsCached } from "@/lib/queries";
+import { getSchoolsCached, fetchAllRows } from "@/lib/queries";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
-import { isAdminPlus, type AppRole } from "@/lib/types";
-import { candidateOutreachTokens, renderOutreachTemplate, findUnsupportedOutreachVariables } from "./candidate-tokens";
+import { isAdminPlus, type AppRole, type Profile } from "@/lib/types";
+import { candidateOutreachTokens, renderOutreachTemplate, findUnsupportedOutreachVariables, type ComposerRecipient, type OutreachAudience } from "./candidate-tokens";
 import { enqueueOutreachCampaign, type EnqueueRecipient, type EnqueueResult } from "./outreach-queue.server";
 import { GmailTestSendError } from "./test-send.server";
 
@@ -205,4 +205,53 @@ async function defaultLoadUsers(ids: string[] | null): Promise<OutreachUser[]> {
   if (ids) q = q.in("id", ids);
   const { data } = await q;
   return (data ?? []).map((p: any) => ({ id: p.id, fullName: p.full_name, email: p.email }));
+}
+
+// ---------------------------------------------------------------------------
+// Audience loading for the composer. Fellows/leads see one audience — their own
+// assigned candidates. Admins/supers see all candidates + the whole-team
+// audience. Each recipient carries a precomputed token set so the client
+// preview matches the server's send.
+// ---------------------------------------------------------------------------
+
+function candidateToComposer(row: any, schools: any[], ownerNames: Map<string, string>): ComposerRecipient {
+  const d = candidateSchoolDisplay(row, schools);
+  const school = d.specificLabel ?? d.label;
+  const pointPerson = (row.point_person_id && ownerNames.get(row.point_person_id)) || "your Orr contact";
+  const tokens = candidateOutreachTokens({ name: row.name, stage: row.stage, gradDate: row.grad_date, school, pointPerson });
+  return {
+    id: row.id, name: (row.name ?? "").trim(), email: row.email, school,
+    stage: row.stage ?? "", classYear: tokens.class_year, area: row.area_of_study ?? null,
+    doNotContact: !!row.do_not_contact, tokens,
+  };
+}
+
+function userToComposer(u: any): ComposerRecipient {
+  const tokens = candidateOutreachTokens({ name: u.full_name, stage: "", gradDate: "", school: "", pointPerson: "" });
+  return { id: u.id, name: (u.full_name ?? "").trim(), email: u.email, school: "", stage: "Team", classYear: "", area: u.role ?? null, doNotContact: false, tokens };
+}
+
+const CAND_FIELDS = "id, name, email, stage, grad_date, school_id, university_raw, point_person_id, do_not_contact, area_of_study";
+
+export async function loadOutreachAudiences(profile: Profile): Promise<OutreachAudience[]> {
+  const db = createServiceClient();
+  const schools = (await getSchoolsCached()) as any[];
+
+  if (isAdminPlus(profile.role)) {
+    const cands = await fetchAllRows<any>((from, to) => db.from("candidates").select(CAND_FIELDS).order("name").range(from, to));
+    const ownerIds = Array.from(new Set(cands.map((c) => c.point_person_id).filter((v): v is string => !!v)));
+    const ownerNames = ownerIds.length ? await defaultLoadProfileNames(ownerIds) : new Map<string, string>();
+    const { data: users } = await db.from("profiles").select("id, full_name, email, role").eq("is_active", true).not("email", "is", null).order("full_name");
+    return [
+      { key: "all", label: "All candidates", description: "Every candidate in the pipeline", endpoint: "candidates", recipients: cands.map((c) => candidateToComposer(c, schools, ownerNames)) },
+      { key: "team", label: "Whole team", description: "All fellows & staff — one-time celebration send", endpoint: "team", recipients: (users ?? []).map(userToComposer) },
+    ];
+  }
+
+  // Fellow / team lead: only your own assignments.
+  const cands = await fetchAllRows<any>((from, to) => db.from("candidates").select(CAND_FIELDS).eq("point_person_id", profile.id).order("name").range(from, to));
+  const ownerNames = new Map<string, string>([[profile.id, profile.full_name]]);
+  return [
+    { key: "mine", label: "My candidates", description: "Candidates you're the point person for", endpoint: "candidates", recipients: cands.map((c) => candidateToComposer(c, schools, ownerNames)) },
+  ];
 }

@@ -11,6 +11,10 @@ import {
 import WorkspaceClient from "../WorkspaceClient";
 import { listCandidates } from "../../console/actions";
 import SectionSkeleton from "@/components/nav/SectionSkeleton";
+import EmailCampaignsClient from "@/components/EmailCampaignsClient";
+import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
+import type { GmailConnectionStatus } from "@/lib/gmail/types";
+import { loadOutreachAudiences } from "@/lib/gmail/candidate-outreach.server";
 
 // slug (URL) → internal tab key used by WorkspaceClient
 const TAB: Record<string, string> = {
@@ -35,6 +39,14 @@ export default async function WorkspaceSection({ params }: { params: Promise<{ s
 // Each route renders exactly ONE section, so we only fetch what that section
 // reads. Everything else is passed empty — the other tabs' code never runs.
 async function WorkspaceSectionData({ section, profile }: { section: string; profile: Profile }) {
+  // Live outreach composer — fellows/leads email their own assigned candidates.
+  if (section === "email-campaigns") {
+    let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
+    try { gmailConnection = await getGmailConnectionStatusForUser(profile.id); } catch { /* show disconnected */ }
+    const audiences = await loadOutreachAudiences(profile);
+    return <EmailCampaignsClient gmailConnection={gmailConnection} gmailCampaignSendEnabled audiences={audiences} viewerName={profile.full_name} />;
+  }
+
   const S = TAB[section]; // internal tab key
 
   const need = {

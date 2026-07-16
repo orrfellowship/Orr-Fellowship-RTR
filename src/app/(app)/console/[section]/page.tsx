@@ -18,7 +18,7 @@ import SectionSkeleton from "@/components/nav/SectionSkeleton";
 import EmailCampaignsClient from "@/components/EmailCampaignsClient";
 import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
-import { isGmailTestSendEnabled } from "@/lib/gmail/test-send.server";
+import { loadOutreachAudiences } from "@/lib/gmail/candidate-outreach.server";
 
 export default async function ConsoleSection({
   params,
@@ -56,8 +56,9 @@ async function ConsoleSectionData({
 }) {
   const S = section;
 
-  // The campaign remains a fictional-data demo. Only the safe Gmail connection
-  // summary is loaded from the server; no credential fields cross this boundary.
+  // Live outreach composer. Loads the viewer's audiences (all candidates + team
+  // for admins) and their Gmail connection summary; no credential fields cross
+  // this boundary.
   if (S === "email-campaigns") {
     let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
     let statusUnavailable = false;
@@ -66,13 +67,16 @@ async function ConsoleSectionData({
     } catch {
       statusUnavailable = true;
     }
+    const audiences = await loadOutreachAudiences(profile);
     return <EmailCampaignsClient
       gmailConnection={gmailConnection}
       gmailNotice={{
         result: gmailQuery.gmail,
         error: gmailQuery.gmail_error ?? (statusUnavailable ? "status_unavailable" : undefined),
       }}
-      gmailCampaignSendEnabled={isGmailTestSendEnabled()}
+      gmailCampaignSendEnabled
+      audiences={audiences}
+      viewerName={profile.full_name}
     />;
   }
 

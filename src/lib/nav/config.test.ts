@@ -1,6 +1,6 @@
 // Lightweight assertions for the nav config (§8). Run: npx tsx src/lib/nav/config.test.ts
 import {
-  navForRole, flatNav, accentFor, canAccessConsoleSection,
+  navForRole, flatNav, accentFor, canAccessConsoleSection, canAccessWorkspaceSection,
   WORKSPACE_SECTIONS, ORR_ORANGE, SCHOOL_ACCENT,
 } from "./config";
 
@@ -27,14 +27,15 @@ const recruitingIds = (role: any) => navForRole(role).find((g) => g.group === "R
 const expectedConsoleRecruiting = "applicants,email-campaigns,standings,schools,calendar";
 check("admin Recruiting order includes Email Campaigns", recruitingIds("admin").join(",") === expectedConsoleRecruiting);
 check("super_admin Recruiting order includes Email Campaigns", recruitingIds("super_admin").join(",") === expectedConsoleRecruiting);
-check("workspace sections exclude Email Campaigns", !(WORKSPACE_SECTIONS as readonly string[]).includes("email-campaigns"));
+check("workspace sections include Email Campaigns (fellows email their candidates)", (WORKSPACE_SECTIONS as readonly string[]).includes("email-campaigns"));
 
 // fellow / team_lead: no Operations, lead with Weekly Snapshot
 for (const r of ["fellow", "team_lead"] as const) {
   check(`${r} has NO Operations group`, !groups(r).includes("Operations"));
   check(`${r} leads with Weekly Snapshot`, flatNav(r)[0]?.id === "snapshot");
-  check(`${r} has NO Email Campaigns nav item`, !ids(r).includes("email-campaigns"));
-  check(`${r} cannot directly access Email Campaigns console section`, !canAccessConsoleSection(r, "email-campaigns"));
+  check(`${r} HAS an Email Campaigns nav item`, ids(r).includes("email-campaigns"));
+  check(`${r} can access the workspace Email Campaigns section`, canAccessWorkspaceSection(r, "email-campaigns"));
+  check(`${r} cannot access the CONSOLE Email Campaigns section`, !canAccessConsoleSection(r, "email-campaigns"));
 }
 
 // palette results ⊆ allowed routes (flatNav IS the palette source, so trivially a subset of itself,

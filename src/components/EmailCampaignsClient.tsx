@@ -2,35 +2,45 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
-  ArrowLeft, ArrowRight, Ban, Check, CheckCircle2, ChevronLeft,
-  ChevronRight, CircleAlert, Clock3, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound, X,
+  ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronLeft,
+  ChevronRight, CircleAlert, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound,
 } from "lucide-react";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
 import {
-  DEMO_CAMPAIGN_LIMITS,
-  DEMO_CANDIDATES,
-  CAMPAIGN_STEPS,
-  demoCandidateFullName,
-  findUnsupportedMergeVariables,
-  getAutomaticExclusionReason,
-  INITIAL_CAMPAIGN_BODY,
-  INITIAL_CAMPAIGN_SUBJECT,
-  isEligible,
-  MERGE_VARIABLES,
-  MOCK_PRIMARY_CONTACT,
-  renderTemplate,
-  type DemoCampaignResult,
-  type DemoCandidate,
-} from "@/lib/gmail/demo-campaign";
+  OUTREACH_MERGE_VARIABLES,
+  renderOutreachTemplate,
+  findUnsupportedOutreachVariables,
+  type ComposerRecipient,
+  type OutreachAudience,
+} from "@/lib/gmail/candidate-tokens";
+
+const CAMPAIGN_STEPS = ["Recipients", "Compose", "Preview", "Review"] as const;
+const LIMITS = { campaignName: 120, subject: 200, body: 20_000 };
+const INITIAL_CAMPAIGN_SUBJECT = "{{first_name}}, connect with the Orr Fellowship";
+const INITIAL_CAMPAIGN_BODY = `Hi {{first_name}},
+
+I wanted to reach out about the Orr Fellowship. Your background at {{school}} stood out to us, and I'd love to tell you more about what the Fellowship offers graduating seniors.
+
+Would you be open to a quick conversation?
+
+Best,
+{{point_person}}`;
+
+// One send result, in the same shape the Sent screen consumes.
+type DemoCampaignResult = {
+  success: true; attempted: number; sent: number; failed: number; excluded: number;
+  recipients: Array<{ candidateId: string; candidateName: string; maskedRecipient: string | null; status: "sent" | "failed" | "excluded"; messageId?: string; failureReason?: string; exclusionReason?: string }>;
+};
+
+const fullName = (r: { name: string; email: string | null }) => r.name || r.email || "Unknown";
+const isEmailValid = (email: string | null) => !!email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+const recipientEligible = (r: ComposerRecipient) => isEmailValid(r.email) && !r.doNotContact;
+const exclusionReasonFor = (r: ComposerRecipient) =>
+  !r.email ? "No email on file" : !isEmailValid(r.email) ? "Malformed email" : r.doNotContact ? "Do Not Contact" : null;
 
 const C = { navy: "#11123E", navy2: "#485F92", orange: "#DD5434", gray: "#303333", muted: "#6E7385", line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B", gold: "#C9A227" };
 const HEAD = "'Cabin', sans-serif";
 const MONO = "'JetBrains Mono', ui-monospace, monospace";
-
-function formatDate(value: string | null) {
-  if (!value) return "Never";
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
-}
 
 type GmailNotice = { result?: string; error?: string };
 
@@ -66,17 +76,24 @@ export default function EmailCampaignsClient({
   gmailConnection = DEFAULT_GMAIL_STATUS,
   gmailNotice = {},
   gmailCampaignSendEnabled = false,
+  audiences = [],
+  viewerName = "",
 }: {
   gmailConnection?: GmailConnectionStatus;
   gmailNotice?: GmailNotice;
   gmailCampaignSendEnabled?: boolean;
+  audiences?: OutreachAudience[];
+  viewerName?: string;
 }) {
-  const eligibleIds = useMemo(() => DEMO_CANDIDATES.filter(isEligible).map((candidate) => candidate.id), []);
-  const eligibleRecipientEmails = useMemo(() => DEMO_CANDIDATES.filter(isEligible).map((candidate) => candidate.email ?? "").filter(Boolean), []);
+  const [audienceKey, setAudienceKey] = useState<string>(audiences[0]?.key ?? "mine");
+  const audience = audiences.find((a) => a.key === audienceKey) ?? audiences[0];
+  const allRecipients = useMemo(() => audience?.recipients ?? [], [audience]);
+  const [search, setSearch] = useState("");
+  const [stageFilter, setStageFilter] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [step, setStep] = useState(0);
   const [maxReached, setMaxReached] = useState(0);
-  const [campaignName, setCampaignName] = useState("Fall 2026 Fellowship Introduction");
+  const [campaignName, setCampaignName] = useState("Fall 2026 Outreach");
   const [subject, setSubject] = useState(INITIAL_CAMPAIGN_SUBJECT);
   const [body, setBody] = useState(INITIAL_CAMPAIGN_BODY);
   const [activeField, setActiveField] = useState<"subject" | "body">("body");
@@ -85,39 +102,52 @@ export default function EmailCampaignsClient({
   const [sending, setSending] = useState(false);
   const [campaignResult, setCampaignResult] = useState<DemoCampaignResult | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
-  // Queue flow: after enqueue we hold the campaign id + the demo exclusions and
-  // poll for live progress until the background drainer empties the queue.
+  // Queue flow: after enqueue we hold the campaign id and poll for live progress
+  // until the background drainer empties the queue.
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [progress, setProgress] = useState<CampaignProgress | null>(null);
-  const [enqueuedExcluded, setEnqueuedExcluded] = useState<EnqueuedExclusion[]>([]);
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const inFlight = useRef(false);
   const submission = useRef<{ fingerprint: string; key: string } | null>(null);
 
-  const selectedCandidates = useMemo(
-    () => DEMO_CANDIDATES.filter((candidate) => selectedIds.has(candidate.id) && isEligible(candidate)),
-    [selectedIds],
+  // Distinct stages present in this audience, for the stage filter dropdown.
+  const stageOptions = useMemo(
+    () => Array.from(new Set(allRecipients.map((r) => r.stage).filter(Boolean))).sort(),
+    [allRecipients],
   );
-  const currentPreview = selectedCandidates[Math.min(previewIndex, Math.max(0, selectedCandidates.length - 1))];
-  const excludedCandidates = DEMO_CANDIDATES.filter((candidate) => !selectedIds.has(candidate.id) || !isEligible(candidate));
-  const automaticExcludedCandidates = DEMO_CANDIDATES.filter((candidate) => selectedIds.has(candidate.id) && !isEligible(candidate));
-  const unsupportedVariables = [...findUnsupportedMergeVariables(subject), ...findUnsupportedMergeVariables(body)];
+  // Recipients matching the current search + stage filter (drives the list and
+  // the "select all filtered" action).
+  const filteredRecipients = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allRecipients.filter((r) => {
+      if (stageFilter && r.stage !== stageFilter) return false;
+      if (!q) return true;
+      return `${r.name} ${r.email ?? ""} ${r.school}`.toLowerCase().includes(q);
+    });
+  }, [allRecipients, search, stageFilter]);
+
+  const selectedRecipients = useMemo(
+    () => allRecipients.filter((r) => selectedIds.has(r.id) && recipientEligible(r)),
+    [allRecipients, selectedIds],
+  );
+  const currentPreview = selectedRecipients[Math.min(previewIndex, Math.max(0, selectedRecipients.length - 1))];
+  const unsupportedVariables = [...findUnsupportedOutreachVariables(subject), ...findUnsupportedOutreachVariables(body)];
   const selectedCandidateIds = Array.from(selectedIds);
-  const campaignFingerprint = JSON.stringify({ campaignName, subject, body, selectedCandidateIds });
+  const campaignFingerprint = JSON.stringify({ audienceKey, campaignName, subject, body, selectedCandidateIds });
   const confirmed = confirmationFingerprint === campaignFingerprint;
   const composeReady = !!campaignName.trim()
     && !!subject.trim()
     && !!body.trim()
-    && campaignName.length <= DEMO_CAMPAIGN_LIMITS.campaignName
-    && subject.length <= DEMO_CAMPAIGN_LIMITS.subject
-    && body.length <= DEMO_CAMPAIGN_LIMITS.body
+    && campaignName.length <= LIMITS.campaignName
+    && subject.length <= LIMITS.subject
+    && body.length <= LIMITS.body
     && unsupportedVariables.length === 0;
-  const canContinue = step === 0 ? selectedCandidates.length > 0 : step === 1 ? !!composeReady : true;
+  const canContinue = step === 0 ? selectedRecipients.length > 0 : step === 1 ? !!composeReady : true;
   const connectionNotice = gmailNoticeText(gmailNotice);
   const canSend = gmailCampaignSendEnabled
     && gmailConnection.connected
-    && selectedCandidates.length > 0
+    && selectedRecipients.length > 0
     && composeReady
     && confirmed
     && !sending;
@@ -135,15 +165,36 @@ export default function EmailCampaignsClient({
     if (next === 2) setPreviewIndex(0);
   }
 
-  function toggleCandidate(candidate: DemoCandidate) {
-    if (!isEligible(candidate)) return;
+  function toggleCandidate(recipient: ComposerRecipient) {
+    if (!recipientEligible(recipient)) return;
     setSelectedIds((current) => {
       const next = new Set(current);
-      if (next.has(candidate.id)) next.delete(candidate.id);
-      else next.add(candidate.id);
+      if (next.has(recipient.id)) next.delete(recipient.id);
+      else next.add(recipient.id);
       return next;
     });
     setPreviewIndex(0);
+  }
+
+  // Bulk selection so a fellow never has to tick 200 boxes. "Select filtered"
+  // respects the current search + stage filter; excluded (no email / DNC) rows
+  // are skipped.
+  function selectAllFiltered() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const r of filteredRecipients) if (recipientEligible(r)) next.add(r.id);
+      return next;
+    });
+    setPreviewIndex(0);
+  }
+  function clearSelection() { setSelectedIds(new Set()); setPreviewIndex(0); }
+
+  // Reset selection when switching audiences (ids don't carry across groups).
+  function switchAudience(key: string) {
+    setAudienceKey(key);
+    setSelectedIds(new Set());
+    setSearch(""); setStageFilter(""); setPreviewIndex(0);
+    setConfirmationFingerprint(null);
   }
 
   function insertVariable(variable: string) {
@@ -173,17 +224,17 @@ export default function EmailCampaignsClient({
     setSending(true);
     setSendError(null);
     try {
-      const response = await fetch("/api/google/enqueue-campaign", {
+      const endpoint = audience?.endpoint === "team" ? "/api/outreach/team" : "/api/outreach/candidates";
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignName, subject, body, selectedCandidateIds, idempotencyKey }),
+        body: JSON.stringify({ campaignName, subject, body, selectedIds: selectedCandidateIds, idempotencyKey }),
       });
       const payload = await response.json() as EnqueueResponse | { success: false; error?: { message?: string } };
       if (!response.ok || payload.success !== true) {
         setSendError("error" in payload && payload.error?.message ? payload.error.message : "The campaign could not be queued.");
         return;
       }
-      setEnqueuedExcluded(payload.excluded ?? []);
       setConfirmationFingerprint(null);
       setProgress({ status: "queued", total: payload.total, sent: 0, failed: 0, skipped: 0, pending: payload.total, done: false, recipients: [] });
       setCampaignId(payload.campaignId); // starts polling
@@ -207,20 +258,13 @@ export default function EmailCampaignsClient({
         if (!active || !data.success) return;
         setProgress(data);
         if (data.done) {
-          const excludedRecipients = enqueuedExcluded.map((e) => ({
-            candidateId: e.candidateName, candidateName: e.candidateName, maskedRecipient: e.maskedRecipient,
-            status: "excluded" as const, exclusionReason: e.exclusionReason,
-          }));
           setCampaignResult({
             success: true,
             attempted: data.total,
             sent: data.sent,
             failed: data.failed,
-            excluded: enqueuedExcluded.length + data.skipped,
-            recipients: [
-              ...data.recipients.map((r, i) => ({ candidateId: `q-${i}`, candidateName: r.candidateName, maskedRecipient: r.maskedRecipient, status: (r.status === "pending" ? "sent" : r.status) as "sent" | "failed" | "excluded", messageId: r.messageId, failureReason: r.failureReason, exclusionReason: r.exclusionReason })),
-              ...excludedRecipients,
-            ],
+            excluded: data.skipped,
+            recipients: data.recipients.map((r, i) => ({ candidateId: `q-${i}`, candidateName: r.candidateName, maskedRecipient: r.maskedRecipient, status: (r.status === "pending" ? "sent" : r.status) as "sent" | "failed" | "excluded", messageId: r.messageId, failureReason: r.failureReason, exclusionReason: r.exclusionReason })),
           });
           setCampaignId(null);
         }
@@ -229,7 +273,7 @@ export default function EmailCampaignsClient({
     void tick();
     const timer = setInterval(tick, 2500);
     return () => { active = false; clearInterval(timer); };
-  }, [campaignId, campaignResult, enqueuedExcluded]);
+  }, [campaignId, campaignResult]);
 
   // Clear the result and return to a fresh wizard for another campaign. The
   // composed template (name/subject/body) is kept so a follow-up send can reuse
@@ -238,7 +282,6 @@ export default function EmailCampaignsClient({
     setCampaignResult(null);
     setCampaignId(null);
     setProgress(null);
-    setEnqueuedExcluded([]);
     setSelectedIds(new Set());
     setConfirmationFingerprint(null);
     setPreviewIndex(0);
@@ -261,11 +304,10 @@ export default function EmailCampaignsClient({
         <div>
           <div className="heading-line">
             <h1>Email Campaigns</h1>
-            <span className="demo-badge">Test send</span>
           </div>
-          <p>Send a real test campaign to the recipients below through your connected Gmail.</p>
+          <p>Send personalized outreach to your candidates from your own Gmail.</p>
         </div>
-        <div className="previewing-note"><UserRoundCheck size={17} /> <span>Sending as: <strong>{gmailConnection.connectedEmail ?? MOCK_PRIMARY_CONTACT.email}</strong></span></div>
+        <div className="previewing-note"><UserRoundCheck size={17} /> <span>Sending as: <strong>{gmailConnection.connectedEmail ?? (viewerName || "connect Gmail")}</strong></span></div>
       </div>
 
       {connectionNotice && (
@@ -372,25 +414,6 @@ export default function EmailCampaignsClient({
         );
       })()}
 
-      {!showSent && !showSending && eligibleRecipientEmails.length > 0 && (
-        <div className="test-recipients-banner">
-          <div className="trb-head"><Mail size={16} /> This campaign sends to these {eligibleRecipientEmails.length} {eligibleRecipientEmails.length === 1 ? "inbox" : "inboxes"}</div>
-          <div className="trb-list">
-            {eligibleRecipientEmails.map((addr, i) => {
-              const valid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr);
-              return (
-                <div key={`${addr}-${i}`} className="trb-item">
-                  <span className="trb-num">{i + 1}</span>
-                  <span className="trb-addr">{addr}</span>
-                  {valid ? <CheckCircle2 size={15} color={C.good} /> : <StatusPill tone="warning">will fail</StatusPill>}
-                </div>
-              );
-            })}
-          </div>
-          <div className="trb-note">Select recipients below and compose your message. Each one still receives a personalized copy.</div>
-        </div>
-      )}
-
       {!showSent && !showSending && (<>
       <div className="stepper" aria-label="Campaign steps">
         {CAMPAIGN_STEPS.map((label, index) => {
@@ -408,39 +431,53 @@ export default function EmailCampaignsClient({
       {step === 0 && (
         <section>
           <div className="section-title">
-            <div><h2>Test Recipients</h2><p>These addresses will receive your test campaign.</p></div>
-            <span className="scope-pill"><UsersRound size={15} /> Test inboxes</span>
+            <div><h2>Choose recipients</h2><p>{audience?.description ?? "Pick who receives this campaign."}</p></div>
+            <span className="scope-pill"><UsersRound size={15} /> {selectedRecipients.length} selected</span>
           </div>
 
-          <div className="metrics-grid">
-            <Metric label="Total assigned" value={DEMO_CANDIDATES.length} icon={<UsersRound size={18} />} />
-            <Metric label="Eligible to email" value={eligibleIds.length} tone="good" icon={<Mail size={18} />} />
-            <Metric label="Missing email" value={DEMO_CANDIDATES.filter((candidate) => !candidate.email).length} tone="warning" icon={<CircleAlert size={18} />} />
-            <Metric label="Unsubscribed" value={DEMO_CANDIDATES.filter((candidate) => candidate.unsubscribed).length} tone="warning" icon={<X size={18} />} />
-            <Metric label="Do Not Contact" value={DEMO_CANDIDATES.filter((candidate) => candidate.doNotContact).length} tone="warning" icon={<Ban size={18} />} />
-            <Metric label="Previously contacted" value={DEMO_CANDIDATES.filter((candidate) => candidate.lastContactedAt).length} icon={<Clock3 size={18} />} />
-          </div>
+          {audiences.length > 1 && (
+            <div className="audience-switch">
+              {audiences.map((a) => (
+                <button type="button" key={a.key} className={`aud-tab ${a.key === audienceKey ? "active" : ""}`} onClick={() => switchAudience(a.key)}>
+                  {a.label} <small>{a.recipients.length}</small>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="audience-card">
+            <div className="audience-toolbar">
+              <input className="aud-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, email, school…" />
+              {stageOptions.length > 0 && (
+                <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
+                  <option value="">All stages</option>
+                  {stageOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+              <button type="button" className="aud-action" onClick={selectAllFiltered}>Select {search || stageFilter ? "filtered" : "all"} ({filteredRecipients.filter(recipientEligible).length})</button>
+              <button type="button" className="aud-action ghost" onClick={clearSelection} disabled={selectedIds.size === 0}>Clear</button>
+            </div>
             <div className="audience-summary">
-              <div><strong>{selectedCandidates.length} of your {DEMO_CANDIDATES.length} assigned candidates</strong> will receive this email.</div>
-              <span>{excludedCandidates.length} excluded</span>
+              <div><strong>{selectedRecipients.length}</strong> selected of {filteredRecipients.length} shown ({allRecipients.length} total)</div>
+              <span>{filteredRecipients.filter((r) => !recipientEligible(r)).length} not emailable</span>
             </div>
             <div className="candidate-table-wrap">
               <div className="candidate-table candidate-head">
-                <div>Include</div><div>Candidate</div><div>School</div><div>Stage</div><div>Email status</div><div>Last contact</div>
+                <div>Include</div><div>Recipient</div><div>School</div><div>Stage</div><div>Email status</div><div>Class</div>
               </div>
-              {DEMO_CANDIDATES.map((candidate) => {
-                const eligible = isEligible(candidate);
-                const included = selectedIds.has(candidate.id) && eligible;
+              {filteredRecipients.length === 0 && <div className="candidate-empty">No recipients match — {allRecipients.length === 0 ? "you have no candidates in this audience yet." : "adjust your search or filter."}</div>}
+              {filteredRecipients.map((r) => {
+                const eligible = recipientEligible(r);
+                const included = selectedIds.has(r.id) && eligible;
+                const reason = exclusionReasonFor(r);
                 return (
-                  <div className={`candidate-table candidate-row ${eligible ? "" : "excluded"}`} key={candidate.id}>
-                    <div><input type="checkbox" aria-label={`Include ${demoCandidateFullName(candidate)}`} checked={selectedIds.has(candidate.id)} disabled={!eligible} onChange={() => toggleCandidate(candidate)} /></div>
-                    <div><strong>{demoCandidateFullName(candidate)}</strong><small>{candidate.email ?? "No email on file"}</small></div>
-                    <div>{candidate.schoolName}<small>Class of {candidate.graduationYear}</small></div>
-                    <div><StagePill stage={candidate.stage} /></div>
-                    <div>{!candidate.email ? <StatusPill tone="warning">Missing email · excluded</StatusPill> : candidate.unsubscribed ? <StatusPill tone="warning">Unsubscribed · excluded</StatusPill> : candidate.doNotContact ? <StatusPill tone="warning">Do not contact · excluded</StatusPill> : included ? <StatusPill tone="good">Eligible · included</StatusPill> : <StatusPill>Manually excluded</StatusPill>}</div>
-                    <div className={candidate.lastContactedAt ? "" : "muted"}>{formatDate(candidate.lastContactedAt)}</div>
+                  <div className={`candidate-table candidate-row ${eligible ? "" : "excluded"}`} key={r.id}>
+                    <div><input type="checkbox" aria-label={`Include ${fullName(r)}`} checked={selectedIds.has(r.id)} disabled={!eligible} onChange={() => toggleCandidate(r)} /></div>
+                    <div><strong>{fullName(r)}</strong><small>{r.email ?? "No email on file"}</small></div>
+                    <div>{r.school || "—"}</div>
+                    <div>{r.stage ? <StagePill stage={r.stage} /> : <span className="muted">—</span>}</div>
+                    <div>{reason ? <StatusPill tone="warning">{reason}</StatusPill> : included ? <StatusPill tone="good">Included</StatusPill> : <StatusPill>Not selected</StatusPill>}</div>
+                    <div className={r.classYear ? "" : "muted"}>{r.classYear || "—"}</div>
                   </div>
                 );
               })}
@@ -451,25 +488,26 @@ export default function EmailCampaignsClient({
 
       {step === 1 && (
         <section>
-          <div className="section-title"><div><h2>Compose your email</h2><p>Create one template that will be personalized for each selected candidate.</p></div></div>
+          <div className="section-title"><div><h2>Compose your email</h2><p>Write one template — it&apos;s personalized for each recipient.</p></div></div>
           <div className="compose-layout">
             <div className="form-card">
               <Field label="Campaign name" hint="Only visible to your recruiting team">
-                <input value={campaignName} maxLength={DEMO_CAMPAIGN_LIMITS.campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Campaign name" />
+                <input value={campaignName} maxLength={LIMITS.campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Campaign name" />
               </Field>
               <Field label="Subject line">
-                <input ref={subjectRef} value={subject} maxLength={DEMO_CAMPAIGN_LIMITS.subject} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" />
+                <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" />
               </Field>
               <Field label="Email body">
-                <textarea ref={bodyRef} value={body} maxLength={DEMO_CAMPAIGN_LIMITS.body} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)} rows={14} />
+                <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)} rows={14} />
               </Field>
+              {unsupportedVariables.length > 0 && <div className="compose-warn"><CircleAlert size={15} /> Unknown merge field(s): {unsupportedVariables.join(", ")}. Fix before continuing.</div>}
               <div className="gmail-compose-sender"><Mail size={16} /><span>Gmail sender</span><strong>{gmailConnection.connectedEmail ?? "Connect Gmail before sending"}</strong></div>
             </div>
             <aside className="variables-card">
               <div className="variables-heading"><span>Merge variables</span><small>Insert into {activeField}</small></div>
-              <p>Personalize the template using candidate and primary-contact details.</p>
+              <p>Personalize the template with each recipient&apos;s details.</p>
               <div className="variable-list">
-                {MERGE_VARIABLES.map((variable) => <button type="button" key={variable} onClick={() => insertVariable(variable)}>{variable}</button>)}
+                {OUTREACH_MERGE_VARIABLES.map((variable) => <button type="button" key={variable} onClick={() => insertVariable(variable)}>{variable}</button>)}
               </div>
               <div className="tip"><CircleAlert size={15} /><span>Click a variable to insert it at the cursor in the last-focused subject or body field.</span></div>
             </aside>
@@ -482,22 +520,22 @@ export default function EmailCampaignsClient({
           <div className="section-title preview-title">
             <div><h2>Preview personalized emails</h2><p>Switch recipients to see how the same template adapts for each candidate.</p></div>
             <div className="recipient-switcher">
-              <button type="button" aria-label="Previous recipient" onClick={() => setPreviewIndex((index) => (index - 1 + selectedCandidates.length) % selectedCandidates.length)}><ChevronLeft size={18} /></button>
-              <select value={currentPreview.id} onChange={(event) => setPreviewIndex(selectedCandidates.findIndex((candidate) => candidate.id === event.target.value))}>
-                {selectedCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{demoCandidateFullName(candidate)}</option>)}
+              <button type="button" aria-label="Previous recipient" onClick={() => setPreviewIndex((index) => (index - 1 + selectedRecipients.length) % selectedRecipients.length)}><ChevronLeft size={18} /></button>
+              <select value={currentPreview.id} onChange={(event) => setPreviewIndex(selectedRecipients.findIndex((r) => r.id === event.target.value))}>
+                {selectedRecipients.map((r) => <option key={r.id} value={r.id}>{fullName(r)}</option>)}
               </select>
-              <button type="button" aria-label="Next recipient" onClick={() => setPreviewIndex((index) => (index + 1) % selectedCandidates.length)}><ChevronRight size={18} /></button>
+              <button type="button" aria-label="Next recipient" onClick={() => setPreviewIndex((index) => (index + 1) % selectedRecipients.length)}><ChevronRight size={18} /></button>
             </div>
           </div>
           <div className="preview-layout">
             <div className="preview-context">
-              <span className="preview-count">Recipient {previewIndex + 1} of {selectedCandidates.length}</span>
-              <h3>{demoCandidateFullName(currentPreview)}</h3>
+              <span className="preview-count">Recipient {previewIndex + 1} of {selectedRecipients.length}</span>
+              <h3>{fullName(currentPreview)}</h3>
               <p>{currentPreview.email}</p>
               <dl>
-                <div><dt>School</dt><dd>{currentPreview.schoolName}</dd></div>
-                <div><dt>Major</dt><dd>{currentPreview.major}</dd></div>
-                <div><dt>Graduation</dt><dd>{currentPreview.graduationYear}</dd></div>
+                <div><dt>School</dt><dd>{currentPreview.school || "—"}</dd></div>
+                <div><dt>Stage</dt><dd>{currentPreview.stage || "—"}</dd></div>
+                <div><dt>Class</dt><dd>{currentPreview.classYear || "—"}</dd></div>
               </dl>
               <div className="personalization-note"><CheckCircle2 size={16} /><span>Merge variables are rendered with this recipient&apos;s details.</span></div>
             </div>
@@ -505,10 +543,10 @@ export default function EmailCampaignsClient({
               <div className="email-toolbar"><span></span><span></span><span></span><div>Email preview</div></div>
               <div className="email-meta">
                 <div><span>From</span><strong>{gmailConnection.connectedEmail ?? "Gmail not connected"}</strong></div>
-                <div><span>To</span><strong>{demoCandidateFullName(currentPreview)} &lt;{currentPreview.email}&gt;</strong></div>
-                <div><span>Subject</span><strong>{renderTemplate(subject, currentPreview)}</strong></div>
+                <div><span>To</span><strong>{fullName(currentPreview)} &lt;{currentPreview.email}&gt;</strong></div>
+                <div><span>Subject</span><strong>{renderOutreachTemplate(subject, currentPreview.tokens)}</strong></div>
               </div>
-              <div className="email-body">{renderTemplate(body, currentPreview)}</div>
+              <div className="email-body">{renderOutreachTemplate(body, currentPreview.tokens)}</div>
             </article>
           </div>
         </section>
@@ -518,27 +556,23 @@ export default function EmailCampaignsClient({
         <section>
           <div className="section-title">
             <div><h2>Review campaign</h2><p>Confirm the recipients and content before sending real Gmail messages.</p></div>
-            <StatusPill tone={gmailCampaignSendEnabled ? "good" : "warning"}>{gmailCampaignSendEnabled ? "Controlled Gmail test" : "Sending disabled"}</StatusPill>
+            <StatusPill tone="good">{audience?.label ?? "Recipients"}</StatusPill>
           </div>
           <div className="review-grid">
             <div className="review-main">
               <ReviewCard title="Campaign details">
                 <div className="review-details">
                   <ReviewValue label="Campaign name" value={campaignName} />
-                  <ReviewValue label="Eligible recipients" value={`${selectedCandidates.length} personalized messages`} />
-                  <ReviewValue label="Connected sender" value={gmailConnection.connectedEmail ?? "Gmail not connected"} />
-                  <ReviewValue label="Automatic exclusions" value={`${automaticExcludedCandidates.length}`} />
-                  <ReviewValue label="Subject" value={subject} wide />
+                  <ReviewValue label="Recipients" value={`${selectedRecipients.length} personalized message${selectedRecipients.length === 1 ? "" : "s"}`} />
+                  <ReviewValue label="Sending from" value={gmailConnection.connectedEmail ?? "Gmail not connected"} />
+                  <ReviewValue label="Audience" value={audience?.label ?? "—"} />
+                  <ReviewValue label="Subject" value={renderOutreachTemplate(subject, selectedRecipients[0]?.tokens ?? { first_name: "", last_name: "", full_name: "", school: "", stage: "", class_year: "", point_person: "" })} wide />
                 </div>
               </ReviewCard>
-              <ReviewCard title={`Recipients (${selectedCandidates.length})`}>
+              <ReviewCard title={`Recipients (${selectedRecipients.length})`}>
                 <div className="recipient-list">
-                  {selectedCandidates.map((candidate) => <div key={candidate.id}><span className="avatar">{candidate.firstName[0]}{candidate.lastName[0]}</span><div><strong>{demoCandidateFullName(candidate)}</strong><small>{candidate.email} · {candidate.schoolName}</small></div><CheckCircle2 size={17} /></div>)}
-                </div>
-              </ReviewCard>
-              <ReviewCard title={`Excluded (${excludedCandidates.length})`}>
-                <div className="exclusion-list">
-                  {excludedCandidates.map((candidate) => <div key={candidate.id}><div><strong>{demoCandidateFullName(candidate)}</strong><small>{getAutomaticExclusionReason(candidate) ?? "Manually excluded from this campaign"}</small></div><StatusPill tone="warning">Excluded</StatusPill></div>)}
+                  {selectedRecipients.slice(0, 200).map((r) => <div key={r.id}><span className="avatar">{fullName(r).slice(0, 1).toUpperCase()}</span><div><strong>{fullName(r)}</strong><small>{r.email}{r.school ? ` · ${r.school}` : ""}</small></div><CheckCircle2 size={17} /></div>)}
+                  {selectedRecipients.length > 200 && <div className="muted" style={{ padding: "8px 0", fontSize: 12 }}>…and {selectedRecipients.length - 200} more</div>}
                 </div>
               </ReviewCard>
             </div>
@@ -546,18 +580,17 @@ export default function EmailCampaignsClient({
               <div className="send-icon"><Send size={22} /></div>
               <h3>Send with Gmail</h3>
               {gmailConnection.connected ? (
-                <p><strong>{gmailConnection.connectedEmail}</strong> will send {selectedCandidates.length} real personalized {selectedCandidates.length === 1 ? "message" : "messages"}.</p>
+                <p><strong>{gmailConnection.connectedEmail}</strong> will send {selectedRecipients.length} personalized {selectedRecipients.length === 1 ? "message" : "messages"}.</p>
               ) : (
-                <p>Gmail must be connected before this controlled test campaign can send.</p>
+                <p>Connect your Gmail before sending.</p>
               )}
-              <div className="send-warning"><CircleAlert size={16} /><span>Fictional candidates may share the same controlled inbox. Each candidate still produces one separate Gmail message.</span></div>
+              <div className="send-warning"><CircleAlert size={16} /><span>Do-Not-Contact and over-quota recipients are skipped automatically. There&apos;s no unsend — this goes out from your own inbox.</span></div>
               <label className="campaign-confirmation">
-                <input type="checkbox" checked={confirmed} disabled={!gmailCampaignSendEnabled || !gmailConnection.connected || sending} onChange={(event) => setConfirmationFingerprint(event.target.checked ? campaignFingerprint : null)} />
-                <span>I understand this will send {selectedCandidates.length} real personalized emails through {gmailConnection.connectedEmail ?? "the connected Gmail account"}.</span>
+                <input type="checkbox" checked={confirmed} disabled={!gmailConnection.connected || sending} onChange={(event) => setConfirmationFingerprint(event.target.checked ? campaignFingerprint : null)} />
+                <span>I&apos;m ready to send {selectedRecipients.length} real emails through {gmailConnection.connectedEmail ?? "my connected Gmail"}.</span>
               </label>
               <button type="button" className="primary-action" disabled={!canSend} onClick={handleCampaignSend}><Send size={16} /> {sending ? "Queuing…" : "Send with Gmail"}</button>
               {!gmailConnection.connected && <a className="gmail-action review-connect" href="/api/google/connect"><Link2 size={15} /> Connect Gmail</a>}
-              {!gmailCampaignSendEnabled && <div className="safety-note"><CircleAlert size={15} /> Controlled Gmail test sending is disabled in this environment.</div>}
               {sendError && <div className="campaign-send-error" role="alert"><CircleAlert size={15} /> {sendError}</div>}
             </aside>
           </div>
@@ -565,7 +598,7 @@ export default function EmailCampaignsClient({
       )}
 
       <div className="wizard-footer">
-        <div>{step === 0 && selectedCandidates.length === 0 ? <span className="validation-note">Select at least one eligible candidate.</span> : step === 1 && !composeReady ? <span className="validation-note">Complete all fields to continue.</span> : null}</div>
+        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady ? <span className="validation-note">Complete all fields to continue.</span> : null}</div>
         <div className="footer-actions">
           {step > 0 && <button type="button" className="back-button" onClick={() => setStep((current) => current - 1)}><ArrowLeft size={16} /> Back</button>}
           {step < 3 && <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to {CAMPAIGN_STEPS[step + 1]} <ArrowRight size={16} /></button>}
@@ -577,9 +610,6 @@ export default function EmailCampaignsClient({
   );
 }
 
-function Metric({ label, value, icon, tone = "default" }: { label: string; value: number; icon: React.ReactNode; tone?: "default" | "good" | "warning" }) {
-  return <div className={`metric ${tone}`}><div><span>{label}</span><strong>{value}</strong></div><span className="metric-icon">{icon}</span></div>;
-}
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return <label className="field"><span>{label}{hint && <small>{hint}</small>}</span>{children}</label>;
@@ -653,6 +683,17 @@ const styles = `
   .metric-icon { display: grid; place-items: center; width: 34px; height: 34px; color: ${C.navy2}; background: #EEF2F8; border-radius: 9px; flex: 0 0 auto; } .metric.good .metric-icon { color: ${C.good}; background: #E8F5EE; } .metric.warning .metric-icon { color: ${C.orange}; background: #FBE7DF; }
   .audience-card, .form-card, .variables-card, .preview-context, .email-preview, .review-card, .send-card { background: #fff; border: 1px solid ${C.line}; border-radius: 14px; }
   .audience-card { overflow: hidden; } .audience-summary { display: flex; justify-content: space-between; align-items: center; padding: 13px 18px; border-bottom: 1px solid ${C.line}; background: #FAFBFE; font-size: 13px; } .audience-summary strong { color: ${C.navy}; } .audience-summary span { color: ${C.muted}; }
+  .audience-switch { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .aud-tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid ${C.line}; background: #fff; color: ${C.gray}; font-weight: 700; font-size: 13px; padding: 8px 14px; border-radius: 10px; cursor: pointer; }
+  .aud-tab small { color: ${C.muted}; font-weight: 600; }
+  .aud-tab.active { border-color: ${C.navy}; background: ${C.navy}; color: #fff; } .aud-tab.active small { color: rgba(255,255,255,.7); }
+  .audience-toolbar { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-bottom: 1px solid ${C.line}; flex-wrap: wrap; }
+  .aud-search { flex: 1; min-width: 180px; padding: 8px 12px; border: 1px solid ${C.line}; border-radius: 9px; font-size: 13px; }
+  .audience-toolbar select { padding: 8px 12px; border: 1px solid ${C.line}; border-radius: 9px; font-size: 13px; background: #fff; color: ${C.gray}; }
+  .aud-action { border: 1px solid ${C.navy2}; background: #fff; color: ${C.navy2}; font-weight: 700; font-size: 12.5px; padding: 8px 13px; border-radius: 9px; cursor: pointer; white-space: nowrap; }
+  .aud-action.ghost { border-color: ${C.line}; color: ${C.muted}; } .aud-action:disabled { opacity: .45; cursor: not-allowed; }
+  .candidate-empty { padding: 26px 18px; text-align: center; color: ${C.muted}; font-size: 13px; }
+  .compose-warn { display: flex; align-items: center; gap: 8px; background: #FBE7DF; border: 1px solid ${C.orange}; color: #8A3A1E; border-radius: 9px; padding: 9px 12px; font-size: 12.5px; margin-top: 4px; }
   .candidate-table { display: grid; grid-template-columns: 56px 1.35fr 1.15fr .75fr 1.1fr .8fr; gap: 12px; align-items: center; min-width: 860px; }
   .candidate-table-wrap { overflow-x: auto; } .candidate-head { padding: 10px 18px; border-bottom: 1px solid ${C.line}; color: ${C.muted}; background: #FAFBFE; font: 600 10.5px ${HEAD}; text-transform: uppercase; letter-spacing: .25px; }
   .candidate-row { padding: 12px 18px; border-bottom: 1px solid ${C.line}; font-size: 12.5px; } .candidate-row:last-child { border-bottom: 0; } .candidate-row.excluded { background: #FBFBFC; color: #8E919B; }

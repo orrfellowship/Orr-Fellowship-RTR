@@ -35,7 +35,7 @@ export function accentFor(role: Role, school?: string): string {
 }
 
 // ---- access (single source of truth for sidebar + route guards) ------------
-export const WORKSPACE_SECTIONS = ["snapshot", "my-school", "standings", "applicants", "playbook", "resources", "budget"] as const;
+export const WORKSPACE_SECTIONS = ["snapshot", "my-school", "standings", "applicants", "email-campaigns", "playbook", "resources", "budget"] as const;
 export const CONSOLE_SECTIONS = ["snapshot", "overview", "applicants", "email-campaigns", "standings", "schools", "calendar", "budget", "users", "sync", "review", "playbook", "resources"] as const;
 
 export function canAccessWorkspaceSection(role: Role, section: string): boolean {
@@ -99,6 +99,7 @@ function workspaceNav(role: Role): NavGroup[] {
       { id: "my-school", label: "My School", href: "/workspace/my-school", icon: School, hint: "Your school dashboard" },
       { id: "standings", label: "Standings", href: "/workspace/standings", icon: Trophy, hint: "How schools rank" },
       { id: "applicants", label: "Candidates", href: "/workspace/applicants", icon: UserSearch, hint: "Your candidate pipeline", badgeKey: "applicants" },
+      { id: "email-campaigns", label: "Email Campaigns", href: "/workspace/email-campaigns", icon: Mails, hint: "Outreach to your candidates" },
     ] },
     { group: "Playbook", items: playbookItems },
   ];

@@ -25,6 +25,23 @@ export type OutreachTokens = {
   school: string; stage: string; class_year: string; point_person: string;
 };
 
+// One recipient as the composer renders it: display fields + a precomputed token
+// set so the client preview matches the server's send exactly. Client-safe.
+export type ComposerRecipient = {
+  id: string; name: string; email: string | null;
+  school: string; stage: string; classYear: string; area: string | null;
+  doNotContact: boolean; tokens: OutreachTokens;
+};
+
+// A selectable group. endpoint routes the send: "candidates" (assignment-scoped)
+// or "team" (admin-only whole-team).
+export type OutreachAudience = {
+  key: "mine" | "all" | "team";
+  label: string; description: string;
+  endpoint: "candidates" | "team";
+  recipients: ComposerRecipient[];
+};
+
 export function renderOutreachTemplate(template: string, tokens: OutreachTokens): string {
   return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (match, key: string) => {
     const value = (tokens as Record<string, string>)[key.toLowerCase()];
