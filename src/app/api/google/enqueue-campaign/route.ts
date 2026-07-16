@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     });
 
     // Start sending now (post-response) so the fellow sees progress immediately.
-    after(() => drainOutreachQueue().catch(() => { /* cron backstop finishes it */ }));
+    after(() => drainOutreachQueue().catch((error) => console.error(JSON.stringify({ level: "error", event: "outreach_after_drain_failed", route: "demo", message: error instanceof Error ? error.message : "Unknown error" }))));
 
     return NextResponse.json({
       success: true,

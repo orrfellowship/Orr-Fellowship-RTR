@@ -22,8 +22,9 @@ const TAB: Record<string, string> = {
   applicants: "all", playbook: "playbook", resources: "resources", budget: "budget",
 };
 
-export default async function WorkspaceSection({ params }: { params: Promise<{ section: string }> }) {
+export default async function WorkspaceSection({ params, searchParams }: { params: Promise<{ section: string }>; searchParams: Promise<{ gmail?: string; gmail_error?: string }> }) {
   const { section } = await params;
+  const gmailQuery = await searchParams;
   const { profile } = await resolveViewer();
   if (!profile) redirect("/login");
   if (isAdminPlus(profile.role)) redirect("/console/overview");
@@ -31,20 +32,20 @@ export default async function WorkspaceSection({ params }: { params: Promise<{ s
 
   return (
     <Suspense fallback={<SectionSkeleton />}>
-      <WorkspaceSectionData section={section} profile={profile} />
+      <WorkspaceSectionData section={section} profile={profile} gmailQuery={gmailQuery} />
     </Suspense>
   );
 }
 
 // Each route renders exactly ONE section, so we only fetch what that section
 // reads. Everything else is passed empty — the other tabs' code never runs.
-async function WorkspaceSectionData({ section, profile }: { section: string; profile: Profile }) {
+async function WorkspaceSectionData({ section, profile, gmailQuery }: { section: string; profile: Profile; gmailQuery: { gmail?: string; gmail_error?: string } }) {
   // Live outreach composer — fellows/leads email their own assigned candidates.
   if (section === "email-campaigns") {
     let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
     try { gmailConnection = await getGmailConnectionStatusForUser(profile.id); } catch { /* show disconnected */ }
     const audiences = await loadOutreachAudiences(profile);
-    return <EmailCampaignsClient gmailConnection={gmailConnection} gmailCampaignSendEnabled audiences={audiences} viewerName={profile.full_name} />;
+    return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{ result: gmailQuery.gmail, error: gmailQuery.gmail_error }} gmailCampaignSendEnabled audiences={audiences} viewerName={profile.full_name} />;
   }
 
   const S = TAB[section]; // internal tab key

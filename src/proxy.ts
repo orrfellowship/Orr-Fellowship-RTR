@@ -2,6 +2,13 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function proxy(request: NextRequest) {
+  // Scheduled workers authenticate inside their route with CRON_SECRET rather
+  // than a browser Supabase session. Let the request reach that authorization
+  // check instead of redirecting it to /login.
+  if (request.nextUrl.pathname === "/api/cron") {
+    return NextResponse.next({ request });
+  }
+
   // Prefetch requests (Link hover / viewport) don't need the auth gate — the
   // real navigation runs it. Skipping keeps token work off the prefetch path,
   // which fires for every link the user merely scrolls past.

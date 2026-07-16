@@ -14,6 +14,8 @@ function check(name: string, cond: boolean) {
 check("single message (our send) is not a reply", !threadShowsReply(["Mark <mark@orrfellowship.org>"], "mark@orrfellowship.org"));
 check("a message from someone else is a reply", threadShowsReply(["Mark <mark@orrfellowship.org>", "Ada <ada@school.edu>"], "mark@orrfellowship.org"));
 check("multiple messages all from the sender is not a reply", !threadShowsReply(["mark@orrfellowship.org", "Mark <mark@orrfellowship.org>"], "mark@orrfellowship.org"));
+check("a delivery failure in the thread is not a reply", !threadShowsReply(["mark@orrfellowship.org", "Mail Delivery Subsystem <mailer-daemon@googlemail.com>"], "mark@orrfellowship.org"));
+check("an address containing the sender text is still a different sender", threadShowsReply(["mark@orrfellowship.org", "mark@orrfellowship.org.school.edu"], "mark@orrfellowship.org"));
 
 // ---- pure: parseBounce ----
 check("mailer-daemon From is a bounce", parseBounce({ from: "Mail Delivery Subsystem <mailer-daemon@googlemail.com>", subject: "Delivery Status Notification (Failure)", failedRecipients: "bad@x.edu" }).isBounce);
@@ -23,15 +25,17 @@ check("an ordinary reply is not a bounce", !parseBounce({ from: "Ada <ada@school
 
 // ---- orchestration with fakes ----
 function makeStore(open: OpenThread[], recent: Record<string, SentRef[]>) {
-  const replied: string[] = []; const bounced: string[] = []; const timeline: any[] = [];
+  const replied: string[] = []; const bounced: string[] = []; const checked: string[] = []; const timeline: any[] = [];
   const store: ReplyBounceStore = {
     async openThreads() { return open; },
+    async recentSenderIds() { return Object.keys(recent); },
     async recentSendsBySender(id) { return recent[id] ?? []; },
-    async markReplied(id) { replied.push(id); },
-    async markBounced(id) { bounced.push(id); },
+    async markReplyChecked(id) { checked.push(id); },
+    async markReplied(id) { replied.push(id); return true; },
+    async markBounced(id) { bounced.push(id); return true; },
     async logToTimeline(r) { timeline.push(r); },
   };
-  return { store, replied, bounced, timeline };
+  return { store, replied, bounced, checked, timeline };
 }
 
 async function run() {
@@ -42,7 +46,7 @@ async function run() {
   const recent: Record<string, SentRef[]> = {
     "fellow-1": [{ id: "s-3", candidateId: "c-3", senderUserId: "fellow-1", toEmail: "bad@school.edu", candidateName: "Bad Addr", bounced: false }],
   };
-  const { store, replied, bounced, timeline } = makeStore(open, recent);
+  const { store, replied, bounced, checked, timeline } = makeStore(open, recent);
   const notes: any[] = [];
   const reader: GmailReader = {
     // t-1 got a reply from Ada; t-2 only has our message.
@@ -67,6 +71,7 @@ async function run() {
 
   check("detects the one reply", summary.replies === 1 && replied.length === 1 && replied[0] === "s-1");
   check("does not flag the un-replied thread", !replied.includes("s-2"));
+  check("records a polling cursor for every successfully checked thread", checked.length === 2);
   check("logs the reply to the candidate timeline", timeline.some((t) => t.candidateId === "c-1" && /Replied/.test(t.body)));
   check("notifies the point person of the reply", notes.some((n) => n.type === "outreach_reply" && n.recipientId === "fellow-1"));
   check("detects the bounce and matches it to the send", summary.bounces === 1 && bounced.length === 1 && bounced[0] === "s-3");
@@ -76,6 +81,11 @@ async function run() {
   const only = makeStore(open, {});
   const skipped = await pollRepliesAndBounces({ store: only.store, reader, createSession: async () => { throw new Error("send-only"); }, notify: async () => ({}), now: () => Date.now() });
   check("a connection without metadata scope is skipped, not crashed", skipped.replies === 0 && only.replied.length === 0);
+
+  // Bounce scanning must not depend on there being an unreplied thread.
+  const bounceOnly = makeStore([], recent);
+  const bounceOnlySummary = await pollRepliesAndBounces({ store: bounceOnly.store, reader, createSession: async () => ({ sender: "fellow@orrfellowship.org", accessToken: "tok" }), notify: async () => ({}), now: () => Date.now() });
+  check("scans recent senders for bounces even with no open reply thread", bounceOnlySummary.bounces === 1 && bounceOnly.bounced[0] === "s-3");
 
   assert.equal(failures, 0);
   console.log(failures === 0 ? "\nAll reply-tracking checks passed." : `\n${failures} reply-tracking check(s) failed.`);

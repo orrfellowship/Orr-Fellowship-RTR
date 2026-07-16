@@ -268,7 +268,7 @@ export default function EmailCampaignsClient({
             sent: data.sent,
             failed: data.failed,
             excluded: data.skipped,
-            recipients: data.recipients.map((r, i) => ({ candidateId: `q-${i}`, candidateName: r.candidateName, maskedRecipient: r.maskedRecipient, status: (r.status === "pending" ? "sent" : r.status) as "sent" | "failed" | "excluded", messageId: r.messageId, failureReason: r.failureReason, exclusionReason: r.exclusionReason })),
+            recipients: data.recipients.map((r, i) => ({ candidateId: `q-${i}`, candidateName: r.candidateName, maskedRecipient: r.maskedRecipient, status: (r.status === "pending" ? "failed" : r.status) as "sent" | "failed" | "excluded", messageId: r.messageId, failureReason: r.status === "pending" ? "Final delivery status is unavailable" : r.failureReason, exclusionReason: r.exclusionReason })),
           });
           setCampaignId(null);
         }

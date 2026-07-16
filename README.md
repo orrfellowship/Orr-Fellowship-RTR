@@ -11,7 +11,7 @@ The application is role-aware: fellows and team leads work in school-scoped work
 - **Supabase Auth and PostgreSQL**: Authentication, profile/role data, recruiting data, storage, and server-side data access. Server-only service role usage bypasses RLS and must be handled carefully.
 - **JazzHR integration**: API routes and helper clients import applicants, synchronize JazzHR IDs, resolve resume documents, and support candidate review workflows.
 - **Resend notifications**: Transactional system email is sent through the existing Resend integration, including user invites and recruiting digests.
-- **Gmail OAuth (Phase 1)**: RTR users can securely connect an Orr Fellowship Google account for future campaign delivery. Campaign sending is not implemented.
+- **Gmail outreach campaigns**: RTR users can connect an Orr Fellowship Google account and enqueue personalized candidate or team campaigns. Supabase stores the durable queue; a protected scheduled worker drains it in rate-limited chunks.
 
 ## Prerequisites
 
@@ -66,7 +66,7 @@ Local credentials may point to production Supabase, JazzHR, Resend, or Vercel re
 
 Before running scripts, API routes, sync flows, or SQL, confirm which Supabase project, JazzHR account, and Resend account the credentials target.
 
-## Gmail OAuth setup (Phase 1)
+## Gmail OAuth and outreach setup
 
 1. In the Google Cloud project used by RTR, enable the **Gmail API**.
 2. Configure the OAuth consent screen for the Orr Fellowship Google Workspace organization.
@@ -76,7 +76,7 @@ Before running scripts, API routes, sync flows, or SQL, confirm which Supabase p
    - Local: `http://localhost:3000/api/google/callback`
    - Production: `https://YOUR_PRODUCTION_HOST/api/google/callback`
 
-5. Request only `openid`, `email`, and `https://www.googleapis.com/auth/gmail.send`. The `openid` and `email` scopes verify the connected address; `gmail.send` is the only Gmail permission.
+5. Request `openid`, `email`, `https://www.googleapis.com/auth/gmail.send`, and `https://www.googleapis.com/auth/gmail.metadata`. The metadata scope is used for reply/bounce tracking; message bodies are not read.
 6. Configure these server-only environment variables:
 
    - `GOOGLE_CLIENT_ID`
@@ -84,7 +84,7 @@ Before running scripts, API routes, sync flows, or SQL, confirm which Supabase p
    - `GOOGLE_REDIRECT_URI` (one exact URI from step 4 for that environment)
    - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY` (a base64-encoded 32-byte key; generate with `openssl rand -base64 32`)
 
-7. Apply [`db/phase15.sql`](db/phase15.sql) in the target Supabase project's SQL editor before deploying the code.
+7. Apply [`db/phase15.sql`](db/phase15.sql) and [`db/phase16.sql`](db/phase16.sql) in the target Supabase project before deploying the code. Configure the protected `?job=outreach` cron shown in phase 16.
 
 The OAuth `hd` hint prefers `orrfellowship.org`, but the callback independently verifies the returned Google email. Refresh tokens are encrypted with AES-256-GCM before storage. The credential table is inaccessible to browser roles; only safe connection status fields are returned by the application.
 
@@ -120,4 +120,4 @@ Local manual test — this sends real email:
 8. Confirm the attempted, sent, failed, and excluded summary plus each fictional candidate result. Verify that each eligible candidate produced one message in the controlled inbox, including candidates sharing an address.
 9. Return `ENABLE_GMAIL_TEST_SEND=false` when testing is complete.
 
-This phase uses no production candidate data, new database schemas, campaign tables, queues, schedules, retries, or campaign persistence. It does not update candidate contact history or stages and does not change the existing Resend transactional-email integration. Results exist only in the current client state. The Google OAuth project may remain in Testing mode for this controlled test. Access tokens, refresh tokens, MIME content, authorization headers, and raw Google responses never cross the server boundary.
+The controlled demo route remains separate from live audiences. Live campaigns use the persistent phase-16 queue, quota and Do Not Contact checks, retry/backoff behavior, and candidate timeline logging. Gmail outreach remains separate from the Resend transactional-email integration. Access tokens, refresh tokens, MIME content, authorization headers, and raw Google responses never cross the server boundary.

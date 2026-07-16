@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       selectedUserIds: input.ids, idempotencyKey: input.idempotencyKey,
     });
     if (result.forbidden) return err(new GmailTestSendError("forbidden", "Only an admin can email the whole team.", 403));
-    after(() => drainOutreachQueue().catch(() => {}));
+    after(() => drainOutreachQueue().catch((error) => console.error(JSON.stringify({ level: "error", event: "outreach_after_drain_failed", route: "team", message: error instanceof Error ? error.message : "Unknown error" }))));
     return NextResponse.json({
       success: true, campaignId: result.campaignId, total: result.queued + result.invalid,
       queued: result.queued, invalid: result.invalid, replayed: result.replayed,

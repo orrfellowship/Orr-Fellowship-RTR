@@ -140,6 +140,62 @@ create index if not exists outreach_sends_sender_sent_idx
 create index if not exists outreach_sends_reply_sweep_idx
   on public.outreach_sends (gmail_thread_id) where gmail_thread_id is not null and replied_at is null;
 
+-- Atomically claim a drain batch. SELECT + UPDATE in application code allows
+-- overlapping cron/after() workers to select the same rows and send duplicate
+-- messages. Row locks plus SKIP LOCKED ensure each queued row is leased by at
+-- most one worker.
+create or replace function public.claim_outreach_sends(
+  p_limit integer,
+  p_now timestamptz,
+  p_lease_until timestamptz
+)
+returns table (
+  id uuid,
+  campaign_id uuid,
+  candidate_id uuid,
+  sender_user_id uuid,
+  to_email text,
+  rendered_subject text,
+  rendered_body text,
+  attempts integer
+)
+language sql
+security invoker
+set search_path = ''
+as $$
+  with picked as (
+    select s.id
+    from public.outreach_sends s
+    where s.status = 'queued'
+      and s.next_attempt_at <= p_now
+    order by s.next_attempt_at, s.created_at
+    for update skip locked
+    limit greatest(least(p_limit, 100), 0)
+  ), leased as (
+    update public.outreach_sends s
+    set next_attempt_at = p_lease_until
+    from picked p
+    where s.id = p.id
+      and s.status = 'queued'
+      and s.next_attempt_at <= p_now
+    returning
+      s.id,
+      s.campaign_id,
+      s.candidate_id,
+      s.sender_user_id,
+      s.to_email,
+      s.rendered_subject,
+      s.rendered_body,
+      s.attempts
+  )
+  select * from leased;
+$$;
+
+revoke all on function public.claim_outreach_sends(integer, timestamptz, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.claim_outreach_sends(integer, timestamptz, timestamptz)
+  to service_role;
+
 notify pgrst, 'reload schema';
 
 -- ============================================================================

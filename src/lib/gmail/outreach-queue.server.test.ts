@@ -37,6 +37,7 @@ check("plain error is not retryable", !isRetryableSendError(new Error("boom")));
 check("backoff grows exponentially", backoffMs(1) === 30_000 && backoffMs(2) === 60_000 && backoffMs(3) === 120_000);
 
 check("all sent → sent", rollupCampaignStatus({ sent: 5, failed: 0, skipped: 1 }) === "sent");
+check("all excluded → completed without failure", rollupCampaignStatus({ sent: 0, failed: 0, skipped: 5 }) === "sent");
 check("some failed → partial", rollupCampaignStatus({ sent: 4, failed: 1, skipped: 0 }) === "partial");
 check("none sent → failed", rollupCampaignStatus({ sent: 0, failed: 3, skipped: 0 }) === "failed");
 
@@ -136,6 +137,33 @@ async function run() {
     check("enqueue stops at the 300/day sender cap", res.queued === 1 && res.skippedQuota === 1);
   }
 
+  // Enqueue: terminal-only campaigns do not wait forever for a drainer that
+  // will never claim a row.
+  {
+    const { store, campaigns } = makeStore();
+    const res = await enqueueOutreachCampaign("sender-1", {
+      campaignName: "Invalid only", subject: "s", body: "b",
+      recipients: [{ candidateId: "c-bad", toEmail: "bad@orrfellowship", renderedSubject: "s", renderedBody: "b" }],
+    }, { store, now: () => 100 });
+    check("enqueue finalizes a campaign with no sendable rows", res.queued === 0 && campaigns.get(res.campaignId)?.status === "done");
+  }
+
+  // Enqueue: concurrent requests can both miss the preflight lookup; the
+  // unique-key loser must replay the winner rather than report failure.
+  {
+    const { store } = makeStore();
+    let lookups = 0;
+    const raced: OutreachStore = {
+      ...store,
+      async findCampaignByKey() { lookups++; return lookups === 1 ? null : { id: "camp-winner" }; },
+      async insertCampaign() { throw new Error("duplicate key"); },
+    };
+    const res = await enqueueOutreachCampaign("sender-1", {
+      campaignName: "Race", subject: "s", body: "b", idempotencyKey: "same-key", recipients: [],
+    }, { store: raced });
+    check("idempotency-key race replays the winning campaign", res.replayed && res.campaignId === "camp-winner");
+  }
+
   // Drain: success + hard failure notifies sender and admin
   {
     const seedRows: Row[] = [
@@ -175,6 +203,30 @@ async function run() {
     const summary = await drainOutreachQueue({ store, createSession: session, sendMessage: throttle, sleep: noSleep, now: () => 1_000_000, notify: async () => ({}) });
     check("drain retries a 429 instead of failing", summary.retried === 1 && summary.failed === 0);
     check("retried row is re-queued with a future next_attempt_at", rows[0].status === "queued" && rows[0].attempts === 1 && rows[0].nextAttemptAt === 1_000_000 + 30_000);
+  }
+
+  // A message accepted by Gmail must never be relabeled as a Gmail send
+  // failure merely because recording the message id failed.
+  {
+    const seedRows: Row[] = [
+      { id: "s-1", campaignId: "camp-1", candidateId: null, senderUserId: "sender-1", toEmail: "ok@x.org", renderedSubject: "s", renderedBody: "b", attempts: 0, status: "queued", error: null, sentAt: null, nextAttemptAt: 0 },
+    ];
+    const { store, rows, campaigns } = makeStore({ rows: seedRows });
+    campaigns.set("camp-1", { name: "Camp", createdBy: "sender-1", status: "queued", total: 1 });
+    let gmailCalls = 0;
+    let rejected = false;
+    try {
+      await drainOutreachQueue({
+        store: { ...store, async markSent() { throw new Error("database unavailable"); } },
+        createSession: session,
+        sendMessage: async () => { gmailCalls++; return okSend(); },
+        sleep: noSleep,
+        now: () => 1_000_000,
+        notify: async () => ({}),
+      });
+    } catch { rejected = true; }
+    check("sent-message persistence failure is surfaced after retries", rejected && gmailCalls === 1);
+    check("persistence failure is not mislabeled as a send failure", rows[0].status === "queued" && rows[0].error === null);
   }
 
   // Drain: DNC set after enqueue is caught at send time

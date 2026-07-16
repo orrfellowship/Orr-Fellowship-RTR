@@ -73,7 +73,8 @@ export function backoffMs(attempts: number): number {
 }
 
 export function rollupCampaignStatus(counts: { sent: number; failed: number; skipped: number }): "sent" | "partial" | "failed" {
-  if (counts.sent > 0 && counts.failed === 0) return "sent";
+  // Exclusions are expected guardrail outcomes, not delivery failures.
+  if (counts.failed === 0) return "sent";
   if (counts.sent === 0) return "failed";
   return "partial";
 }
@@ -210,9 +211,19 @@ export async function enqueueOutreachCampaign(
     if (existing) return { campaignId: existing.id, queued: 0, skippedDnc: 0, skippedQuota: 0, invalid: 0, replayed: true };
   }
 
-  const campaignId = await store.insertCampaign({
-    createdBy: senderUserId, name: input.campaignName, subject: input.subject, body: input.body, idempotencyKey: key,
-  });
+  let campaignId: string;
+  try {
+    campaignId = await store.insertCampaign({
+      createdBy: senderUserId, name: input.campaignName, subject: input.subject, body: input.body, idempotencyKey: key,
+    });
+  } catch (error) {
+    // The database unique constraint is the final guard against two concurrent
+    // submissions with the same key. If another request won that race, replay
+    // its campaign instead of presenting a false enqueue failure.
+    const existing = key ? await store.findCampaignByKey(senderUserId, key) : null;
+    if (existing) return { campaignId: existing.id, queued: 0, skippedDnc: 0, skippedQuota: 0, invalid: 0, replayed: true };
+    throw error;
+  }
 
   // Quota budget for this sender across the batch (sent in last 24h counts).
   let senderRemaining = OUTREACH_PER_SENDER_PER_DAY - (await store.senderSends24h(senderUserId, now));
@@ -240,6 +251,9 @@ export async function enqueueOutreachCampaign(
 
   await store.insertSends(rows);
   await store.setCampaignTotal(campaignId, rows.length);
+  // A campaign containing only invalid, DNC, or quota-excluded recipients has
+  // no queued row for the cron drainer to touch, so finish it here.
+  if (queued === 0) await store.finalizeCampaign(campaignId, now);
   return { campaignId, queued, skippedDnc, skippedQuota, invalid, replayed: false };
 }
 
@@ -295,18 +309,9 @@ export async function drainOutreachQueue(deps: DrainDeps = {}): Promise<DrainSum
     }
 
     const { raw } = buildGmailMimeMessage({ sender: session.sender, recipient: row.toEmail, subject: row.renderedSubject, body: row.renderedBody });
+    let result: GmailSendResult;
     try {
-      const result = await sendMessage(session.accessToken, raw, session.fetchImpl);
-      await store.markSent(row.id, { messageId: result.messageId, threadId: result.threadId, at: nowFn() });
-      // Log to the candidate's timeline (real candidates only; team sends have
-      // no candidate_id). Best-effort — the email already left.
-      if (row.candidateId) {
-        try { await store.logToTimeline({ candidateId: row.candidateId, authorId: row.senderUserId, subject: row.renderedSubject }); }
-        catch { /* timeline logging is non-critical */ }
-      }
-      summary.sent++;
-      senderSent24h.set(row.senderUserId, (senderSent24h.get(row.senderUserId) ?? 0) + 1);
-      if (row.candidateId && cf) cf.sends7d += 1;
+      result = await sendMessage(session.accessToken, raw, session.fetchImpl);
     } catch (e) {
       const attempts = row.attempts + 1;
       if (isRetryableSendError(e) && attempts < MAX_ATTEMPTS) {
@@ -317,7 +322,40 @@ export async function drainOutreachQueue(deps: DrainDeps = {}): Promise<DrainSum
         await store.markFailed(row.id, { error: reason, attempts });
         summary.failed++;
       }
+      if (processed < due.length && nowFn() - startedAt <= budgetMs) await sleep(SEND_SPACING_MS);
+      continue;
     }
+
+    // Gmail has accepted the message. Persist that fact separately from the
+    // Gmail call so a database error is never mislabeled as a send failure.
+    // Retry brief transient database faults before allowing the cron run to
+    // fail visibly. The leased row will not be picked up concurrently.
+    let persisted = false;
+    let persistenceError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await store.markSent(row.id, { messageId: result.messageId, threadId: result.threadId, at: nowFn() });
+        persisted = true;
+        break;
+      } catch (error) {
+        persistenceError = error;
+        if (attempt < 3) await sleep(100 * attempt);
+      }
+    }
+    if (!persisted) {
+      console.error(JSON.stringify({ level: "error", event: "outreach_sent_persistence_failed", sendId: row.id, campaignId: row.campaignId, message: persistenceError instanceof Error ? persistenceError.message : "Unknown database error" }));
+      throw persistenceError instanceof Error ? persistenceError : new Error("Unable to record accepted Gmail message");
+    }
+
+    // Log to the candidate's timeline (real candidates only; team sends have
+    // no candidate_id). Best-effort — the email already left.
+    if (row.candidateId) {
+      try { await store.logToTimeline({ candidateId: row.candidateId, authorId: row.senderUserId, subject: row.renderedSubject }); }
+      catch (error) { console.error(JSON.stringify({ level: "warn", event: "outreach_timeline_log_failed", sendId: row.id, campaignId: row.campaignId, message: error instanceof Error ? error.message : "Unknown database error" })); }
+    }
+    summary.sent++;
+    senderSent24h.set(row.senderUserId, (senderSent24h.get(row.senderUserId) ?? 0) + 1);
+    if (row.candidateId && cf) cf.sends7d += 1;
     if (processed < due.length && nowFn() - startedAt <= budgetMs) await sleep(SEND_SPACING_MS);
   }
 
@@ -347,7 +385,8 @@ function defaultStore(): OutreachStore {
   const db = () => (client ??= createServiceClient());
   return {
     async findCampaignByKey(createdBy, key) {
-      const { data } = await db().from("outreach_campaigns").select("id").eq("created_by", createdBy).eq("idempotency_key", key).maybeSingle();
+      const { data, error } = await db().from("outreach_campaigns").select("id").eq("created_by", createdBy).eq("idempotency_key", key).maybeSingle();
+      if (error) throw new Error(`Failed to check campaign idempotency: ${error.message}`);
       return data ? { id: (data as any).id } : null;
     },
     async insertCampaign(c) {
@@ -358,7 +397,8 @@ function defaultStore(): OutreachStore {
       return (data as any).id;
     },
     async setCampaignTotal(campaignId, total) {
-      await db().from("outreach_campaigns").update({ total_count: total, updated_at: new Date().toISOString() }).eq("id", campaignId);
+      const { error } = await db().from("outreach_campaigns").update({ total_count: total, updated_at: new Date().toISOString() }).eq("id", campaignId);
+      if (error) throw new Error(`Failed to update campaign total: ${error.message}`);
     },
     async insertSends(rows) {
       if (!rows.length) return;
@@ -372,17 +412,20 @@ function defaultStore(): OutreachStore {
     },
     async senderSends24h(senderUserId, now) {
       const since = new Date(now - DAY_MS).toISOString();
-      const { count } = await db().from("outreach_sends").select("id", { count: "exact", head: true })
+      const { count, error } = await db().from("outreach_sends").select("id", { count: "exact", head: true })
         .eq("sender_user_id", senderUserId).not("sent_at", "is", null).gte("sent_at", since);
+      if (error) throw new Error(`Failed to count recent sender messages: ${error.message}`);
       return count ?? 0;
     },
     async candidateFlags(candidateIds, now) {
       const map = new Map<string, CandidateFlags>();
       if (!candidateIds.length) return map;
-      const { data: cands } = await db().from("candidates").select("id, do_not_contact").in("id", candidateIds);
+      const { data: cands, error: candidatesError } = await db().from("candidates").select("id, do_not_contact").in("id", candidateIds);
+      if (candidatesError) throw new Error(`Failed to load candidate contact flags: ${candidatesError.message}`);
       for (const c of cands ?? []) map.set((c as any).id, { doNotContact: !!(c as any).do_not_contact, sends7d: 0 });
       const since = new Date(now - WEEK_MS).toISOString();
-      const { data: sends } = await db().from("outreach_sends").select("candidate_id").in("candidate_id", candidateIds).not("sent_at", "is", null).gte("sent_at", since);
+      const { data: sends, error: sendsError } = await db().from("outreach_sends").select("candidate_id").in("candidate_id", candidateIds).not("sent_at", "is", null).gte("sent_at", since);
+      if (sendsError) throw new Error(`Failed to count recent candidate messages: ${sendsError.message}`);
       for (const s of sends ?? []) {
         const id = (s as any).candidate_id as string;
         const f = map.get(id) ?? { doNotContact: false, sends7d: 0 };
@@ -392,40 +435,47 @@ function defaultStore(): OutreachStore {
     },
     async claimDueSends(limit, now, leaseMs) {
       const nowIso = new Date(now).toISOString();
-      const { data } = await db().from("outreach_sends")
-        .select("id, campaign_id, candidate_id, sender_user_id, to_email, rendered_subject, rendered_body, attempts")
-        .eq("status", "queued").lte("next_attempt_at", nowIso).order("next_attempt_at", { ascending: true }).limit(limit);
+      const leaseIso = new Date(now + leaseMs).toISOString();
+      const { data, error } = await db().rpc("claim_outreach_sends", {
+        p_limit: limit,
+        p_now: nowIso,
+        p_lease_until: leaseIso,
+      });
+      if (error) throw new Error(`Failed to claim outreach sends: ${error.message}`);
       const rows = (data ?? []) as any[];
-      if (rows.length) {
-        const leaseIso = new Date(now + leaseMs).toISOString();
-        await db().from("outreach_sends").update({ next_attempt_at: leaseIso }).in("id", rows.map((r) => r.id));
-      }
       return rows.map((r) => ({
         id: r.id, campaignId: r.campaign_id, candidateId: r.candidate_id, senderUserId: r.sender_user_id,
         toEmail: r.to_email, renderedSubject: r.rendered_subject, renderedBody: r.rendered_body, attempts: r.attempts,
       }));
     },
     async markSent(id, r) {
-      await db().from("outreach_sends").update({ status: "sent", gmail_message_id: r.messageId, gmail_thread_id: r.threadId, sent_at: new Date(r.at).toISOString(), error: null }).eq("id", id);
+      const { error } = await db().from("outreach_sends").update({ status: "sent", gmail_message_id: r.messageId, gmail_thread_id: r.threadId, sent_at: new Date(r.at).toISOString(), error: null }).eq("id", id);
+      if (error) throw new Error(`Failed to record sent message: ${error.message}`);
     },
     async logToTimeline(r) {
-      await db().from("outreach_log").insert({ candidate_id: r.candidateId, author_id: r.authorId, body: `📧 Emailed — ${r.subject}` });
+      const { error } = await db().from("outreach_log").insert({ candidate_id: r.candidateId, author_id: r.authorId, body: `📧 Emailed — ${r.subject}` });
+      if (error) throw new Error(`Failed to write candidate timeline: ${error.message}`);
     },
     async markFailed(id, r) {
-      await db().from("outreach_sends").update({ status: "failed", error: r.error, attempts: r.attempts }).eq("id", id);
+      const { error } = await db().from("outreach_sends").update({ status: "failed", error: r.error, attempts: r.attempts }).eq("id", id);
+      if (error) throw new Error(`Failed to record send failure: ${error.message}`);
     },
     async markSkipped(id, status) {
-      await db().from("outreach_sends").update({ status }).eq("id", id);
+      const { error } = await db().from("outreach_sends").update({ status }).eq("id", id);
+      if (error) throw new Error(`Failed to record skipped send: ${error.message}`);
     },
     async requeue(id, r) {
-      await db().from("outreach_sends").update({ status: "queued", attempts: r.attempts, next_attempt_at: new Date(r.nextAttemptAt).toISOString() }).eq("id", id);
+      const { error } = await db().from("outreach_sends").update({ status: "queued", attempts: r.attempts, next_attempt_at: new Date(r.nextAttemptAt).toISOString() }).eq("id", id);
+      if (error) throw new Error(`Failed to requeue send: ${error.message}`);
     },
     async finalizeCampaign(campaignId, now) {
-      const { data: rows } = await db().from("outreach_sends").select("status, to_email, error").eq("campaign_id", campaignId);
+      const { data: rows, error: rowsError } = await db().from("outreach_sends").select("status, to_email, error").eq("campaign_id", campaignId);
+      if (rowsError) throw new Error(`Failed to load campaign sends: ${rowsError.message}`);
       const all = (rows ?? []) as any[];
       const remaining = all.filter((r) => r.status === "queued").length;
       if (remaining > 0) return null; // still draining
-      const { data: camp } = await db().from("outreach_campaigns").select("name, created_by, status, total_count").eq("id", campaignId).maybeSingle();
+      const { data: camp, error: campaignError } = await db().from("outreach_campaigns").select("name, created_by, status, total_count").eq("id", campaignId).maybeSingle();
+      if (campaignError) throw new Error(`Failed to load campaign: ${campaignError.message}`);
       if (!camp) return null;
       const already = (camp as any).status;
       if (already === "sent" || already === "partial" || already === "failed" || already === "canceled") return { justCompleted: false, name: (camp as any).name, senderUserId: (camp as any).created_by, total: (camp as any).total_count, failures: [] };
@@ -433,16 +483,19 @@ function defaultStore(): OutreachStore {
       const failedRows = all.filter((r) => r.status === "failed");
       const skipped = all.filter((r) => r.status === "skipped_dnc" || r.status === "skipped_quota").length;
       const status = rollupCampaignStatus({ sent, failed: failedRows.length, skipped });
-      await db().from("outreach_campaigns").update({ status, completed_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString() }).eq("id", campaignId);
+      const { error: updateError } = await db().from("outreach_campaigns").update({ status, completed_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString() }).eq("id", campaignId);
+      if (updateError) throw new Error(`Failed to finalize campaign: ${updateError.message}`);
       const failures: SendFailure[] = failedRows.map((r) => ({ toEmail: r.to_email, reason: r.error ?? "Send failed", rateLimited: /rate-limit/i.test(r.error ?? "") }));
       return { justCompleted: true, name: (camp as any).name, senderUserId: (camp as any).created_by, total: (camp as any).total_count, failures };
     },
     async loadAdminIds() {
-      const { data } = await db().from("profiles").select("id").in("role", ["admin", "super_admin"]).eq("is_active", true);
+      const { data, error } = await db().from("profiles").select("id").in("role", ["admin", "super_admin"]).eq("is_active", true);
+      if (error) throw new Error(`Failed to load outreach administrators: ${error.message}`);
       return (data ?? []).map((p) => (p as any).id as string);
     },
     async senderName(userId) {
-      const { data } = await db().from("profiles").select("full_name").eq("id", userId).maybeSingle();
+      const { data, error } = await db().from("profiles").select("full_name").eq("id", userId).maybeSingle();
+      if (error) throw new Error(`Failed to load sender name: ${error.message}`);
       return data ? ((data as any).full_name as string) : null;
     },
   };

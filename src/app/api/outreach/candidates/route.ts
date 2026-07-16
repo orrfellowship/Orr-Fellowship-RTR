@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       campaignName: input.campaignName, subject: input.subject, body: input.body,
       selectedCandidateIds: input.ids, idempotencyKey: input.idempotencyKey,
     });
-    after(() => drainOutreachQueue().catch(() => {}));
+    after(() => drainOutreachQueue().catch((error) => console.error(JSON.stringify({ level: "error", event: "outreach_after_drain_failed", route: "candidates", message: error instanceof Error ? error.message : "Unknown error" }))));
     return NextResponse.json({
       success: true, campaignId: result.campaignId, total: result.queued + result.skippedDnc + result.skippedQuota + result.invalid,
       queued: result.queued, skippedDnc: result.skippedDnc, skippedQuota: result.skippedQuota, invalid: result.invalid,

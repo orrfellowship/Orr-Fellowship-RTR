@@ -30,7 +30,12 @@ const POLL_BUDGET_MS = 50_000; // stop before Vercel's 60s
 export function threadShowsReply(fromHeaders: string[], senderEmail: string): boolean {
   if (fromHeaders.length <= 1) return false;
   const s = senderEmail.toLowerCase();
-  return fromHeaders.some((f) => !!f && !f.toLowerCase().includes(s));
+  return fromHeaders.some((from) => {
+    if (!from || BOUNCE_FROM.test(from)) return false;
+    const bracketed = from.match(/<([^>]+)>/)?.[1];
+    const address = (bracketed ?? from.match(EMAIL_RE)?.[0] ?? "").toLowerCase();
+    return !!address && address !== s;
+  });
 }
 
 const BOUNCE_FROM = /mailer-daemon|postmaster|mail delivery (subsystem|system)/i;
@@ -56,9 +61,11 @@ export type SentRef = { id: string; candidateId: string | null; senderUserId: st
 
 export type ReplyBounceStore = {
   openThreads: (limit: number) => Promise<OpenThread[]>;
+  recentSenderIds: () => Promise<string[]>;
   recentSendsBySender: (senderUserId: string) => Promise<SentRef[]>;
-  markReplied: (sendId: string, at: number) => Promise<void>;
-  markBounced: (sendId: string, at: number) => Promise<void>;
+  markReplyChecked: (sendId: string, at: number) => Promise<void>;
+  markReplied: (sendId: string, at: number) => Promise<boolean>;
+  markBounced: (sendId: string, at: number, gmailMessageId: string) => Promise<boolean>;
   logToTimeline: (r: { candidateId: string; authorId: string; body: string }) => Promise<void>;
 };
 
@@ -105,7 +112,7 @@ export async function pollRepliesAndBounces(deps: ReplyBounceDeps = {}): Promise
   };
 
   // ---- replies ----
-  const bySender = new Set<string>();
+  const bySender = new Set(await store.recentSenderIds());
   for (const t of open) {
     if (nowFn() - started > budgetMs) break;
     bySender.add(t.senderUserId);
@@ -115,8 +122,9 @@ export async function pollRepliesAndBounces(deps: ReplyBounceDeps = {}): Promise
     let froms: string[];
     try { froms = await reader.threadFroms(session.accessToken, t.threadId); }
     catch { continue; }
+    await store.markReplyChecked(t.id, nowFn());
     if (!threadShowsReply(froms, session.sender)) continue;
-    await store.markReplied(t.id, nowFn());
+    if (!await store.markReplied(t.id, nowFn())) continue;
     summary.replies++;
     if (t.candidateId) {
       await store.logToTimeline({ candidateId: t.candidateId, authorId: t.senderUserId, body: "📬 Replied to your outreach" });
@@ -134,7 +142,11 @@ export async function pollRepliesAndBounces(deps: ReplyBounceDeps = {}): Promise
     try { ids = await reader.inboxMessageIds(session.accessToken, INBOX_SCAN); }
     catch { continue; }
     const recent = await store.recentSendsBySender(senderUserId);
-    const byEmail = new Map(recent.filter((s) => !s.bounced).map((s) => [s.toEmail.toLowerCase(), s]));
+    const byEmail = new Map<string, SentRef>();
+    for (const send of recent) {
+      const email = send.toEmail.toLowerCase();
+      if (!send.bounced && !byEmail.has(email)) byEmail.set(email, send);
+    }
     if (byEmail.size === 0) continue;
     for (const messageId of ids) {
       if (nowFn() - started > budgetMs) break;
@@ -145,7 +157,7 @@ export async function pollRepliesAndBounces(deps: ReplyBounceDeps = {}): Promise
       if (!isBounce || !recipient) continue;
       const match = byEmail.get(recipient);
       if (!match) continue;
-      await store.markBounced(match.id, nowFn());
+      if (!await store.markBounced(match.id, nowFn(), messageId)) continue;
       byEmail.delete(recipient);
       summary.bounces++;
       if (match.candidateId) {
@@ -169,22 +181,46 @@ function defaultStore(): ReplyBounceStore {
   return {
     async openThreads(limit) {
       const since = new Date(Date.now() - THIRTY_DAYS).toISOString();
-      const { data } = await db().from("outreach_sends")
+      const { data, error } = await db().from("outreach_sends")
         .select("id, gmail_thread_id, candidate_id, sender_user_id, to_email, candidates(name)")
-        .not("gmail_thread_id", "is", null).is("replied_at", null).eq("status", "sent").gte("sent_at", since)
-        .order("sent_at", { ascending: false }).limit(limit);
+        .not("gmail_thread_id", "is", null).is("replied_at", null).is("bounced_at", null).eq("status", "sent").gte("sent_at", since)
+        .order("reply_checked_at", { ascending: true, nullsFirst: true }).order("sent_at", { ascending: true }).limit(limit);
+      if (error) throw new Error(`Failed to load open outreach threads: ${error.message}`);
       return (data ?? []).map((r: any) => ({ id: r.id, threadId: r.gmail_thread_id, candidateId: r.candidate_id, senderUserId: r.sender_user_id, toEmail: r.to_email, candidateName: r.candidates?.name ?? null }));
+    },
+    async recentSenderIds() {
+      const since = new Date(Date.now() - THIRTY_DAYS).toISOString();
+      const { data, error } = await db().from("outreach_sends").select("sender_user_id").eq("status", "sent").gte("sent_at", since);
+      if (error) throw new Error(`Failed to load recent outreach senders: ${error.message}`);
+      return Array.from(new Set((data ?? []).map((r: any) => r.sender_user_id as string)));
     },
     async recentSendsBySender(senderUserId) {
       const since = new Date(Date.now() - THIRTY_DAYS).toISOString();
-      const { data } = await db().from("outreach_sends")
+      const { data, error } = await db().from("outreach_sends")
         .select("id, candidate_id, sender_user_id, to_email, bounced_at, candidates(name)")
-        .eq("sender_user_id", senderUserId).eq("status", "sent").gte("sent_at", since);
+        .eq("sender_user_id", senderUserId).eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false });
+      if (error) throw new Error(`Failed to load recent sender outreach: ${error.message}`);
       return (data ?? []).map((r: any) => ({ id: r.id, candidateId: r.candidate_id, senderUserId: r.sender_user_id, toEmail: r.to_email, candidateName: r.candidates?.name ?? null, bounced: !!r.bounced_at }));
     },
-    async markReplied(sendId, at) { await db().from("outreach_sends").update({ replied_at: new Date(at).toISOString() }).eq("id", sendId); },
-    async markBounced(sendId, at) { await db().from("outreach_sends").update({ bounced_at: new Date(at).toISOString() }).eq("id", sendId); },
-    async logToTimeline(r) { await db().from("outreach_log").insert({ candidate_id: r.candidateId, author_id: r.authorId, body: r.body }); },
+    async markReplyChecked(sendId, at) {
+      const { error } = await db().from("outreach_sends").update({ reply_checked_at: new Date(at).toISOString() }).eq("id", sendId);
+      if (error) throw new Error(`Failed to record reply poll: ${error.message}`);
+    },
+    async markReplied(sendId, at) {
+      const { data, error } = await db().from("outreach_sends").update({ replied_at: new Date(at).toISOString() }).eq("id", sendId).is("replied_at", null).select("id").maybeSingle();
+      if (error) throw new Error(`Failed to record outreach reply: ${error.message}`);
+      return !!data;
+    },
+    async markBounced(sendId, at, gmailMessageId) {
+      const { data, error } = await db().from("outreach_sends").update({ bounced_at: new Date(at).toISOString(), gmail_bounce_message_id: gmailMessageId }).eq("id", sendId).is("bounced_at", null).select("id").maybeSingle();
+      if (error?.code === "23505") return false;
+      if (error) throw new Error(`Failed to record outreach bounce: ${error.message}`);
+      return !!data;
+    },
+    async logToTimeline(r) {
+      const { error } = await db().from("outreach_log").insert({ candidate_id: r.candidateId, author_id: r.authorId, body: r.body });
+      if (error) throw new Error(`Failed to write outreach response timeline: ${error.message}`);
+    },
   };
 }
 

@@ -22,7 +22,11 @@ export const GOOGLE_IDENTITY_SCOPES = ["openid", "email"] as const;
 export function hasReplyTrackingScope(grantedScopes: string[] | undefined): boolean {
   return !!grantedScopes?.includes(GMAIL_METADATA_SCOPE);
 }
-export const GMAIL_RETURN_TO = "/console/email-campaigns";
+export const GMAIL_ADMIN_RETURN_TO = "/console/email-campaigns";
+export const GMAIL_WORKSPACE_RETURN_TO = "/workspace/email-campaigns";
+export function gmailReturnToForRole(role: AppRole): string {
+  return isAdminPlus(role) ? GMAIL_ADMIN_RETURN_TO : GMAIL_WORKSPACE_RETURN_TO;
+}
 export const GOOGLE_STATE_COOKIE = "orr_google_oauth_state";
 
 type GoogleOAuthConfig = {
@@ -74,10 +78,10 @@ export async function getAuthenticatedRtrUser() {
   if (!user) return null;
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, is_active")
+    .select("id, role, is_active")
     .eq("id", user.id)
     .maybeSingle();
-  return profile?.is_active ? user : null;
+  return profile?.is_active ? { id: user.id, rtrRole: profile.role as AppRole } : null;
 }
 
 export async function getAuthenticatedRtrAdmin() {

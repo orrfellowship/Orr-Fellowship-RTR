@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  GMAIL_RETURN_TO,
   disconnectGmailForUser,
+  gmailReturnToForRole,
   getAuthenticatedRtrUser,
 } from "@/lib/gmail/server";
 
@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
   const user = await getAuthenticatedRtrUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const destination = new URL(GMAIL_RETURN_TO, request.url);
+  const destination = new URL(gmailReturnToForRole(user.rtrRole), request.url);
   try {
     await disconnectGmailForUser(user.id);
     destination.searchParams.set("gmail", "disconnected");
