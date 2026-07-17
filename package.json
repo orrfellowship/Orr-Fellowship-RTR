@@ -7,7 +7,6 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test:transactional:integration": "sh scripts/run-transactional-integration.sh",
     "test": "node --import tsx src/lib/nav/config.test.ts && node --import tsx src/lib/transactional/weekly-assignment-digest.test.ts && node --import tsx src/lib/gmail/security.server.test.ts && node --import tsx src/lib/gmail/google-network.server.test.ts && node --import tsx src/lib/gmail/mime.server.test.ts && node --import tsx src/lib/gmail/test-send.server.test.ts && node --import tsx src/lib/gmail/demo-campaign.server.test.ts && node --import tsx src/lib/gmail/outreach-queue.server.test.ts && node --import tsx src/lib/gmail/demo-enqueue.server.test.ts && node --import tsx src/lib/gmail/candidate-tokens.test.ts && node --import tsx src/lib/gmail/candidate-outreach.server.test.ts && node --import tsx src/lib/gmail/outreach-validate.test.ts && node --import tsx src/lib/gmail/reply-tracking.server.test.ts && node --import tsx src/components/EmailCampaignsClient.test.ts",
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm run typecheck && npm test && npm run build"

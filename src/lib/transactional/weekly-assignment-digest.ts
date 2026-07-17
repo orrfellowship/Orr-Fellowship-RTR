@@ -40,13 +40,6 @@ function easternWallClockToUtc(year: number, month: number, day: number, hour: n
 
 export type DigestPeriod = { start: Date; end: Date };
 
-export function parseDryRunPreviewAt(value: string | null): Date | null {
-  if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime()) || !weeklyDigestPeriod(parsed)) return null;
-  return parsed;
-}
-
 export function weeklyDigestPeriod(now: Date): DigestPeriod | null {
   if (now < FIRST_ALLOWED_DIGEST_AT) return null;
   const local = easternParts(now);
