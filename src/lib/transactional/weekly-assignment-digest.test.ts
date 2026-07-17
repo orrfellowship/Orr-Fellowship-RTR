@@ -5,6 +5,7 @@ import {
   DIGEST_LIST_LIMIT,
   FIRST_ALLOWED_DIGEST_AT,
   easternLocalDay,
+  parseDryRunPreviewAt,
   renderAssignmentDigest,
   weeklyDigestPeriod,
   type AssignmentDigestEvent,
@@ -19,6 +20,16 @@ function event(index: number): AssignmentDigestEvent {
     university_raw: null,
     changed_at: "2026-07-19T12:00:00.000Z",
   };
+}
+
+{
+  assert.equal(
+    parseDryRunPreviewAt("2026-07-20T12:00:00.000Z")?.toISOString(),
+    "2026-07-20T12:00:00.000Z",
+  );
+  assert.equal(parseDryRunPreviewAt("2026-07-20T11:59:59.000Z"), null);
+  assert.equal(parseDryRunPreviewAt("2026-07-21T12:00:00.000Z"), null);
+  assert.equal(parseDryRunPreviewAt("not-a-date"), null);
 }
 
 {
@@ -92,6 +103,10 @@ function event(index: number): AssignmentDigestEvent {
   assert.match(cron, /job === "gmail-sync"/);
   assert.doesNotMatch(cron, /sendEmail|flushDue|runDigests|claim_transactional/);
   assert.match(cron, /Unknown cron job/);
+
+  const transactionalCron = fs.readFileSync(path.join(root, "src/app/api/cron/transactional/route.ts"), "utf8");
+  assert.match(transactionalCron, /previewAtInput && !dryRun/);
+  assert.match(transactionalCron, /runWeeklyAssignmentDigest\(\{ dryRun, now: previewAt \?\? undefined \}\)/);
 }
 
 console.log("weekly assignment digest tests passed");
