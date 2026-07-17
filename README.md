@@ -10,7 +10,9 @@ The application is role-aware: fellows and team leads work in school-scoped work
 - **Vercel**: Expected hosting platform for preview and production deployments.
 - **Supabase Auth and PostgreSQL**: Authentication, profile/role data, recruiting data, storage, and server-side data access. Server-only service role usage bypasses RLS and must be handled carefully.
 - **JazzHR integration**: API routes and helper clients import applicants, synchronize JazzHR IDs, resolve resume documents, and support candidate review workflows.
-- **Resend notifications**: Transactional system email is sent through the existing Resend integration, including user invites and recruiting digests.
+- **Resend notifications**: Transactional system email uses the Phase 18 leased,
+  idempotent queue. Assignment changes are combined into one weekly digest per
+  fellow; see [the containment and enablement runbook](docs/transactional-notification-safety.md).
 - **Gmail outreach campaigns**: RTR users can connect an Orr Fellowship Google account and enqueue personalized candidate or team campaigns. Supabase stores the durable queue; a protected scheduled worker drains it in rate-limited chunks.
 
 ## Prerequisites
