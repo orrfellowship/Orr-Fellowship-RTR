@@ -76,7 +76,6 @@ async function ConsoleSectionData({
       }}
       gmailCampaignSendEnabled
       audiences={audiences}
-      viewerName={profile.full_name}
     />;
   }
 

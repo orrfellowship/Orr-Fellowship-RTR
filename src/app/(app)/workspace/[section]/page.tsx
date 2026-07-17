@@ -45,7 +45,7 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
     let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
     try { gmailConnection = await getGmailConnectionStatusForUser(profile.id); } catch { /* show disconnected */ }
     const audiences = await loadOutreachAudiences(profile);
-    return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{ result: gmailQuery.gmail, error: gmailQuery.gmail_error }} gmailCampaignSendEnabled audiences={audiences} viewerName={profile.full_name} />;
+    return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{ result: gmailQuery.gmail, error: gmailQuery.gmail_error }} gmailCampaignSendEnabled audiences={audiences} />;
   }
 
   const S = TAB[section]; // internal tab key

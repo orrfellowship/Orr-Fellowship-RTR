@@ -8,7 +8,6 @@ import {
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
 import {
   OUTREACH_MERGE_VARIABLES,
-  renderOutreachTemplate,
   findUnsupportedOutreachVariables,
   sendEtaLabel,
   type ComposerRecipient,
@@ -99,19 +98,18 @@ export default function EmailCampaignsClient({
   gmailNotice = {},
   gmailCampaignSendEnabled = false,
   audiences = [],
-  viewerName = "",
 }: {
   gmailConnection?: GmailConnectionStatus;
   gmailNotice?: GmailNotice;
   gmailCampaignSendEnabled?: boolean;
   audiences?: OutreachAudience[];
-  viewerName?: string;
 }) {
   const [audienceKey, setAudienceKey] = useState<string>(audiences[0]?.key ?? "mine");
   const audience = audiences.find((a) => a.key === audienceKey) ?? audiences[0];
   const allRecipients = useMemo(() => audience?.recipients ?? [], [audience]);
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState("");
+  const [pointPersonFilter, setPointPersonFilter] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [step, setStep] = useState(0);
   const [maxReached, setMaxReached] = useState(0);
@@ -132,22 +130,32 @@ export default function EmailCampaignsClient({
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const inFlight = useRef(false);
   const submission = useRef<{ fingerprint: string; key: string } | null>(null);
+  const isSearchOnlyAudience = audience?.key === "all";
+  const hasRecipientSearch = search.trim().length > 0;
+  const hasRecipientCriteria = hasRecipientSearch || pointPersonFilter.length > 0;
 
   // Distinct stages present in this audience, for the stage filter dropdown.
   const stageOptions = useMemo(
     () => Array.from(new Set(allRecipients.map((r) => r.stage).filter(Boolean))).sort(),
     [allRecipients],
   );
+  const pointPersonOptions = useMemo(
+    () => Array.from(new Set(allRecipients.map((r) => r.tokens.point_person).filter(Boolean))).sort(),
+    [allRecipients],
+  );
   // Recipients matching the current search + stage filter (drives the list and
   // the "select all filtered" action).
-  const filteredRecipients = useMemo(() => {
+  const matchingRecipients = useMemo(() => {
     const q = search.trim().toLowerCase();
+    if (audience?.key === "all" && !q && !pointPersonFilter) return [];
     return allRecipients.filter((r) => {
       if (stageFilter && r.stage !== stageFilter) return false;
+      if (pointPersonFilter && r.tokens.point_person !== pointPersonFilter) return false;
       if (!q) return true;
-      return `${r.name} ${r.email ?? ""} ${r.school}`.toLowerCase().includes(q);
+      return `${r.name} ${r.email ?? ""} ${r.school} ${r.tokens.point_person}`.toLowerCase().includes(q);
     });
-  }, [allRecipients, search, stageFilter]);
+  }, [allRecipients, audience?.key, search, stageFilter, pointPersonFilter]);
+  const filteredRecipients = isSearchOnlyAudience && !pointPersonFilter ? matchingRecipients.slice(0, 50) : matchingRecipients;
 
   const selectedRecipients = useMemo(
     () => allRecipients.filter((r) => selectedIds.has(r.id) && recipientEligible(r)),
@@ -218,7 +226,7 @@ export default function EmailCampaignsClient({
   function switchAudience(key: string) {
     setAudienceKey(key);
     setSelectedIds(new Set());
-    setSearch(""); setStageFilter(""); setPreviewIndex(0);
+    setSearch(""); setStageFilter(""); setPointPersonFilter(""); setPreviewIndex(0);
     setConfirmationFingerprint(null);
   }
 
@@ -332,7 +340,9 @@ export default function EmailCampaignsClient({
           </div>
           <p>Send personalized outreach to your candidates from your own Gmail.</p>
         </div>
-        <div className="previewing-note"><UserRoundCheck size={17} /> <span>Sending as: <strong>{gmailConnection.connectedEmail ?? (viewerName || "connect Gmail")}</strong></span></div>
+        {gmailConnection.connected && gmailConnection.connectedEmail && (
+          <div className="previewing-note"><UserRoundCheck size={17} /> <span>Sending as: <strong>{gmailConnection.connectedEmail}</strong></span></div>
+        )}
       </div>
 
       {connectionNotice && (
@@ -463,7 +473,10 @@ export default function EmailCampaignsClient({
         <section>
           <div className="section-title">
             <div><h2>Choose recipients</h2><p>{audience?.description ?? "Pick who receives this campaign."}</p></div>
-            <span className="scope-pill"><UsersRound size={15} /> {selectedRecipients.length} selected</span>
+            <div className="recipient-title-actions">
+              <span className="scope-pill"><UsersRound size={15} /> {selectedRecipients.length} selected</span>
+              <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to Compose <ArrowRight size={16} /></button>
+            </div>
           </div>
 
           {audiences.length > 1 && (
@@ -478,40 +491,59 @@ export default function EmailCampaignsClient({
 
           <div className="audience-card">
             <div className="audience-toolbar">
-              <input className="aud-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, email, school…" />
-              {stageOptions.length > 0 && (
+              <input className="aud-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isSearchOnlyAudience ? "Search all candidates by name, email, or school…" : "Search name, email, school…"} />
+              {isSearchOnlyAudience && pointPersonOptions.length > 0 && (
+                <select value={pointPersonFilter} onChange={(e) => setPointPersonFilter(e.target.value)} aria-label="Filter by point person">
+                  <option value="">Choose point person</option>
+                  {pointPersonOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+              )}
+              {!isSearchOnlyAudience && stageOptions.length > 0 && (
                 <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
                   <option value="">All stages</option>
                   {stageOptions.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               )}
-              <button type="button" className="aud-action" onClick={selectAllFiltered}>Select {search || stageFilter ? "filtered" : "all"} ({filteredRecipients.filter(recipientEligible).length})</button>
+              {(!isSearchOnlyAudience || hasRecipientCriteria) && filteredRecipients.length > 0 && (
+                <button type="button" className="aud-action" onClick={selectAllFiltered}>Select {isSearchOnlyAudience ? "matches" : search || stageFilter ? "filtered" : "all"} ({filteredRecipients.filter(recipientEligible).length})</button>
+              )}
               <button type="button" className="aud-action ghost" onClick={clearSelection} disabled={selectedIds.size === 0}>Clear</button>
             </div>
             <div className="audience-summary">
-              <div><strong>{selectedRecipients.length}</strong> selected of {filteredRecipients.length} shown ({allRecipients.length} total)</div>
-              <span>{filteredRecipients.filter((r) => !recipientEligible(r)).length} not emailable</span>
+              {isSearchOnlyAudience && !hasRecipientCriteria ? (
+                <div><strong>{selectedRecipients.length}</strong> selected · Search {allRecipients.length} contacts or choose a point person</div>
+              ) : (
+                <>
+                  <div><strong>{selectedRecipients.length}</strong> selected · {matchingRecipients.length} {matchingRecipients.length === 1 ? "match" : "matches"}{matchingRecipients.length > filteredRecipients.length ? ` · showing first ${filteredRecipients.length}` : ""}</div>
+                  <span>{filteredRecipients.filter((r) => !recipientEligible(r)).length} not emailable</span>
+                </>
+              )}
             </div>
             <div className="candidate-table-wrap">
-              <div className="candidate-table candidate-head">
-                <div>Include</div><div>Recipient</div><div>School</div><div>Stage</div><div>Email status</div><div>Class</div>
-              </div>
-              {filteredRecipients.length === 0 && <div className="candidate-empty">No recipients match — {allRecipients.length === 0 ? "you have no candidates in this audience yet." : "adjust your search or filter."}</div>}
-              {filteredRecipients.map((r) => {
-                const eligible = recipientEligible(r);
-                const included = selectedIds.has(r.id) && eligible;
-                const reason = exclusionReasonFor(r);
-                return (
-                  <div className={`candidate-table candidate-row ${eligible ? "" : "excluded"}`} key={r.id}>
-                    <div><input type="checkbox" aria-label={`Include ${fullName(r)}`} checked={selectedIds.has(r.id)} disabled={!eligible} onChange={() => toggleCandidate(r)} /></div>
-                    <div><strong>{fullName(r)}</strong><small>{r.email ?? "No email on file"}</small></div>
-                    <div>{r.school || "—"}</div>
-                    <div>{r.stage ? <StagePill stage={r.stage} /> : <span className="muted">—</span>}</div>
-                    <div>{reason ? <StatusPill tone="warning">{reason}</StatusPill> : included ? <StatusPill tone="good">Included</StatusPill> : <StatusPill>Not selected</StatusPill>}</div>
-                    <div className={r.classYear ? "" : "muted"}>{r.classYear || "—"}</div>
-                  </div>
-                );
-              })}
+              {isSearchOnlyAudience && !hasRecipientCriteria ? (
+                <div className="candidate-empty search-prompt">Search by name, email, or school, or choose a point person to view their contacts.</div>
+              ) : (<>
+                <div className="candidate-table candidate-head">
+                  <div>Include</div><div>Recipient</div><div>School</div><div>Stage</div><div>Email status</div><div>Class</div>
+                </div>
+                {filteredRecipients.length === 0 && <div className="candidate-empty">No recipients match — {allRecipients.length === 0 ? "you have no candidates in this audience yet." : "adjust your search or filter."}</div>}
+                {filteredRecipients.map((r) => {
+                  const eligible = recipientEligible(r);
+                  const included = selectedIds.has(r.id) && eligible;
+                  const reason = exclusionReasonFor(r);
+                  return (
+                    <div className={`candidate-table candidate-row ${eligible ? "" : "excluded"}`} key={r.id}>
+                      <div><input type="checkbox" aria-label={`Include ${fullName(r)}`} checked={selectedIds.has(r.id)} disabled={!eligible} onChange={() => toggleCandidate(r)} /></div>
+                      <div><strong>{fullName(r)}</strong><small>{r.email ?? "No email on file"}</small></div>
+                      <div>{r.school || "—"}</div>
+                      <div>{r.stage ? <StagePill stage={r.stage} /> : <span className="muted">—</span>}</div>
+                      <div>{reason ? <StatusPill tone="warning">{reason}</StatusPill> : included ? <StatusPill tone="good">Included</StatusPill> : <StatusPill>Not selected</StatusPill>}</div>
+                      <div className={r.classYear ? "" : "muted"}>{r.classYear || "—"}</div>
+                    </div>
+                  );
+                })}
+                {matchingRecipients.length > filteredRecipients.length && <div className="candidate-empty">More matches are available. Refine your search to find a specific contact.</div>}
+              </>)}
             </div>
           </div>
         </section>
@@ -532,7 +564,6 @@ export default function EmailCampaignsClient({
                 <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)} rows={14} />
               </Field>
               {unsupportedVariables.length > 0 && <div className="compose-warn"><CircleAlert size={15} /> Unknown merge field(s): {unsupportedVariables.join(", ")}. Fix before continuing.</div>}
-              <div className="gmail-compose-sender"><Mail size={16} /><span>Gmail sender</span><strong>{gmailConnection.connectedEmail ?? "Connect Gmail before sending"}</strong></div>
             </div>
             <aside className="variables-card">
               <div className="variables-heading"><span>Merge variables</span><small>Insert into {activeField}</small></div>
@@ -597,7 +628,7 @@ export default function EmailCampaignsClient({
                   <ReviewValue label="Recipients" value={`${selectedRecipients.length} personalized message${selectedRecipients.length === 1 ? "" : "s"}`} />
                   <ReviewValue label="Sending from" value={gmailConnection.connectedEmail ?? "Gmail not connected"} />
                   <ReviewValue label="Audience" value={audience?.label ?? "—"} />
-                  <ReviewValue label="Subject" value={renderOutreachTemplate(subject, selectedRecipients[0]?.tokens ?? { first_name: "", last_name: "", full_name: "", school: "", stage: "", class_year: "", point_person: "" })} wide />
+                  <ReviewValue label="Subject template" value={subject} wide />
                 </div>
               </ReviewCard>
               <ReviewCard title={`Recipients (${selectedRecipients.length})`}>
@@ -688,7 +719,7 @@ const styles = `
   .sent-hero p { color: ${C.muted}; font-size: 13.5px; line-height: 1.55; margin: 0; max-width: 480px; }
   .sent-actions { display: flex; justify-content: center; }
   .sent-actions .primary-action { width: auto; padding: 11px 22px; }
-  .campaign-heading, .section-title, .heading-line, .previewing-note, .wizard-footer, .footer-actions, .recipient-switcher { display: flex; align-items: center; }
+  .campaign-heading, .section-title, .heading-line, .previewing-note, .wizard-footer, .footer-actions, .recipient-switcher, .recipient-title-actions { display: flex; align-items: center; }
   .campaign-heading { justify-content: space-between; gap: 24px; margin-bottom: 22px; }
   .gmail-notice { display: flex; align-items: center; gap: 8px; margin: -8px 0 16px; padding: 10px 13px; border-radius: 10px; font-size: 12.5px; font-weight: 600; }
   .gmail-notice.success { color: ${C.good}; background: #E8F5EE; border: 1px solid #C7E7D6; } .gmail-notice.error { color: ${C.orange}; background: #FBE7DF; border: 1px solid #F1C2B4; }
@@ -707,6 +738,7 @@ const styles = `
   .step-number { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid #D8DAE2; border-radius: 50%; font: 700 11px ${MONO}; }
   .step.active .step-number { color: #fff; background: ${C.orange}; border-color: ${C.orange}; } .step.complete .step-number { color: #fff; background: ${C.good}; border-color: ${C.good}; }
   .section-title { justify-content: space-between; gap: 18px; margin-bottom: 18px; } .section-title h2 { font-size: 23px; color: ${C.navy}; margin: 0; }
+  .recipient-title-actions { gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
   .scope-pill { display: inline-flex; align-items: center; gap: 7px; color: ${C.navy2}; background: #EEF2F8; border-radius: 999px; padding: 7px 11px; font-size: 12px; font-weight: 700; white-space: nowrap; }
   .metrics-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
   .metric { background: #fff; border: 1px solid ${C.line}; border-radius: 12px; padding: 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -738,7 +770,6 @@ const styles = `
   .field { display: block; margin-bottom: 16px; } .field:last-child { margin-bottom: 0; } .field>span { display: flex; justify-content: space-between; color: ${C.navy}; font: 700 12.5px ${HEAD}; margin-bottom: 7px; } .field>span small { color: ${C.muted}; font: 400 10.5px 'Open Sans', sans-serif; }
   .field input, .field textarea { width: 100%; border: 1px solid #DADDE6; border-radius: 9px; background: #fff; color: ${C.gray}; padding: 10px 12px; font: 13.5px 'Open Sans', sans-serif; outline: none; } .field textarea { resize: vertical; line-height: 1.6; min-height: 250px; }
   .field input:focus, .field textarea:focus { border-color: ${C.navy2}; box-shadow: 0 0 0 3px rgba(72,95,146,.1); }
-  .gmail-compose-sender { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 11px 12px; color: ${C.muted}; background: #FAFBFE; border: 1px solid ${C.line}; border-radius: 9px; font-size: 12px; } .gmail-compose-sender strong { color: ${C.navy}; overflow-wrap: anywhere; }
   .variables-card { padding: 18px; position: sticky; top: 16px; } .variables-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: ${C.navy}; font: 700 15px ${HEAD}; } .variables-heading small { color: ${C.orange}; background: #FBE7DF; padding: 3px 7px; border-radius: 999px; font: 700 9.5px ${MONO}; }
   .variables-card>p { color: ${C.muted}; font-size: 12px; line-height: 1.5; } .variable-list { display: flex; flex-wrap: wrap; gap: 7px; } .variable-list button { border: 1px solid ${C.line}; background: #FAFBFE; color: ${C.navy2}; padding: 6px 8px; border-radius: 7px; font: 600 10.5px ${MONO}; cursor: pointer; } .variable-list button:hover { border-color: ${C.orange}; color: ${C.orange}; }
   .tip, .personalization-note, .safety-note { display: flex; align-items: flex-start; gap: 7px; color: ${C.muted}; font-size: 11px; line-height: 1.45; } .tip { border-top: 1px solid ${C.line}; margin-top: 16px; padding-top: 13px; } .tip svg, .personalization-note svg, .safety-note svg { flex: 0 0 auto; }
@@ -765,6 +796,6 @@ const styles = `
   .campaign-results { display: grid; } .campaign-results>div { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid ${C.line}; } .campaign-results>div>div:first-child { min-width: 0; } .campaign-results strong { display: block; color: ${C.gray}; font-size: 12.5px; } .campaign-results small { display: block; margin-top: 3px; color: ${C.muted}; font-size: 10.5px; overflow-wrap: anywhere; } .campaign-results code { font: 600 10px ${MONO}; } .result-status { display: flex; flex-direction: column; align-items: flex-end; max-width: 55%; text-align: right; }
   .wizard-footer { justify-content: space-between; gap: 16px; min-height: 44px; margin-top: 20px; } .footer-actions { gap: 9px; margin-left: auto; } .back-button, .next-button { display: inline-flex; align-items: center; gap: 8px; border-radius: 9px; padding: 10px 15px; font-weight: 700; cursor: pointer; } .back-button { color: ${C.navy}; background: #fff; border: 1px solid ${C.line}; } .next-button { color: #fff; background: ${C.navy}; border: 1px solid ${C.navy}; } .next-button:disabled { opacity: .45; cursor: not-allowed; } .validation-note { color: ${C.orange}; font-size: 12px; }
   @media (max-width: 980px) { .metrics-grid { grid-template-columns: repeat(3, 1fr); } .compose-layout, .review-grid { grid-template-columns: 1fr; } .variables-card, .send-card { position: static; } .preview-layout { grid-template-columns: 210px minmax(0, 1fr); } }
-  @media (max-width: 720px) { .email-campaigns-page { padding: 20px 14px 60px; } .campaign-heading, .section-title { align-items: flex-start; flex-direction: column; } .previewing-note { width: 100%; } .gmail-connection-card { grid-template-columns: auto minmax(0, 1fr); align-items: start; } .gmail-connection-card form, .gmail-connection-card>.gmail-action { grid-column: 1 / -1; width: 100%; } .stepper { grid-template-columns: repeat(4, minmax(48px, 1fr)); } .step { flex-direction: column; gap: 4px; font-size: 10px; padding: 7px 2px; } .metrics-grid { grid-template-columns: repeat(2, 1fr); } .compose-layout, .preview-layout, .review-grid { grid-template-columns: 1fr; } .review-details { grid-template-columns: 1fr; } .preview-title { align-items: stretch; } .recipient-switcher select { flex: 1; min-width: 0; } .email-meta { padding: 12px 14px; } .email-meta>div { grid-template-columns: 58px 1fr; } .email-body { min-height: 300px; padding: 22px 18px 30px; } .wizard-footer { align-items: flex-start; flex-direction: column; } .footer-actions { width: 100%; } .footer-actions button { flex: 1; justify-content: center; } .result-metrics { grid-template-columns: repeat(2, 1fr); } .campaign-results>div { flex-direction: column; } .result-status { align-items: flex-start; max-width: none; text-align: left; } }
+  @media (max-width: 720px) { .email-campaigns-page { padding: 20px 14px 60px; } .campaign-heading, .section-title { align-items: flex-start; flex-direction: column; } .recipient-title-actions { width: 100%; justify-content: space-between; } .previewing-note { width: 100%; } .gmail-connection-card { grid-template-columns: auto minmax(0, 1fr); align-items: start; } .gmail-connection-card form, .gmail-connection-card>.gmail-action { grid-column: 1 / -1; width: 100%; } .stepper { grid-template-columns: repeat(4, minmax(48px, 1fr)); } .step { flex-direction: column; gap: 4px; font-size: 10px; padding: 7px 2px; } .metrics-grid { grid-template-columns: repeat(2, 1fr); } .compose-layout, .preview-layout, .review-grid { grid-template-columns: 1fr; } .review-details { grid-template-columns: 1fr; } .preview-title { align-items: stretch; } .recipient-switcher select { flex: 1; min-width: 0; } .email-meta { padding: 12px 14px; } .email-meta>div { grid-template-columns: 58px 1fr; } .email-body { min-height: 300px; padding: 22px 18px 30px; } .wizard-footer { align-items: flex-start; flex-direction: column; } .footer-actions { width: 100%; } .footer-actions button { flex: 1; justify-content: center; } .result-metrics { grid-template-columns: repeat(2, 1fr); } .campaign-results>div { flex-direction: column; } .result-status { align-items: flex-start; max-width: none; text-align: left; } }
   @media (max-width: 430px) { .metrics-grid { grid-template-columns: 1fr; } .metric div span { white-space: normal; } .step>span:last-child { display: none; } }
 `;
