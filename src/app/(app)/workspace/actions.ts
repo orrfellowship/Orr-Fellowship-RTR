@@ -4,10 +4,11 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile, isPreviewing } from "@/lib/auth";
 import { canEditPlaybook, canEditEvents, canReassign, isAdminPlus } from "@/lib/types";
-import { queueNotification } from "@/lib/notify";
+import { queueNotification, supersedePending } from "@/lib/notify";
 import { getTierSchoolIds } from "@/lib/queries";
-import { transactionalIdempotencyKey } from "@/lib/email";
-import { queueTransactionalEmail } from "@/lib/transactional/weekly-assignment-digest";
+import { sendEmail, emailLayout } from "@/lib/email";
+
+const CLAIM_DELAY_MS = 30 * 60 * 1000;
 
 function siteUrl() {
   return process.env.NEXT_PUBLIC_SITE_URL
@@ -82,13 +83,18 @@ export async function flagDirectPlacement(candidateId: string) {
   const name = (cand as any).name as string;
   const title = `Direct Placement Potential: ${name}`;
   const body = `${profile.full_name} flagged ${name} as a Direct Placement Potential candidate.`;
+  const html = emailLayout({
+    heading: title,
+    bodyHtml: `<div>${escapeHtml(body)}</div>`,
+    ctaLabel: "Open snapshot",
+    ctaUrl: `${siteUrl()}/console/snapshot`,
+  });
+
   await Promise.all((supers ?? []).map(async (s: any) => {
+    let emailedAt: string | null = null;
     if (s.email) {
-      await queueTransactionalEmail({
-        recipientId: s.id, recipientEmail: s.email, subject: title, heading: title, body,
-        ctaLabel: "Open snapshot", ctaUrl: `${siteUrl()}/console/snapshot`,
-        idempotencyKey: transactionalIdempotencyKey("direct-placement", `${candidateId}:${s.id}`),
-      });
+      const res = await sendEmail({ to: s.email, subject: title, html });
+      if (res.ok) emailedAt = new Date().toISOString();
     }
     await db.from("notifications").insert({
       recipient_id: s.id,
@@ -98,7 +104,7 @@ export async function flagDirectPlacement(candidateId: string) {
       link: "/console/snapshot",
       candidate_id: candidateId,
       send_after: new Date().toISOString(),
-      emailed_at: new Date().toISOString(),
+      emailed_at: emailedAt,
       dedupe_key: `direct_placement:${candidateId}`,
     });
   }));
@@ -106,6 +112,10 @@ export async function flagDirectPlacement(candidateId: string) {
   revalidatePath("/workspace");
   revalidatePath("/console/snapshot");
   return { ok: true };
+}
+
+function escapeHtml(s: string): string {
+  return (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // Log an outreach note. Author must be the current user (enforced by RLS).
@@ -144,13 +154,33 @@ export async function reassignPointPerson(candidateId: string, ownerId: string |
     if (currentOwner && currentOwner !== profile.id) return { error: "Only a team lead can reassign a point person." };
   }
 
-  const { data: assigned, error } = await db.rpc("assign_candidate_point_person", {
-    p_candidate_id: candidateId, p_owner_id: ownerId, p_actor_id: profile.id,
-  });
+  const { error } = await db
+    .from("candidates")
+    .update({ point_person_id: ownerId })
+    .eq("id", candidateId);
   if (error) return { error: error.message };
-  if (!assigned) return { error: "Candidate assignment could not be updated." };
+  await queueClaimNudge(candidateId, ownerId);
   revalidatePath("/workspace");
   return { ok: true };
+}
+
+// Cancel any pending claim nudge for this candidate; if it's now owned by someone,
+// queue a fresh 30-minute "start outreach" nudge to the new point person.
+export async function queueClaimNudge(candidateId: string, ownerId: string | null) {
+  await supersedePending({ candidateId, type: "claim_followup" });
+  if (!ownerId) return;
+  const { data: cand } = await createServiceClient().from("candidates").select("name").eq("id", candidateId).maybeSingle();
+  const name = cand?.name ?? "a candidate";
+  await queueNotification({
+    recipientId: ownerId,
+    type: "claim_followup",
+    title: `You're the point person for ${name}`,
+    body: `You were assigned ${name}. Reach out and log your first outreach.`,
+    link: "/workspace",
+    candidateId,
+    sendAfter: new Date(Date.now() + CLAIM_DELAY_MS),
+    dedupeKey: `claim:${candidateId}:${ownerId}`,
+  });
 }
 
 // ---- DRAWER: fetch a candidate's outreach log (school-scoped via RLS) ----
