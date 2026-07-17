@@ -17,8 +17,8 @@ import { getCurrentProfile, isPreviewing, VIEW_AS_COOKIE } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources, canReassign } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolNameByEmail } from "@/lib/stages";
-import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
-import { queueClaimNudge } from "@/app/(app)/workspace/actions";
+import { emailConfigured, transactionalIdempotencyKey } from "@/lib/email";
+import { queueTransactionalEmail } from "@/lib/transactional/weekly-assignment-digest";
 import { evaluateCandidate } from "@/lib/triggers";
 import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
 import { findMisrouted, expectedSchoolIdForRaw } from "@/lib/candidateSchool";
@@ -61,7 +61,6 @@ export async function reassignPointPerson(candidateId: string, ownerId: string |
   const supabase = await createServerSupabase();
   const { error } = await supabase.from("candidates").update({ point_person_id: ownerId }).eq("id", candidateId);
   if (error) return { error: error.message };
-  await queueClaimNudge(candidateId, ownerId);
   revalidatePath("/console");
   revalidatePath("/workspace");
   return { ok: true };
@@ -758,15 +757,14 @@ async function sendInvite(
     { onConflict: "id" },
   );
 
-  const html = emailLayout({
-    heading: "You're invited to Orr Recruiting",
-    intro: `${full_name ? full_name + ", you've" : "You've"} been added as ${ROLE_LABEL[role] ?? "a team member"}.`,
-    bodyHtml: "Click below to set your password and get started. This link is single-use and will expire.",
-    ctaLabel: "Set your password",
-    ctaUrl: link,
+  const sent = await queueTransactionalEmail({
+    recipientId: user.id, recipientEmail: email, recipientName: full_name,
+    subject: "Your Orr Recruiting invite", heading: "You're invited to Orr Recruiting",
+    body: `${full_name ? full_name + ", you've" : "You've"} been added as ${ROLE_LABEL[role] ?? "a team member"}. Click below to set your password and get started. This link is single-use and will expire.`,
+    ctaLabel: "Set your password", ctaUrl: link,
+    idempotencyKey: transactionalIdempotencyKey("user-invite", `${user.id}:${tokenHash}`),
   });
-  const sent = await sendEmail({ to: email, subject: "Your Orr Recruiting invite", html });
-  if (!sent.ok) return { error: `User created, but the invite email failed to send (${sent.error}).` };
+  if (!sent.ok) return { error: `User created, but the invite email failed to queue (${sent.error}).` };
   return { ok: true };
 }
 
@@ -810,15 +808,12 @@ export async function sendTestNotification() {
   // next cron flush won't send a duplicate.
   let email: { ok: boolean; configured: boolean; error?: string } = { ok: false, configured: emailConfigured() };
   if (profile.email) {
-    const res = await sendEmail({
-      to: profile.email,
-      subject: "Orr Recruiting — test notification",
-      html: emailLayout({
-        heading: "Test notification",
-        bodyHtml: "<div>You triggered this from the app. If you're reading it, the in-app bell and email path are both wired up.</div>",
-        ctaLabel: "Open workspace",
-        ctaUrl: `${siteUrlForInvite()}/workspace`,
-      }),
+    const res = await queueTransactionalEmail({
+      recipientId: profile.id, recipientEmail: profile.email, recipientName: profile.full_name,
+      subject: "Orr Recruiting — test notification", heading: "Test notification",
+      body: "You triggered this from the app. If you're reading it, the in-app bell and email path are both wired up.",
+      ctaLabel: "Open workspace", ctaUrl: `${siteUrlForInvite()}/workspace`,
+      idempotencyKey: transactionalIdempotencyKey("notification-test", inserted.id),
     });
     email = { ok: res.ok, configured: emailConfigured(), error: res.ok ? undefined : res.error };
     if (res.ok) await db.from("notifications").update({ emailed_at: new Date().toISOString() }).eq("id", inserted.id);

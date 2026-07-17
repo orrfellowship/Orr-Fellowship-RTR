@@ -5,7 +5,7 @@ export async function proxy(request: NextRequest) {
   // Scheduled workers authenticate inside their route with CRON_SECRET rather
   // than a browser Supabase session. Let the request reach that authorization
   // check instead of redirecting it to /login.
-  if (request.nextUrl.pathname === "/api/cron") {
+  if (request.nextUrl.pathname === "/api/cron" || request.nextUrl.pathname.startsWith("/api/cron/")) {
     return NextResponse.next({ request });
   }
 
