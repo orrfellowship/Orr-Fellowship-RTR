@@ -208,7 +208,6 @@ export async function runWeeklyAssignmentDigest(options: { now?: Date; dryRun?: 
   const runId = crypto.randomUUID();
   const out = summary(runId, dryRun);
   const period = weeklyDigestPeriod(now);
-  if (now < FIRST_ALLOWED_DIGEST_AT) return { ...out, skipped: "before_first_allowed_send", durationMs: Date.now() - started };
   if (!dryRun && process.env.TRANSACTIONAL_SENDING_ENABLED !== "true") {
     return { ...out, skipped: "application_send_switch_disabled", durationMs: Date.now() - started };
   }

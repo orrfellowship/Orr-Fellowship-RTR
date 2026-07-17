@@ -107,6 +107,10 @@ function event(index: number): AssignmentDigestEvent {
   const transactionalCron = fs.readFileSync(path.join(root, "src/app/api/cron/transactional/route.ts"), "utf8");
   assert.match(transactionalCron, /previewAtInput && !dryRun/);
   assert.match(transactionalCron, /runWeeklyAssignmentDigest\(\{ dryRun, now: previewAt \?\? undefined \}\)/);
+
+  const transactionalWorker = fs.readFileSync(path.join(root, "src/lib/transactional/weekly-assignment-digest.ts"), "utf8");
+  assert.doesNotMatch(transactionalWorker, /before_first_allowed_send/,
+    "the digest launch date must not block queued generic notifications");
 }
 
 console.log("weekly assignment digest tests passed");
