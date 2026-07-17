@@ -7,8 +7,8 @@ import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
   reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
-  upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
-  deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
+  upsertGoal, upsertGroupGoal, updateUser, updateUserName, setUserActive, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
+  deduplicateCandidates, inviteUser, resendUserInvite, bulkInviteUsers, seedPlaybook,
   unlinkJazzCandidate, getUserSnapshot, listCandidates, getCandidateFacets, migratePlaybooksToDates,
 } from "./actions";
 import StandingsClient from "@/components/StandingsClient";
@@ -224,6 +224,9 @@ export default function ConsoleClient({
   };
   const [inviteOpen, setInviteOpen] = useState(false);
   const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
+  const [resendingInviteId, setResendingInviteId] = useState<string | null>(null);
+  const [updatingActiveId, setUpdatingActiveId] = useState<string | null>(null);
+  const [resendInviteMessage, setResendInviteMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
   const [deduping, setDeduping] = useState(false);
   const [syncingIds, setSyncingIds] = useState(false);
@@ -236,6 +239,44 @@ export default function ConsoleClient({
   const schoolPickOptions = useMemo(() => schoolSelectOptions(schools).map((o) => ({ id: o.value, name: o.label })), [schools]);
 
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
+
+  async function handleResendInvite(user: UserProfile) {
+    if (!confirm(`Send a new account setup link to ${user.full_name}? The link will let them choose a password.`)) return;
+    setResendingInviteId(user.id);
+    setResendInviteMessage(null);
+    try {
+      const result = await resendUserInvite(user.id);
+      if ("error" in result && result.error) {
+        setResendInviteMessage({ kind: "error", text: result.error });
+      } else {
+        setResendInviteMessage({ kind: "success", text: `Account setup email queued for ${user.full_name}.` });
+      }
+    } catch {
+      setResendInviteMessage({ kind: "error", text: "The account setup email could not be sent." });
+    } finally {
+      setResendingInviteId(null);
+    }
+  }
+
+  async function handleUserActiveChange(user: UserProfile) {
+    const nextActive = !user.is_active;
+    if (!confirm(`${nextActive ? "Reactivate" : "Deactivate"} ${user.full_name}? ${nextActive ? "They will be able to sign in again." : "They will lose access, but their assignments and history will be preserved."}`)) return;
+    setUpdatingActiveId(user.id);
+    setResendInviteMessage(null);
+    try {
+      const result = await setUserActive(user.id, nextActive);
+      if ("error" in result && result.error) {
+        setResendInviteMessage({ kind: "error", text: result.error });
+      } else {
+        setResendInviteMessage({ kind: "success", text: `${user.full_name} ${nextActive ? "reactivated" : "deactivated"}. Refreshing…` });
+        router.refresh();
+      }
+    } catch {
+      setResendInviteMessage({ kind: "error", text: `Could not ${nextActive ? "reactivate" : "deactivate"} this user.` });
+    } finally {
+      setUpdatingActiveId(null);
+    }
+  }
 
   // ---- JazzHR sync (super-admin only) ----
   const [syncing, setSyncing] = useState(false);
@@ -1016,12 +1057,17 @@ export default function ConsoleClient({
               </select>
               {usrFiltersActive && <button onClick={() => { setUsrSearch(""); setUsrRole("all"); setUsrSchool("all"); setUsrStatus("all"); }} style={{ border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>}
             </div>
+            {resendInviteMessage && (
+              <div style={{ marginTop: 12, background: resendInviteMessage.kind === "success" ? "#E8F5EE" : "#FBE7DF", border: `1px solid ${resendInviteMessage.kind === "success" ? C.good : C.orange}`, borderRadius: 10, padding: "10px 13px", fontSize: 13, color: resendInviteMessage.kind === "success" ? "#1B5E3F" : "#8A3A1E" }}>
+                {resendInviteMessage.kind === "success" ? "✓ " : ""}{resendInviteMessage.text}
+              </div>
+            )}
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", background: "#FAFBFE" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 190px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", background: "#FAFBFE" }}>
                 <UH k="name" label="Name" /><UH k="email" label="Email" /><UH k="role" label="Role" /><UH k="school" label="School" /><UH k="signin" label="Last sign-in" center /><div></div><div></div>
               </div>
               {visibleUsers.map((u) => (
-                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
+                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 190px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <input defaultValue={u.full_name}
                       onBlur={(e) => { const n = e.target.value.trim(); if (n && n !== u.full_name) startTransition(() => { updateUserName(u.id, n); }); }}
@@ -1048,13 +1094,24 @@ export default function ConsoleClient({
                     ? <button onClick={() => setSnapshotUser(u)} title="View their Weekly Snapshot"
                         style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy2, fontWeight: 600, fontSize: 11.5, padding: "5px 8px", borderRadius: 7, cursor: "pointer" }}>Snapshot</button>
                     : <div />}
-                  <button
-                    disabled={u.id === profile.id}
-                    onClick={() => { if (confirm(`Remove ${u.full_name}? This cannot be undone.`)) startTransition(() => { removeUser(u.id); }); }}
-                    title={u.id === profile.id ? "Cannot remove yourself" : "Remove user"}
-                    style={{ border: "none", background: "transparent", color: u.id === profile.id ? C.line : "#ef4444", fontSize: 16, cursor: u.id === profile.id ? "default" : "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    ×
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 9 }}>
+                    {superUser && (!u.last_sign_in_at || u.role === "super_admin") && (
+                      <button
+                        onClick={() => handleResendInvite(u)}
+                        disabled={resendingInviteId === u.id || !u.is_active}
+                        title={!u.is_active ? "Reactivate this user before resending" : "Send a new account setup email"}
+                        style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy2, fontWeight: 700, fontSize: 10.5, padding: "5px 7px", borderRadius: 7, cursor: resendingInviteId === u.id || !u.is_active ? "default" : "pointer", whiteSpace: "nowrap", opacity: resendingInviteId === u.id || !u.is_active ? 0.55 : 1 }}>
+                        {resendingInviteId === u.id ? "Sending…" : "Resend invite"}
+                      </button>
+                    )}
+                    <button
+                      disabled={u.id === profile.id || updatingActiveId === u.id}
+                      onClick={() => handleUserActiveChange(u)}
+                      title={u.id === profile.id ? "Cannot deactivate yourself" : u.is_active ? "Deactivate while preserving assignments and history" : "Reactivate user"}
+                      style={{ border: `1px solid ${u.is_active ? "#F0C8BE" : C.line}`, background: "#fff", color: u.id === profile.id ? C.grayMute : u.is_active ? "#A7432B" : C.good, fontWeight: 700, fontSize: 10.5, padding: "5px 7px", borderRadius: 7, cursor: u.id === profile.id || updatingActiveId === u.id ? "default" : "pointer", whiteSpace: "nowrap", opacity: u.id === profile.id || updatingActiveId === u.id ? 0.55 : 1 }}>
+                      {updatingActiveId === u.id ? "Saving…" : u.is_active ? "Deactivate" : "Reactivate"}
+                    </button>
+                  </div>
                 </div>
               ))}
               {visibleUsers.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{usrFiltersActive ? "No users match these filters." : "No users found."}</div>}

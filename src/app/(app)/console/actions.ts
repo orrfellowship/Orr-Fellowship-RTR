@@ -555,6 +555,22 @@ export async function updateUserName(user_id: string, full_name: string) {
   return { ok: true };
 }
 
+export async function setUserActive(userId: string, isActive: boolean) {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const actor = await getCurrentProfile();
+  if (!actor || !isAdminPlus(actor.role)) return { error: "Forbidden" };
+  if (userId === actor.id && !isActive) return { error: "Cannot deactivate yourself." };
+
+  const db = createServiceClient();
+  const guard = await guardSuperTarget(db, actor.role, userId);
+  if (guard) return { error: guard };
+  const { error } = await db.from("profiles").update({ is_active: isActive }).eq("id", userId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
 export async function removeUser(userId: string) {
   if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
@@ -777,6 +793,60 @@ export async function inviteUser(email: string, full_name: string, role: string,
   const res = await sendInvite(serviceDb, email.trim(), full_name, role, school_id);
   if ("error" in res) return { error: res.error };
   revalidatePath("/console");
+  return { ok: true };
+}
+
+export async function resendUserInvite(userId: string) {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const actor = await getCurrentProfile();
+  if (!actor || !isSuper(actor.role)) return { error: "Only a super admin can resend account setup emails." };
+
+  const db = createServiceClient();
+  const guard = await guardSuperTarget(db, actor.role, userId);
+  if (guard) return { error: guard };
+
+  const { data: target, error: targetError } = await db
+    .from("profiles")
+    .select("id, full_name, email, role, is_active")
+    .eq("id", userId)
+    .maybeSingle();
+  if (targetError) return { error: targetError.message };
+  if (!target?.email) return { error: "This user does not have an email address." };
+  if (!target.is_active) return { error: "Reactivate this user before resending their invite." };
+
+  const { data: authData, error: authError } = await db.auth.admin.getUserById(userId);
+  if (authError) return { error: authError.message };
+  if (target.role !== "super_admin" && authData.user.last_sign_in_at) {
+    return { error: "Resend invite is only available for users who have never signed in." };
+  }
+
+  // Existing Auth users cannot receive another `invite` link. A recovery link
+  // establishes the same secure, single-use session and lets an invited user
+  // choose their initial password without deleting or recreating their account.
+  const { data, error } = await db.auth.admin.generateLink({
+    type: "recovery",
+    email: target.email,
+    options: { redirectTo: `${siteUrlForInvite()}/auth/reset-callback` },
+  });
+  if (error) return { error: error.message };
+
+  const tokenHash = (data?.properties as any)?.hashed_token as string | undefined;
+  if (!tokenHash) return { error: "Could not generate an account setup link." };
+  const link = `${siteUrlForInvite()}/auth/confirm?token_hash=${encodeURIComponent(tokenHash)}&type=recovery`;
+  const greeting = target.full_name ? `${target.full_name}, your` : "Your";
+
+  const sent = await queueTransactionalEmail({
+    recipientId: target.id,
+    recipientEmail: target.email,
+    recipientName: target.full_name,
+    subject: "Finish setting up your Orr Recruiting account",
+    heading: "Your RTR workspace is ready",
+    body: `${greeting} Orr Recruiting workspace and candidate assignments are ready. Use the secure link below to choose your password and get back into RTR. This link is single-use and will expire.`,
+    ctaLabel: "Finish account setup",
+    ctaUrl: link,
+    idempotencyKey: transactionalIdempotencyKey("user-invite-resend", `${target.id}:${tokenHash}`),
+  });
+  if (!sent.ok) return { error: `Couldn't queue the invite email (${sent.error}).` };
   return { ok: true };
 }
 
