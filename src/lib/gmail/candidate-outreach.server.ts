@@ -222,10 +222,9 @@ async function defaultLoadUsers(ids: string[] | null): Promise<OutreachUser[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Audience loading for the composer. Fellows/leads see one audience — their own
-// assigned candidates. Admins/supers see all candidates + the whole-team
-// audience. Each recipient carries a precomputed token set so the client
-// preview matches the server's send.
+// Audience loading for the composer. Fellows/leads see their own assigned
+// candidates, while admins/supers see all candidates. Each recipient carries a
+// precomputed token set so the client preview matches the server's send.
 // ---------------------------------------------------------------------------
 
 function candidateToComposer(row: any, schools: any[], ownerNames: Map<string, string>): ComposerRecipient {
@@ -240,11 +239,6 @@ function candidateToComposer(row: any, schools: any[], ownerNames: Map<string, s
   };
 }
 
-function userToComposer(u: any): ComposerRecipient {
-  const tokens = candidateOutreachTokens({ name: u.full_name, stage: "", gradDate: "", school: "", pointPerson: "" });
-  return { id: u.id, name: (u.full_name ?? "").trim(), email: u.email, school: "", stage: "Team", classYear: "", area: u.role ?? null, doNotContact: false, tokens };
-}
-
 const CAND_FIELDS = "id, name, email, stage, grad_date, school_id, university_raw, point_person_id, do_not_contact, area_of_study";
 
 export async function loadOutreachAudiences(profile: Profile): Promise<OutreachAudience[]> {
@@ -255,16 +249,8 @@ export async function loadOutreachAudiences(profile: Profile): Promise<OutreachA
     const cands = await fetchAllRows<any>((from, to) => db.from("candidates").select(CAND_FIELDS).order("name").range(from, to));
     const ownerIds = Array.from(new Set(cands.map((c) => c.point_person_id).filter((v): v is string => !!v)));
     const ownerNames = ownerIds.length ? await defaultLoadProfileNames(ownerIds) : new Map<string, string>();
-    const [{ data: users, error: usersError }, { data: sentRows, error: sentError }] = await Promise.all([
-      db.from("profiles").select("id, full_name, email, role").eq("is_active", true).not("email", "is", null).order("full_name"),
-      db.from("outreach_sends").select("to_email").eq("status", "sent"),
-    ]);
-    if (usersError) throw new Error(`Failed to load team audience: ${usersError.message}`);
-    if (sentError) throw new Error(`Failed to load prior outreach recipients: ${sentError.message}`);
-    const team = excludePreviouslyEmailedUsers(users ?? [], (sentRows ?? []).map((row: any) => row.to_email as string));
     return [
       { key: "all", label: "All candidates", description: "Every candidate in the pipeline", endpoint: "candidates", recipients: cands.map((c) => candidateToComposer(c, schools, ownerNames)) },
-      { key: "team", label: "Whole team", description: "Fellows & staff who have not received this outreach test", endpoint: "team", recipients: team.map(userToComposer) },
     ];
   }
 

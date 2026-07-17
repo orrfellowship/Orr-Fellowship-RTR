@@ -56,9 +56,8 @@ async function ConsoleSectionData({
 }) {
   const S = section;
 
-  // Live outreach composer. Loads the viewer's audiences (all candidates + team
-  // for admins) and their Gmail connection summary; no credential fields cross
-  // this boundary.
+  // Live outreach composer. Loads the admin candidate audience and Gmail
+  // connection summary; no credential fields cross this boundary.
   if (S === "email-campaigns") {
     let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
     let statusUnavailable = false;

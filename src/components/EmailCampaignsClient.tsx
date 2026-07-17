@@ -518,7 +518,7 @@ export default function EmailCampaignsClient({
             </div>
           </div>
 
-          {audiences.length > 1 && (
+          {(audiences.length > 1 || audience?.key === "all") && (
             <div className="audience-switch">
               {audiences.map((a) => (
                 <button type="button" key={a.key} className={`aud-tab ${a.key === audienceKey ? "active" : ""}`} onClick={() => switchAudience(a.key)}>
