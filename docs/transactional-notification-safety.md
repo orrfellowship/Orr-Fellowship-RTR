@@ -95,12 +95,16 @@ database trigger and monotonic `assignment_version` instead.
 5. Confirm authenticated calls to `/api/cron?job=flush`, `?job=digest`, and
    `?job=test` return 404. Confirm `?job=outreach` and `?job=gmail-sync` retain
    their existing Gmail behavior.
-6. At or after the permitted Monday window, invoke
-   `/api/cron/transactional?dryRun=true` with the Bearer cron secret. Review only
-   recipient IDs and event/shown/hidden counts; no provider call is made.
+6. Invoke an authenticated production preview before enablement with
+   `/api/cron/transactional?dryRun=true&previewAt=2026-07-20T12:00:00.000Z`.
+   `previewAt` is accepted only for a dry run and must resolve to Monday's 08:00
+   `America/New_York` hour. Review only recipient IDs and
+   event/shown/hidden counts; no queue mutation or provider call is made.
 7. Exercise a controlled development recipient through success, retry,
    exhaustion, cap, lease recovery, and accepted/finalize-failure paths. Confirm
-   provider IDs and attempt records.
+   provider IDs and attempt records. The isolated PostgreSQL coverage is run by
+   `npm run test:transactional:integration`; it applies the migration to a
+   disposable PostgreSQL 17 container and never calls Resend or production.
 
 ## Explicit enablement after review
 

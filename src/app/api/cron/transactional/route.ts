@@ -1,5 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { runWeeklyAssignmentDigest } from "@/lib/transactional/weekly-assignment-digest";
+import {
+  parseDryRunPreviewAt,
+  runWeeklyAssignmentDigest,
+} from "@/lib/transactional/weekly-assignment-digest";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -9,9 +12,18 @@ async function run(req: NextRequest) {
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const dryRun = new URL(req.url).searchParams.get("dryRun") === "true";
+  const searchParams = new URL(req.url).searchParams;
+  const dryRun = searchParams.get("dryRun") === "true";
+  const previewAtInput = searchParams.get("previewAt");
+  if (previewAtInput && !dryRun) {
+    return NextResponse.json({ error: "previewAt requires dryRun=true" }, { status: 400 });
+  }
+  const previewAt = previewAtInput ? parseDryRunPreviewAt(previewAtInput) : null;
+  if (previewAtInput && !previewAt) {
+    return NextResponse.json({ error: "previewAt must be a Monday 08:00 America/New_York ISO timestamp" }, { status: 400 });
+  }
   try {
-    const result = await runWeeklyAssignmentDigest({ dryRun });
+    const result = await runWeeklyAssignmentDigest({ dryRun, now: previewAt ?? undefined });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     const requestId = req.headers.get("x-vercel-id") ?? crypto.randomUUID();
