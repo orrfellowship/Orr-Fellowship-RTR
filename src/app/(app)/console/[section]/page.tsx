@@ -18,7 +18,7 @@ import SectionSkeleton from "@/components/nav/SectionSkeleton";
 import EmailCampaignsClient from "@/components/EmailCampaignsClient";
 import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
-import { loadOutreachAudiences } from "@/lib/gmail/candidate-outreach.server";
+import { loadOutreachAudiences, loadRecentCampaigns } from "@/lib/gmail/candidate-outreach.server";
 
 export default async function ConsoleSection({
   params,
@@ -67,7 +67,7 @@ async function ConsoleSectionData({
     } catch {
       statusUnavailable = true;
     }
-    const audiences = await loadOutreachAudiences(profile);
+    const [audiences, recentCampaigns] = await Promise.all([loadOutreachAudiences(profile), loadRecentCampaigns(profile)]);
     return <EmailCampaignsClient
       gmailConnection={gmailConnection}
       gmailNotice={{
@@ -76,6 +76,7 @@ async function ConsoleSectionData({
       }}
       gmailCampaignSendEnabled
       audiences={audiences}
+      recentCampaigns={recentCampaigns}
     />;
   }
 

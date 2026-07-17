@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { getAuthenticatedRtrUser } from "@/lib/gmail/server";
+import { getCurrentProfile } from "@/lib/auth";
 import { maskDemoRecipient } from "@/lib/gmail/demo-campaign";
 
 export const runtime = "nodejs";
 
-// Live progress for a queued campaign — polled by the "Sending…" screen until
-// the queue drains. RLS on outreach_campaigns/outreach_sends scopes reads to
-// the campaign's own creator (admins may see all), so a fellow can only watch
-// their own campaigns.
+// Live progress for a campaign — polled by the "Sending…" screen and the
+// campaign-history "view" action. Any signed-in user may call it; RLS on
+// outreach_campaigns/outreach_sends scopes reads to the campaign's own creator
+// (admins may see all), so a fellow only ever sees their own campaigns.
 
 export const recipientStatus = (status: string): "sent" | "failed" | "excluded" | "pending" =>
   status === "sent" ? "sent"
@@ -17,8 +17,8 @@ export const recipientStatus = (status: string): "sent" | "failed" | "excluded" 
   : "pending";
 
 export async function GET(request: Request) {
-  const user = await getAuthenticatedRtrUser();
-  if (!user) return NextResponse.json({ success: false, error: { code: "forbidden", message: "Active RTR access required." } }, { status: 403, headers: { "Cache-Control": "private, no-store" } });
+  const user = await getCurrentProfile();
+  if (!user) return NextResponse.json({ success: false, error: { code: "forbidden", message: "Sign in required." } }, { status: 403, headers: { "Cache-Control": "private, no-store" } });
 
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return NextResponse.json({ success: false, error: { code: "missing_id", message: "Campaign id is required." } }, { status: 400, headers: { "Cache-Control": "private, no-store" } });

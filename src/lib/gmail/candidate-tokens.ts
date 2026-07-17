@@ -42,6 +42,13 @@ export type OutreachAudience = {
   recipients: ComposerRecipient[];
 };
 
+// A past/in-progress campaign, for the history panel you can return to after
+// clicking away. Counts are aggregated from its send rows.
+export type CampaignHistoryItem = {
+  id: string; name: string; status: string; createdAt: string; total: number;
+  sent: number; failed: number; pending: number; skipped: number; replied: number; bounced: number;
+};
+
 export function renderOutreachTemplate(template: string, tokens: OutreachTokens): string {
   return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (match, key: string) => {
     const value = (tokens as Record<string, string>)[key.toLowerCase()];

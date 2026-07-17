@@ -2,7 +2,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { getSchoolsCached, fetchAllRows } from "@/lib/queries";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 import { isAdminPlus, type AppRole, type Profile } from "@/lib/types";
-import { candidateOutreachTokens, renderOutreachTemplate, findUnsupportedOutreachVariables, type ComposerRecipient, type OutreachAudience } from "./candidate-tokens";
+import { candidateOutreachTokens, renderOutreachTemplate, findUnsupportedOutreachVariables, type ComposerRecipient, type OutreachAudience, type CampaignHistoryItem } from "./candidate-tokens";
 import { enqueueOutreachCampaign, type EnqueueRecipient, type EnqueueResult } from "./outreach-queue.server";
 import { GmailTestSendError } from "./test-send.server";
 
@@ -274,4 +274,28 @@ export async function loadOutreachAudiences(profile: Profile): Promise<OutreachA
   return [
     { key: "mine", label: "My candidates", description: "Candidates you're the point person for", endpoint: "candidates", recipients: cands.map((c) => candidateToComposer(c, schools, ownerNames)) },
   ];
+}
+
+// The viewer's recent campaigns with aggregate counts — so they can click away
+// and come back to check how a send went (sent / failed / replied / bounced).
+export async function loadRecentCampaigns(profile: Profile, limit = 25): Promise<CampaignHistoryItem[]> {
+  const db = createServiceClient();
+  const { data: camps } = await db.from("outreach_campaigns")
+    .select("id, name, status, created_at, total_count")
+    .eq("created_by", profile.id).order("created_at", { ascending: false }).limit(limit);
+  if (!camps?.length) return [];
+  const ids = camps.map((c: any) => c.id);
+  const sends = await fetchAllRows<any>((from, to) => db.from("outreach_sends").select("campaign_id, status, replied_at, bounced_at").in("campaign_id", ids).range(from, to));
+  const agg = new Map<string, { sent: number; failed: number; pending: number; skipped: number; replied: number; bounced: number }>();
+  for (const id of ids) agg.set(id, { sent: 0, failed: 0, pending: 0, skipped: 0, replied: 0, bounced: 0 });
+  for (const s of sends) {
+    const a = agg.get(s.campaign_id); if (!a) continue;
+    if (s.status === "sent") a.sent++;
+    else if (s.status === "failed") a.failed++;
+    else if (s.status === "queued") a.pending++;
+    else if (s.status === "skipped_dnc" || s.status === "skipped_quota") a.skipped++;
+    if (s.replied_at) a.replied++;
+    if (s.bounced_at) a.bounced++;
+  }
+  return camps.map((c: any) => ({ id: c.id, name: c.name, status: c.status, createdAt: c.created_at, total: c.total_count, ...agg.get(c.id)! }));
 }

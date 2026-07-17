@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronLeft,
-  ChevronRight, CircleAlert, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound,
+  ChevronRight, CircleAlert, History, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound,
 } from "lucide-react";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
 import {
@@ -12,6 +12,7 @@ import {
   sendEtaLabel,
   type ComposerRecipient,
   type OutreachAudience,
+  type CampaignHistoryItem,
 } from "@/lib/gmail/candidate-tokens";
 
 const CAMPAIGN_STEPS = ["Recipients", "Compose", "Preview", "Review"] as const;
@@ -98,11 +99,13 @@ export default function EmailCampaignsClient({
   gmailNotice = {},
   gmailCampaignSendEnabled = false,
   audiences = [],
+  recentCampaigns = [],
 }: {
   gmailConnection?: GmailConnectionStatus;
   gmailNotice?: GmailNotice;
   gmailCampaignSendEnabled?: boolean;
   audiences?: OutreachAudience[];
+  recentCampaigns?: CampaignHistoryItem[];
 }) {
   const [audienceKey, setAudienceKey] = useState<string>(audiences[0]?.key ?? "mine");
   const audience = audiences.find((a) => a.key === audienceKey) ?? audiences[0];
@@ -323,6 +326,15 @@ export default function EmailCampaignsClient({
     submission.current = null;
   }
 
+  // Re-open a campaign from history: seed progress from its saved counts, then
+  // let the poller resolve it to the live "Sending…" or final "Sent" view. This
+  // is how you click away and come back to check on a campaign later.
+  function viewCampaign(item: CampaignHistoryItem) {
+    setCampaignResult(null);
+    setProgress({ status: item.status, total: item.total, sent: item.sent, failed: item.failed, skipped: item.skipped, pending: item.pending, done: item.pending === 0, recipients: [] });
+    setCampaignId(item.id);
+  }
+
   // A finished send takes over the screen with a clear confirmation; while it's
   // still draining, the live "Sending…" screen does. Either way the wizard is
   // hidden so the sender isn't left wondering whether it worked.
@@ -468,6 +480,33 @@ export default function EmailCampaignsClient({
           );
         })}
       </div>
+
+      {step === 0 && recentCampaigns.length > 0 && (
+        <section className="history-card">
+          <div className="history-head"><History size={16} /> Your recent campaigns <small>click one to check on it</small></div>
+          <div className="history-list">
+            {recentCampaigns.map((c) => {
+              const inProgress = c.status === "queued" || c.status === "sending" || c.pending > 0;
+              return (
+                <button type="button" key={c.id} className="history-row" onClick={() => viewCampaign(c)}>
+                  <div className="history-main">
+                    <strong>{c.name}</strong>
+                    <small>{new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · {c.total} recipient{c.total === 1 ? "" : "s"}</small>
+                  </div>
+                  <div className="history-stats">
+                    {inProgress
+                      ? <StatusPill tone="warning">Sending · {c.sent}/{c.total}</StatusPill>
+                      : <StatusPill tone={c.failed > 0 ? "warning" : "good"}>{c.sent} sent{c.failed > 0 ? ` · ${c.failed} failed` : ""}</StatusPill>}
+                    {c.replied > 0 && <span className="history-tag good">📬 {c.replied}</span>}
+                    {c.bounced > 0 && <span className="history-tag warn">✉️ {c.bounced}</span>}
+                  </div>
+                  <ChevronRight size={16} />
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {step === 0 && (
         <section>
@@ -758,6 +797,15 @@ const styles = `
   .candidate-empty { padding: 26px 18px; text-align: center; color: ${C.muted}; font-size: 13px; }
   .compose-warn { display: flex; align-items: center; gap: 8px; background: #FBE7DF; border: 1px solid ${C.orange}; color: #8A3A1E; border-radius: 9px; padding: 9px 12px; font-size: 12.5px; margin-top: 4px; }
   .reconnect-hint { color: ${C.orange}; font-weight: 600; }
+  .history-card { border: 1px solid ${C.line}; border-radius: 14px; background: #fff; overflow: hidden; margin-bottom: 18px; }
+  .history-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid ${C.line}; background: ${C.canvas}; font-family: ${HEAD}; font-weight: 700; font-size: 13.5px; color: ${C.navy}; }
+  .history-head small { color: ${C.muted}; font-weight: 500; margin-left: auto; }
+  .history-list { display: flex; flex-direction: column; }
+  .history-row { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border: none; border-top: 1px solid ${C.line}; background: #fff; cursor: pointer; text-align: left; width: 100%; }
+  .history-row:first-child { border-top: none; } .history-row:hover { background: ${C.canvas}; }
+  .history-main { flex: 1; min-width: 0; } .history-main strong { display: block; color: ${C.gray}; font-size: 13.5px; } .history-main small { color: ${C.muted}; font-size: 11.5px; }
+  .history-stats { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .history-tag { font-size: 12px; font-weight: 700; } .history-tag.good { color: ${C.good}; } .history-tag.warn { color: ${C.orange}; }
   .candidate-table { display: grid; grid-template-columns: 56px 1.35fr 1.15fr .75fr 1.1fr .8fr; gap: 12px; align-items: center; min-width: 860px; }
   .candidate-table-wrap { overflow-x: auto; } .candidate-head { padding: 10px 18px; border-bottom: 1px solid ${C.line}; color: ${C.muted}; background: #FAFBFE; font: 600 10.5px ${HEAD}; text-transform: uppercase; letter-spacing: .25px; }
   .candidate-row { padding: 12px 18px; border-bottom: 1px solid ${C.line}; font-size: 12.5px; } .candidate-row:last-child { border-bottom: 0; } .candidate-row.excluded { background: #FBFBFC; color: #8E919B; }

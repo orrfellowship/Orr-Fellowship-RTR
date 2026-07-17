@@ -14,7 +14,7 @@ import SectionSkeleton from "@/components/nav/SectionSkeleton";
 import EmailCampaignsClient from "@/components/EmailCampaignsClient";
 import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
-import { loadOutreachAudiences } from "@/lib/gmail/candidate-outreach.server";
+import { loadOutreachAudiences, loadRecentCampaigns } from "@/lib/gmail/candidate-outreach.server";
 
 // slug (URL) → internal tab key used by WorkspaceClient
 const TAB: Record<string, string> = {
@@ -44,8 +44,8 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
   if (section === "email-campaigns") {
     let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
     try { gmailConnection = await getGmailConnectionStatusForUser(profile.id); } catch { /* show disconnected */ }
-    const audiences = await loadOutreachAudiences(profile);
-    return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{ result: gmailQuery.gmail, error: gmailQuery.gmail_error }} gmailCampaignSendEnabled audiences={audiences} />;
+    const [audiences, recentCampaigns] = await Promise.all([loadOutreachAudiences(profile), loadRecentCampaigns(profile)]);
+    return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{ result: gmailQuery.gmail, error: gmailQuery.gmail_error }} gmailCampaignSendEnabled audiences={audiences} recentCampaigns={recentCampaigns} />;
   }
 
   const S = TAB[section]; // internal tab key
