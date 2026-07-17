@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronLeft,
   ChevronRight, CircleAlert, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound,
@@ -38,6 +38,27 @@ const isEmailValid = (email: string | null) => !!email && /^[^@\s]+@[^@\s]+\.[^@
 const recipientEligible = (r: ComposerRecipient) => isEmailValid(r.email) && !r.doNotContact;
 const exclusionReasonFor = (r: ComposerRecipient) =>
   !r.email ? "No email on file" : !isEmailValid(r.email) ? "Malformed email" : r.doNotContact ? "Do Not Contact" : null;
+
+function renderHighlightedOutreachTemplate(template: string, tokens: ComposerRecipient["tokens"]): ReactNode[] {
+  const parts: ReactNode[] = [];
+  const tokenPattern = /\{\{\s*([a-z_]+)\s*\}\}/gi;
+  let cursor = 0;
+
+  for (const match of template.matchAll(tokenPattern)) {
+    const index = match.index ?? 0;
+    const key = match[1].toLowerCase();
+    const value = (tokens as Record<string, string>)[key];
+
+    parts.push(template.slice(cursor, index));
+    parts.push(value === undefined
+      ? match[0]
+      : <mark className="merge-value" title={match[0]} key={`${index}-${key}`}>{value}</mark>);
+    cursor = index + match[0].length;
+  }
+
+  parts.push(template.slice(cursor));
+  return parts;
+}
 
 const C = { navy: "#11123E", navy2: "#485F92", orange: "#DD5434", gray: "#303333", muted: "#6E7385", line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B", gold: "#C9A227" };
 const HEAD = "'Cabin', sans-serif";
@@ -547,16 +568,16 @@ export default function EmailCampaignsClient({
                 <div><dt>Stage</dt><dd>{currentPreview.stage || "—"}</dd></div>
                 <div><dt>Class</dt><dd>{currentPreview.classYear || "—"}</dd></div>
               </dl>
-              <div className="personalization-note"><CheckCircle2 size={16} /><span>Merge variables are rendered with this recipient&apos;s details.</span></div>
+              <div className="personalization-note"><CheckCircle2 size={16} /><span>Highlighted values change for each recipient.</span></div>
             </div>
             <article className="email-preview">
               <div className="email-toolbar"><span></span><span></span><span></span><div>Email preview</div></div>
               <div className="email-meta">
                 <div><span>From</span><strong>{gmailConnection.connectedEmail ?? "Gmail not connected"}</strong></div>
                 <div><span>To</span><strong>{fullName(currentPreview)} &lt;{currentPreview.email}&gt;</strong></div>
-                <div><span>Subject</span><strong>{renderOutreachTemplate(subject, currentPreview.tokens)}</strong></div>
+                <div><span>Subject</span><strong>{renderHighlightedOutreachTemplate(subject, currentPreview.tokens)}</strong></div>
               </div>
-              <div className="email-body">{renderOutreachTemplate(body, currentPreview.tokens)}</div>
+              <div className="email-body">{renderHighlightedOutreachTemplate(body, currentPreview.tokens)}</div>
             </article>
           </div>
         </section>
@@ -728,6 +749,7 @@ const styles = `
   .email-preview { overflow: hidden; box-shadow: 0 8px 28px rgba(17,18,62,.06); } .email-toolbar { display: flex; align-items: center; gap: 6px; background: ${C.navy}; padding: 10px 14px; } .email-toolbar>span { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.35); } .email-toolbar>div { color: rgba(255,255,255,.75); font: 500 10px ${MONO}; margin-left: 5px; }
   .email-meta { padding: 14px 22px; border-bottom: 1px solid ${C.line}; background: #FAFBFE; } .email-meta>div { display: grid; grid-template-columns: 72px 1fr; gap: 10px; padding: 3px 0; font-size: 12px; } .email-meta span { color: ${C.muted}; } .email-meta strong { color: ${C.gray}; overflow-wrap: anywhere; }
   .email-body { min-height: 340px; padding: 28px 34px 40px; color: #34343C; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .merge-value { color: inherit; background: #FFE9B8; border-radius: 4px; padding: 1px 3px; margin: 0 -1px; box-decoration-break: clone; -webkit-box-decoration-break: clone; box-shadow: inset 0 -1px 0 rgba(201,162,39,.42); }
   .review-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; } .review-main { display: grid; gap: 12px; } .review-card { padding: 18px; } .review-card>h3 { color: ${C.navy}; font-size: 15px; margin: 0 0 14px; }
   .review-details { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 22px; } .review-details>div { display: flex; flex-direction: column; gap: 3px; } .review-details .wide { grid-column: 1 / -1; } .review-details span { color: ${C.muted}; font-size: 10.5px; text-transform: uppercase; } .review-details strong { color: ${C.gray}; font-size: 13px; overflow-wrap: anywhere; }
   .recipient-list, .exclusion-list { display: grid; gap: 0; } .recipient-list>div, .exclusion-list>div { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid ${C.line}; } .recipient-list>div:first-child, .exclusion-list>div:first-child { border-top: 0; padding-top: 0; } .recipient-list>div:last-child, .exclusion-list>div:last-child { padding-bottom: 0; } .recipient-list>div>div, .exclusion-list>div>div { flex: 1; min-width: 0; } .recipient-list strong, .exclusion-list strong { display: block; color: ${C.gray}; font-size: 12.5px; } .recipient-list small, .exclusion-list small { display: block; color: ${C.muted}; font-size: 10.5px; margin-top: 2px; overflow-wrap: anywhere; } .recipient-list>div>svg { color: ${C.good}; }
