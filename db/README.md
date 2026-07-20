@@ -37,6 +37,7 @@ a fresh database, in order, before any phase.
 | 22 | `phase18.sql` | Safe weekly transactional assignment digests |
 | 23 | `phase19.sql` | Aggregate RPCs: stage counts + duplicate-group count |
 | 24 | `phase20.sql` | School matching: aliases, trigram matcher, review queue |
+| 25 | `phase21.sql` | Backfill matcher over existing candidates; tier-wide group RLS |
 
 > Files sort lexically as `0001…`, then `phase1, phase10, phase11 … phase2, phase3…`.
 > **This table is the true order — don't rely on the filename sort.**

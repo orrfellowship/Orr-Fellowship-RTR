@@ -419,14 +419,15 @@ export default function ConsoleClient({
         facetsLoaded.current = false;
       });
   }, [tab]);
-  const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
   const playbookGrouped = playbookSchoolObj?.tier === "satellite" || playbookSchoolObj?.tier === "bonus";
   const playbookLabel = schoolSelectOptions(schools).find((o) => o.value === playbookSchool)?.label ?? playbookSchoolObj?.name ?? "School";
-  // Team members of the selected school (satellite/bonus share one team across the tier).
+  // Satellite/bonus share one team AND one playbook across the tier, so both
+  // are matched tier-wide (phases may live under any of the group's rows).
   const playbookTierIds = playbookGrouped
     ? new Set(schools.filter((s) => s.tier === playbookSchoolObj?.tier).map((s) => s.id))
     : new Set([playbookSchool]);
+  const playbookPhases = phases.filter((p) => playbookTierIds.has(p.school_id));
   const playbookTeam = team.filter((m) => m.school_id && playbookTierIds.has(m.school_id));
   // Flatten this school's tasks for the person-grouped board + a lookup for updates.
   const playbookTaskMap = new Map(playbookPhases.flatMap((p) => p.playbook_tasks.map((t) => [t.id, { t, phaseId: p.id }])));
