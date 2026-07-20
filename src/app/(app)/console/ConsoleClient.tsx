@@ -6,7 +6,7 @@ import type { Profile, Resource } from "@/lib/types";
 import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
-  reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
+  reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase, type SchoolMatchReviewRow,
   upsertGoal, upsertGroupGoal, updateUser, updateUserName, setUserActive, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
   deduplicateCandidates, inviteUser, resendUserInvite, bulkInviteUsers, seedPlaybook,
   unlinkJazzCandidate, getUserSnapshot, listCandidates, getCandidateFacets, migratePlaybooksToDates,
@@ -30,6 +30,7 @@ const ResourcesPanel = dynamic(() => import("@/components/ResourcesPanel"));
 const MatchReview = dynamic(() => import("@/components/MatchReview"));
 const DuplicateReview = dynamic(() => import("@/components/DuplicateReview"));
 const RoutingReview = dynamic(() => import("@/components/RoutingReview"));
+const SchoolMatchReview = dynamic(() => import("@/components/SchoolMatchReview"));
 const ResumeModal = dynamic(() => import("@/components/ResumeModal"));
 const BulkImportModal = dynamic(() => import("@/components/BulkImportModal"));
 const ImportInfoModal = dynamic(() => import("@/components/ImportInfoModal"));
@@ -146,7 +147,7 @@ function countStages(rows: StageCount[], set: Set<string>): number {
 }
 
 export default function ConsoleClient({
-  profile, initialSection, schools, candidates, stageCounts = [], team, goals, phases, users, reviews, resources,
+  profile, initialSection, schools, candidates, stageCounts = [], schoolReviews = [], team, goals, phases, users, reviews, resources,
   events = [], people = [], budgetEntries = [], budgetGuidance = [],
   candidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], facetUnrouted = 0, slimCandidates = [],
 }: {
@@ -154,6 +155,8 @@ export default function ConsoleClient({
   // Aggregate sections (overview/standings/schools) read weighted counts — one
   // row per school × raw university × stage — instead of full candidate rows.
   stageCounts?: StageCount[];
+  // Pending phase20 school-match reviews (applicants section).
+  schoolReviews?: SchoolMatchReviewRow[];
   goals: Goal[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
   events?: CalEvent[]; people?: { id: string; full_name: string }[]; budgetEntries?: BudgetEntry[]; budgetGuidance?: Guidance[];
@@ -220,6 +223,7 @@ export default function ConsoleClient({
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dupOpen, setDupOpen] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
+  const [smrOpen, setSmrOpen] = useState(false);
 
   // Snapshot task links land on /console/applicants?review=duplicates|routing —
   // open the matching panel so the admin isn't hunting for it.
@@ -227,6 +231,7 @@ export default function ConsoleClient({
     const want = new URLSearchParams(window.location.search).get("review");
     if (want === "duplicates") setDupOpen(true);
     if (want === "routing") setRoutingOpen(true);
+    if (want === "school-match") setSmrOpen(true);
   }, []);
 
   // The review panels read the client-side slim snapshot, which router.refresh()
@@ -628,6 +633,25 @@ export default function ConsoleClient({
                 {reviewOpen && (
                   <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
                     <MatchReview reviews={reviews} candidates={slimCandidateRows} schools={schools} />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* School match review — intake text the matcher couldn't place */}
+            {adminPlus && schoolReviews.length > 0 && (
+              <div style={{ marginTop: 12, border: `1px solid ${C.gold}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
+                <button onClick={() => setSmrOpen((v) => !v)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: `${C.gold}14`, cursor: "pointer", textAlign: "left" }}>
+                  <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
+                    School match review · <span style={{ color: C.orange }}>{schoolReviews.length} unplaced</span>
+                  </span>
+                  <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>Typed school names that need a decision</span>
+                  <span style={{ color: C.grayMute, fontSize: 15 }}>{smrOpen ? "▲" : "▼"}</span>
+                </button>
+                {smrOpen && (
+                  <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
+                    <SchoolMatchReview reviews={schoolReviews} schools={schools} />
                   </div>
                 )}
               </div>
@@ -1660,6 +1684,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
   const [linkedin, setLinkedin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [needsReview, setNeedsReview] = useState(false);
 
   const options = schoolSelectOptions(schools);
   const selectedSchool = schools.find((s) => s.id === schoolValue) ?? null;
@@ -1689,7 +1714,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
         stage: null, gpa: null, area_of_study: null,
       }).then((r) => {
         if ("error" in r && r.error) setError(r.error);
-        else { setSaved(true); setTimeout(onClose, 800); }
+        else { setSaved(true); setNeedsReview("needsReview" in r && !!r.needsReview); setTimeout(onClose, ("needsReview" in r && r.needsReview) ? 1600 : 800); }
       });
     });
   };
@@ -1740,7 +1765,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
           Stage, GPA, and major are added automatically once the candidate applies through JazzHR.
         </div>
         {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E", marginBottom: 14 }}>{error}</div>}
-        {saved && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>✓ Candidate added!</div>}
+        {saved && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>✓ Candidate added!{needsReview ? " The typed school couldn't be matched — it's queued in School Match Review." : ""}</div>}
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>Cancel</button>
           <button onClick={submit} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: "pointer" }}>Add Candidate</button>

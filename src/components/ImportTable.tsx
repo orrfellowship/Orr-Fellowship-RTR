@@ -159,20 +159,20 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
   };
   const dupeCount = validRows.filter(isDupeRow).length;
   const unmatchedPeople = showPP ? validRows.filter((r) => r.point_person.trim() && !resolvePerson(r.point_person)).length : 0;
-  const resolved = validRows.map((r) => {
-    const { school_id, university_raw } = resolveCandidateSchool(r.school, schools);
-    return {
-      name: r.name.trim(),
-      email: r.email.trim() || null,
-      school_id,
-      university_raw,
-      stage: null,
-      gpa: null,
-      area_of_study: null,
-      linkedin: r.linkedin.trim() || null,
-      point_person_id: showPP ? resolvePerson(r.point_person) || null : null,
-    };
-  });
+  // School text goes to the server RAW — the phase20 matcher resolves it there
+  // (alias/fuzzy within the entrant's group). Anything it can't place lands in
+  // the School Match Review queue instead of silently defaulting to Bonus.
+  const resolved = validRows.map((r) => ({
+    name: r.name.trim(),
+    email: r.email.trim() || null,
+    school_id: null,
+    school_raw: r.school.trim() || null,
+    stage: null,
+    gpa: null,
+    area_of_study: null,
+    linkedin: r.linkedin.trim() || null,
+    point_person_id: showPP ? resolvePerson(r.point_person) || null : null,
+  }));
 
   const doImport = () => {
     if (resolved.length === 0) { setError("No valid rows to import."); return; }
@@ -181,7 +181,9 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
       bulkImportCandidates(resolved).then((r) => {
         if ("error" in r && r.error) setError(r.error);
         else {
-          setResult(`✓ Imported ${"count" in r ? r.count : resolved.length} candidate${resolved.length !== 1 ? "s" : ""}.`);
+          const count = "count" in r ? r.count : resolved.length;
+          const review = "reviewCount" in r ? (r.reviewCount ?? 0) : 0;
+          setResult(`✓ Imported ${count} candidate${count !== 1 ? "s" : ""}.${review > 0 ? ` ${review} school name${review !== 1 ? "s" : ""} couldn't be matched — an admin will place them from School Match Review.` : ""}`);
           router.refresh();
         }
       });

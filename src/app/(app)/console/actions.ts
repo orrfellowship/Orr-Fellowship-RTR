@@ -21,8 +21,9 @@ import { emailConfigured, transactionalIdempotencyKey } from "@/lib/email";
 import { queueTransactionalEmail } from "@/lib/transactional/weekly-assignment-digest";
 import { evaluateCandidate } from "@/lib/triggers";
 import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
-import { findMisrouted, expectedSchoolIdForRaw } from "@/lib/candidateSchool";
+import { findMisrouted, expectedSchoolIdForRaw, representativeSchoolId } from "@/lib/candidateSchool";
 import { planDuplicateDeletions } from "@/lib/duplicates";
+import { entrantTierFor, groupPhraseTier, matchSchool, reviewFieldsFor, type SchoolMatch } from "@/lib/schoolMatch";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
   const supabase = await createServerSupabase();
@@ -150,19 +151,46 @@ export async function addCandidate(data: {
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may add
   const db = createServiceClient();
-  // No school selected? Route off a school email address if we recognize it.
-  const routed = await routeSchoolByEmail(db, data.school_id, data.email);
-  const school_id = data.school_id || routed.school_id;
-  const university_raw = data.university_raw ?? routed.university_raw;
+
+  let school_id = data.school_id || null;
+  let university_raw = data.university_raw ?? null;
+  let review: { raw: string; tier: string | null; match: SchoolMatch } | null = null;
+
+  const rawText = (data.university_raw ?? "").trim();
+  if (school_id && rawText) {
+    // Group pick ("Satellite School"/"Bonus School") + a typed specific school:
+    // resolve the text to the precise campus row within that group. If it
+    // can't be matched, keep the group placement but flag it for review —
+    // never silently leave "IU Kokomo" as free text on a representative row.
+    const { data: picked } = await db.from("schools").select("tier").eq("id", school_id).maybeSingle();
+    const tier = ((picked as any)?.tier ?? null) as string | null;
+    if (tier === "satellite" || tier === "bonus") {
+      const m = await matchSchool(rawText, tier);
+      if (m.matched_school_id) school_id = m.matched_school_id;
+      else review = { raw: rawText, tier, match: m };
+    }
+  } else if (!school_id) {
+    // No school selected? Route off a school email address if we recognize it.
+    const routed = await routeSchoolByEmail(db, null, data.email);
+    school_id = routed.school_id;
+    university_raw = university_raw ?? routed.university_raw;
+  }
+
   // Only team leads / admins may assign a point person; ignore it from anyone else.
   const point_person_id = canReassign(profile.role) ? (data.point_person_id ?? null) : null;
   // Manually-entered candidates start in the "sourced" phase (stage key "new");
   // JazzHR advances them from there. Respect an explicit stage if one is given.
-  const { error } = await db.from("candidates").insert({ ...data, school_id, university_raw, point_person_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
+  const { data: inserted, error } = await db.from("candidates")
+    .insert({ ...data, school_id, university_raw, point_person_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id })
+    .select("id")
+    .single();
   if (error) return { error: error.message };
+  if (review && inserted) {
+    await db.from("school_match_review").insert({ candidate_id: (inserted as any).id, ...reviewFieldsFor(review.raw, review.tier, review.match) });
+  }
   revalidatePath("/console");
   revalidatePath("/workspace");
-  return { ok: true };
+  return { ok: true, needsReview: !!review };
 }
 
 export async function updateCandidate(id: string, fields: {
@@ -298,12 +326,12 @@ export async function bulkDeleteCandidates(ids: string[]): Promise<{ ok?: true; 
 }
 
 export async function bulkImportCandidates(
-  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null }[]
+  rows: { name: string; email: string | null; school_id: string | null; school_raw?: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null }[]
 ) {
   if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may import
-  if (rows.length === 0) return { ok: true, count: 0 };
+  if (rows.length === 0) return { ok: true, count: 0, reviewCount: 0 };
   const db = createServiceClient();
 
   // Build a name→id map ONCE so email-based routing needs no per-row query. The
@@ -322,15 +350,43 @@ export async function bulkImportCandidates(
     return { school_id: resolved, university_raw: target?.tier === "core" ? null : name };
   };
 
+  // Free-text school columns run through the phase20 matcher, scoped to the
+  // entrant's group. Each distinct string is matched once. Records the matcher
+  // can't place are inserted WITHOUT a school (never a silent Bonus default)
+  // and queued in school_match_review.
+  const entrantTier = await entrantTierFor(profile);
+  const rawValues = [...new Set(rows.map((r) => (r.school_raw ?? "").trim()).filter((v) => v && !groupPhraseTier(v)))];
+  const matchByRaw = new Map<string, SchoolMatch>();
+  await Promise.all(rawValues.map(async (raw) => { matchByRaw.set(raw, await matchSchool(raw, entrantTier)); }));
+
   // Only team leads / admins may assign point people on import.
   const allowPP = canReassign(profile.role);
-  const prepared = rows.map((r) => {
-    const routed = r.school_id ? { school_id: r.school_id, university_raw: null } : routeByEmail(r.email);
+  const reviewByIndex = new Map<number, { raw: string; match: SchoolMatch }>();
+  const prepared = rows.map((r, i) => {
+    const { school_raw, ...rest } = r;
+    const rawText = (school_raw ?? "").trim();
+    let school_id = r.school_id || null;
+    let university_raw = r.university_raw ?? null;
+    if (!school_id && rawText) {
+      const groupTier = groupPhraseTier(rawText);
+      if (groupTier) {
+        // A deliberate group pick ("Satellite School") → the tier's representative row.
+        school_id = representativeSchoolId(schools as any, groupTier);
+      } else {
+        const m = matchByRaw.get(rawText)!;
+        school_id = m.matched_school_id;
+        university_raw = rawText;
+        if (!m.matched_school_id) reviewByIndex.set(i, { raw: rawText, match: m });
+      }
+    } else if (!school_id) {
+      const routed = routeByEmail(r.email);
+      school_id = routed.school_id;
+      university_raw = university_raw ?? routed.university_raw;
+    }
     return {
-      ...r,
-      // No school chosen for this row? Route off a recognized school email.
-      school_id: r.school_id || routed.school_id,
-      university_raw: r.university_raw ?? routed.university_raw,
+      ...rest,
+      school_id,
+      university_raw,
       point_person_id: allowPP ? (r.point_person_id ?? null) : null,
       stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id,
     };
@@ -341,8 +397,10 @@ export async function bulkImportCandidates(
   // report how many rows already landed rather than silently losing the rest.
   const CHUNK = 500;
   let inserted = 0;
+  const reviewRows: any[] = [];
   for (let i = 0; i < prepared.length; i += CHUNK) {
-    const { error } = await db.from("candidates").insert(prepared.slice(i, i + CHUNK));
+    const chunk = prepared.slice(i, i + CHUNK);
+    const { data: ins, error } = await db.from("candidates").insert(chunk).select("id");
     if (error) {
       revalidatePath("/console");
       revalidatePath("/workspace");
@@ -350,11 +408,62 @@ export async function bulkImportCandidates(
         ? { error: `Imported ${inserted} of ${prepared.length} before an error: ${error.message}` }
         : { error: error.message };
     }
-    inserted += Math.min(CHUNK, prepared.length - i);
+    // Returned rows come back in insertion order — map them to flagged inputs.
+    (ins ?? []).forEach((row: any, j: number) => {
+      const need = reviewByIndex.get(i + j);
+      if (need) reviewRows.push({ candidate_id: row.id, ...reviewFieldsFor(need.raw, entrantTier, need.match) });
+    });
+    inserted += chunk.length;
   }
+  if (reviewRows.length) await db.from("school_match_review").insert(reviewRows);
   revalidatePath("/console");
   revalidatePath("/workspace");
-  return { ok: true, count: inserted };
+  return { ok: true, count: inserted, reviewCount: reviewRows.length };
+}
+
+// ---- School match review queue (phase20) -----------------------------------
+export type SchoolMatchReviewRow = import("@/lib/schoolMatch").PendingSchoolReview;
+
+// Assign the chosen school and remember the raw input as an alias so the same
+// text exact-matches forever after. Cross-group picks are allowed — that's the
+// override for tripwire cases.
+export async function resolveSchoolMatch(reviewId: string, schoolId: string) {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { data: review } = await db.from("school_match_review")
+    .select("id, candidate_id, raw_input, status").eq("id", reviewId).maybeSingle();
+  if (!review || (review as any).status !== "pending") return { error: "Review not found or already handled." };
+
+  const { error: candErr } = await db.from("candidates").update({ school_id: schoolId }).eq("id", (review as any).candidate_id);
+  if (candErr) return { error: candErr.message };
+  // First claim on a normalized alias wins; a conflict just means the text
+  // already exact-matches something, so there's nothing to learn.
+  await db.from("school_aliases").upsert(
+    { school_id: schoolId, alias: (review as any).raw_input, alias_norm: "" }, // alias_norm is set by trigger
+    { onConflict: "alias_norm", ignoreDuplicates: true },
+  );
+  const { error: revErr } = await db.from("school_match_review")
+    .update({ status: "resolved", resolved_school_id: schoolId, resolved_by: profile.id, resolved_at: new Date().toISOString() })
+    .eq("id", reviewId);
+  if (revErr) return { error: revErr.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// Leave the candidate unassigned (e.g. junk input) — no alias is learned.
+export async function dismissSchoolMatch(reviewId: string) {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const { error } = await createServiceClient().from("school_match_review")
+    .update({ status: "dismissed", resolved_by: profile.id, resolved_at: new Date().toISOString() })
+    .eq("id", reviewId).eq("status", "pending");
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
 }
 
 // Re-route candidates whose stored school no longer matches where their raw

@@ -18,6 +18,7 @@ import EmailCampaignsClient from "@/components/EmailCampaignsClient";
 import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
 import { loadOutreachAudiences, loadRecentCampaigns } from "@/lib/gmail/candidate-outreach.server";
+import { listPendingSchoolReviews } from "@/lib/schoolMatch";
 
 export default async function ConsoleSection({
   params,
@@ -166,6 +167,7 @@ async function ConsoleSectionData({
     phases: S === "playbook",
     resources: S === "resources",
     reviews: ["applicants", "sync", "review"].includes(S),
+    schoolReviews: S === "applicants",
     users: S === "users" || S === "schools", // schools tab needs profiles for per-school teammate counts
     favs: S === "applicants",
     calendar: S === "calendar",
@@ -181,10 +183,11 @@ async function ConsoleSectionData({
   const paginatedList = S === "applicants";
 
   // Reference tables (schools/goals/resources) come from the shared Data Cache.
-  const [schools, candidates, stageCounts, favs, team, goals, phases, resources, reviewData, usersData, people, budgetEntries, budgetGuidance] = await Promise.all([
+  const [schools, candidates, stageCounts, schoolReviews, favs, team, goals, phases, resources, reviewData, usersData, people, budgetEntries, budgetGuidance] = await Promise.all([
     getSchoolsCached(),
     need.candidates && !paginatedList ? fetchAllRows((from, to) => supabase.from("candidates").select(candSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
     need.stageCounts ? getCandidateStageCounts() : Promise.resolve([] as StageCountRow[]),
+    need.schoolReviews ? listPendingSchoolReviews() : Promise.resolve([]),
     need.favs ? supabase.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.team ? supabase.from("profiles").select("id, full_name, school_id, role").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.goals ? getGoalsCached() : Promise.resolve([] as any[]),
@@ -261,6 +264,7 @@ async function ConsoleSectionData({
       schools={schools ?? []}
       candidates={enriched}
       stageCounts={countsForClient}
+      schoolReviews={schoolReviews}
       candidatesTotal={paginatedList ? candPage.total : undefined}
       candidatesPageSize={PAGE_SIZE}
       facetMajors={facets.majors}
