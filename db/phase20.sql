@@ -291,6 +291,7 @@ with pairs(school_name, alias) as (values
   ('Indiana State', 'Indiana St'),
   ('Butler', 'Butler University'),
   ('DePauw', 'DePauw University'),
+  ('DePauw', 'DePuaw'),
   ('Marian', 'Marian University'),
   ('Taylor', 'Taylor University'),
   ('Wabash', 'Wabash College'),
