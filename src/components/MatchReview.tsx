@@ -10,7 +10,7 @@ const C = {
   navy: "#11123E", navy2: "#485F92", orange: "#DD5434", gold: "#C9A227",
   gray: "#303333", grayMute: "#6E7385", line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 type Review = { id: string; jazz_snapshot: any; candidate_id: string | null; reason: string | null };
 // Only the fields the side-by-side comparison reads (matched against a JazzHR

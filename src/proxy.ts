@@ -19,7 +19,18 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next({ request });
   }
 
-  const response = NextResponse.next({ request });
+  // Bare section indexes: send the browser straight to the default section
+  // from the proxy. Letting the page do it means rendering the whole layout
+  // (auth + profile + school lookups) only to throw the work away with a
+  // page-level redirect().
+  const SECTION_INDEX: Record<string, string> = {
+    "/console": "/console/overview",
+    "/workspace": "/workspace/snapshot",
+  };
+  const indexTarget = SECTION_INDEX[request.nextUrl.pathname];
+  const response = indexTarget
+    ? NextResponse.redirect(new URL(indexTarget, request.url))
+    : NextResponse.next({ request });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

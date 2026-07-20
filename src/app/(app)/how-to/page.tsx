@@ -6,7 +6,7 @@ const C = {
   navy: "#11123E", navy2: "#485F92", canvas: "#F4F6FB",
   line: "#E1E5EE", gray: "#33384D", grayMute: "#6E7385", orange: "#E8743B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (

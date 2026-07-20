@@ -34,6 +34,8 @@ a fresh database, in order, before any phase.
 | 19 | `phase15.sql` | Per-user Gmail OAuth connection (`gmail_connections`) |
 | 20 | `phase16.sql` | Outreach campaigns (durable send queue) |
 | 21 | `phase17.sql` | Reply & bounce tracking scheduler |
+| 22 | `phase18.sql` | Safe weekly transactional assignment digests |
+| 23 | `phase19.sql` | Aggregate RPCs: stage counts + duplicate-group count |
 
 > Files sort lexically as `0001…`, then `phase1, phase10, phase11 … phase2, phase3…`.
 > **This table is the true order — don't rely on the filename sort.**

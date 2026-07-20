@@ -6,7 +6,7 @@ import ImportTable from "./ImportTable";
 // /import page, just presented as an overlay for in-context imports.
 
 const C = { navy: "#11123E", grayMute: "#6E7385" };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 export default function BulkImportModal({ schools, team = [], canAssignPointPerson = false, existingEmails, existingNames, onClose }: {
   schools: { id: string; name: string; tier?: string | null }[];

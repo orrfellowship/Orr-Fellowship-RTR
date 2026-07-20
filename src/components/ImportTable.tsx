@@ -15,7 +15,7 @@ const C = {
   line: "#E1E5EE", gray: "#33384D", grayMute: "#6E7385",
   orange: "#E8743B", good: "#2E9E6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 const BONUS_SCHOOL_SUGGESTIONS = [
   "University of Indianapolis", "University of Cincinnati", "Xavier", "Trine",
   "Dayton", "Valpo", "Hanover", "Franklin College", "Anderson", "Denison",

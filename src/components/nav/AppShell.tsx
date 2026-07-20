@@ -14,7 +14,7 @@ import NotificationBell, { type AppNotification } from "@/components/Notificatio
 import HelpButton from "@/components/HelpButton";
 
 const C = { bg: "#F7F8FB", card: "#ffffff", cardLine: "#eceaf2", ink: "#211d44", inkLo: "#938fad", inkMid: "#5c5878" };
-const FM = "'JetBrains Mono', ui-monospace, monospace";
+const FM = "var(--font-mono)";
 
 const STORAGE_KEY = "orr-nav-collapsed";
 
@@ -87,7 +87,7 @@ export default function AppShell({
   const activeHref = activeItem?.href ?? pathname;
 
   return (
-    <div style={{ ["--accent" as any]: accent, display: "flex", minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Open Sans', sans-serif" }}>
+    <div style={{ ["--accent" as any]: accent, display: "flex", minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "var(--font-body)" }}>
       <NavStyles />
       <Sidebar
         groups={groups} accent={accent} brand={brand} user={user} badges={shellBadges} thisWeek={shellThisWeek}

@@ -11,20 +11,29 @@ import {
   deduplicateCandidates, inviteUser, resendUserInvite, bulkInviteUsers, seedPlaybook,
   unlinkJazzCandidate, getUserSnapshot, listCandidates, getCandidateFacets, migratePlaybooksToDates,
 } from "./actions";
-import StandingsClient from "@/components/StandingsClient";
-import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
-import BudgetPanel, { BudgetAnalysis, type BudgetEntry, type Guidance } from "@/components/BudgetPanel";
+import dynamic from "next/dynamic";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
-import ResumeModal from "@/components/ResumeModal";
-import BulkImportModal from "@/components/BulkImportModal";
-import ImportInfoModal from "@/components/ImportInfoModal";
-import BulkDeleteCandidatesModal from "@/components/BulkDeleteCandidatesModal";
-import PlaybookBoard from "@/components/PlaybookBoard";
-import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
-import MatchReview from "@/components/MatchReview";
-import DuplicateReview, { findDuplicateGroups, nameSchoolKey } from "@/components/DuplicateReview";
-import RoutingReview from "@/components/RoutingReview";
+import type { CalEvent } from "@/components/RecruitingCalendar";
+import type { BudgetEntry, Guidance } from "@/components/BudgetPanel";
+import { findDuplicateGroups, nameSchoolKey } from "@/lib/duplicates";
+
+// Per-section code splitting: each /console/<section> route renders exactly one
+// of these, so they load as their own chunks instead of shipping the calendar,
+// budget, playbook and import code with every console page.
+const StandingsClient = dynamic(() => import("@/components/StandingsClient"));
+const RecruitingCalendar = dynamic(() => import("@/components/RecruitingCalendar"));
+const BudgetPanel = dynamic(() => import("@/components/BudgetPanel"));
+const BudgetAnalysis = dynamic(() => import("@/components/BudgetPanel").then((m) => m.BudgetAnalysis));
+const PlaybookBoard = dynamic(() => import("@/components/PlaybookBoard"));
+const ResourcesPanel = dynamic(() => import("@/components/ResourcesPanel"));
+const MatchReview = dynamic(() => import("@/components/MatchReview"));
+const DuplicateReview = dynamic(() => import("@/components/DuplicateReview"));
+const RoutingReview = dynamic(() => import("@/components/RoutingReview"));
+const ResumeModal = dynamic(() => import("@/components/ResumeModal"));
+const BulkImportModal = dynamic(() => import("@/components/BulkImportModal"));
+const ImportInfoModal = dynamic(() => import("@/components/ImportInfoModal"));
+const BulkDeleteCandidatesModal = dynamic(() => import("@/components/BulkDeleteCandidatesModal"));
 import { phaseOf, routeToSchoolNameByEmail } from "@/lib/stages";
 import { candidateSchoolDisplay, candidateSchoolKey, findMisrouted } from "@/lib/candidateSchool";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -34,7 +43,7 @@ const C = {
   orange: "#DD5434", blue: "#8AB9E2", gray: "#303333", grayMute: "#6E7385",
   line: "#E4E7EE", canvas: "#F7F8FB", gold: "#C9A227", good: "#2F8F6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 // Thousands-separated integer (e.g. 1,200).
 const nf = (n: number) => Number(n || 0).toLocaleString("en-US");
 
@@ -129,12 +138,22 @@ function overviewSchoolKey(candidate: Pick<Cand, "school_id" | "university_raw">
   return candidateSchoolKey(candidate, schools);
 }
 
+// Weighted stage-count row (school × raw university × stage, n candidates).
+type StageCount = { school_id: string | null; university_raw: string | null; stage: string | null; n: number };
+// Total candidates in `rows` whose stage is in `set`.
+function countStages(rows: StageCount[], set: Set<string>): number {
+  return rows.reduce((s, r) => s + (r.stage && set.has(r.stage) ? r.n : 0), 0);
+}
+
 export default function ConsoleClient({
-  profile, initialSection, schools, candidates, team, goals, phases, users, reviews, resources,
+  profile, initialSection, schools, candidates, stageCounts = [], team, goals, phases, users, reviews, resources,
   events = [], people = [], budgetEntries = [], budgetGuidance = [],
   candidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], facetUnrouted = 0, slimCandidates = [],
 }: {
   profile: Profile; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
+  // Aggregate sections (overview/standings/schools) read weighted counts — one
+  // row per school × raw university × stage — instead of full candidate rows.
+  stageCounts?: StageCount[];
   goals: Goal[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
   events?: CalEvent[]; people?: { id: string; full_name: string }[]; budgetEntries?: BudgetEntry[]; budgetGuidance?: Guidance[];
@@ -348,12 +367,12 @@ export default function ConsoleClient({
 
   // scoreboard totals
   const board = useMemo(() => {
-    const cands = candidates.filter((c) => matchesSchoolFilter(scope, c.school_id, schools));
+    const rows = stageCounts.filter((r) => matchesSchoolFilter(scope, r.school_id, schools));
     return [
-      { label: "Sourced", actual: cands.filter((c) => c.stage && SOURCED.has(c.stage)).length, goal: sumGoalsForScope(scope, goals, schools, "goal_sourced") },
-      { label: "Applied", actual: cands.filter((c) => c.stage && APPLIED.has(c.stage)).length, goal: sumGoalsForScope(scope, goals, schools, "goal_applied") },
+      { label: "Sourced", actual: countStages(rows, SOURCED), goal: sumGoalsForScope(scope, goals, schools, "goal_sourced") },
+      { label: "Applied", actual: countStages(rows, APPLIED), goal: sumGoalsForScope(scope, goals, schools, "goal_applied") },
     ];
-  }, [scope, candidates, goals, schools]);
+  }, [scope, stageCounts, goals, schools]);
 
   const open = appRows.find((c) => c.id === openId) ?? candidates.find((c) => c.id === openId) ?? null;
 
@@ -491,11 +510,11 @@ export default function ConsoleClient({
               {(() => {
                 const cnt = (keys: string[]) => {
                   const keySet = new Set(keys);
-                  const sc = candidates.filter((c) => {
-                    const key = overviewSchoolKey(c, schools);
+                  const rows = stageCounts.filter((r) => {
+                    const key = overviewSchoolKey(r, schools);
                     return !!key && keySet.has(key);
                   });
-                  return { sourced: sc.filter((c) => c.stage && SOURCED.has(c.stage)).length, applied: sc.filter((c) => c.stage && APPLIED.has(c.stage)).length };
+                  return { sourced: countStages(rows, SOURCED), applied: countStages(rows, APPLIED) };
                 };
                 const row = (key: string, name: string, sub: string, ids: string[], accent: string, opts: { logo?: string | null; indent?: boolean; expandKey?: string } = {}) => {
                   const c2 = cnt(ids);
@@ -518,7 +537,7 @@ export default function ConsoleClient({
                 const bon = schools.filter((s) => s.tier === "bonus").sort(byName);
                 const rawRows = (tier: string) => {
                   const byKey = new Map<string, string>();
-                  for (const c of candidates) {
+                  for (const c of stageCounts) {
                     const key = overviewSchoolKey(c, schools);
                     if (!key?.startsWith(`raw:${tier}:`)) continue;
                     byKey.set(key, candidateSchoolDisplay(c, schools).specificLabel ?? candidateSchoolDisplay(c, schools).label);
@@ -752,7 +771,7 @@ export default function ConsoleClient({
         {tab === "standings" && (
           <StandingsClient
             schools={schools}
-            candidates={candidates.map((c) => ({ id: c.id, school_id: c.school_id, stage: c.stage }))}
+            candidates={stageCounts.map((r) => ({ school_id: r.school_id, stage: r.stage, n: r.n }))}
             goals={goals}
             mySchoolId={null}
           />
@@ -867,12 +886,12 @@ export default function ConsoleClient({
 
           const renderSchoolCard = (s: typeof schools[0], showGoalForm = true) => {
             const accent = s.color_primary ?? C.navy2;
-            const sc = candidates.filter((c) => c.school_id === s.id);
+            const sc = stageCounts.filter((r) => r.school_id === s.id);
             const teamSize = users.filter((u) => u.school_id === s.id).length;
             const g = goals.find((g) => g.school_id === s.id);
             const draft = goalDraft(s.id);
-            const sourced = sc.filter((c) => SOURCED.has(c.stage ?? "")).length;
-            const applied = sc.filter((c) => APPLIED.has(c.stage ?? "")).length;
+            const sourced = countStages(sc, SOURCED);
+            const applied = countStages(sc, APPLIED);
             return (
               <div key={s.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: "18px 22px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: showGoalForm ? 14 : 0 }}>
@@ -931,9 +950,9 @@ export default function ConsoleClient({
               {schoolsByTier.map(({ tier, schools: tierSchools }) => {
                 const isGrouped = tier === "satellite" || tier === "bonus";
                 const tierSchoolIds = tierSchools.map((s) => s.id);
-                const groupCands = tierSchools.flatMap((s) => candidates.filter((c) => c.school_id === s.id));
-                const groupSourced = groupCands.filter((c) => SOURCED.has(c.stage ?? "")).length;
-                const groupApplied = groupCands.filter((c) => APPLIED.has(c.stage ?? "")).length;
+                const groupRows = stageCounts.filter((r) => r.school_id && tierSchoolIds.includes(r.school_id));
+                const groupSourced = countStages(groupRows, SOURCED);
+                const groupApplied = countStages(groupRows, APPLIED);
                 // All schools in a group share the same goal value — read from any one
                 const repGoal = goals.find((g) => tierSchoolIds.includes(g.school_id));
                 const groupGoalActual = { sourced: repGoal?.goal_sourced ?? 0, applied: repGoal?.goal_applied ?? 0 };

@@ -61,8 +61,8 @@ function renderHighlightedOutreachTemplate(template: string, tokens: ComposerRec
 }
 
 const C = { navy: "#11123E", navy2: "#485F92", orange: "#DD5434", gray: "#303333", muted: "#6E7385", line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B", gold: "#C9A227" };
-const HEAD = "'Cabin', sans-serif";
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
+const HEAD = "var(--font-head)";
+const MONO = "var(--font-mono)";
 
 type GmailNotice = { result?: string; error?: string };
 
@@ -772,7 +772,7 @@ const styles = `
   .demo-badge { display: inline-flex; align-items: center; width: fit-content; font: 700 10.5px ${MONO}; text-transform: uppercase; letter-spacing: .7px; color: ${C.orange}; background: #FBE7DF; border: 1px solid #F1C2B4; padding: 4px 8px; border-radius: 999px; }
   .previewing-note { gap: 8px; flex: 0 0 auto; color: ${C.navy2}; background: #fff; border: 1px solid ${C.line}; border-radius: 11px; padding: 10px 13px; font-size: 12.5px; }
   .stepper { display: grid; grid-template-columns: repeat(4, 1fr); background: #fff; border: 1px solid ${C.line}; border-radius: 14px; padding: 8px; margin-bottom: 24px; box-shadow: 0 5px 18px rgba(17,18,62,.04); }
-  .step { position: relative; border: 0; background: transparent; color: #9296A3; display: flex; align-items: center; justify-content: center; gap: 9px; padding: 10px 8px; font: 700 13px 'Open Sans', sans-serif; border-radius: 9px; cursor: pointer; }
+  .step { position: relative; border: 0; background: transparent; color: #9296A3; display: flex; align-items: center; justify-content: center; gap: 9px; padding: 10px 8px; font: 700 13px var(--font-body); border-radius: 9px; cursor: pointer; }
   .step:disabled { cursor: default; } .step.active { background: #FBE7DF; color: ${C.navy}; } .step.complete { color: ${C.good}; }
   .step-number { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid #D8DAE2; border-radius: 50%; font: 700 11px ${MONO}; }
   .step.active .step-number { color: #fff; background: ${C.orange}; border-color: ${C.orange}; } .step.complete .step-number { color: #fff; background: ${C.good}; border-color: ${C.good}; }
@@ -815,8 +815,8 @@ const styles = `
   .status-pill { color: ${C.navy2}; background: #EEF2F8; } .status-pill.good { color: ${C.good}; background: #E8F5EE; } .status-pill.warning { color: ${C.orange}; background: #FBE7DF; }
   .stage-pill { color: var(--stage-tone); background: color-mix(in srgb, var(--stage-tone) 13%, white); text-transform: uppercase; letter-spacing: .2px; }
   .compose-layout { display: grid; grid-template-columns: minmax(0, 1fr) 285px; gap: 16px; align-items: start; } .form-card { padding: 20px; }
-  .field { display: block; margin-bottom: 16px; } .field:last-child { margin-bottom: 0; } .field>span { display: flex; justify-content: space-between; color: ${C.navy}; font: 700 12.5px ${HEAD}; margin-bottom: 7px; } .field>span small { color: ${C.muted}; font: 400 10.5px 'Open Sans', sans-serif; }
-  .field input, .field textarea { width: 100%; border: 1px solid #DADDE6; border-radius: 9px; background: #fff; color: ${C.gray}; padding: 10px 12px; font: 13.5px 'Open Sans', sans-serif; outline: none; } .field textarea { resize: vertical; line-height: 1.6; min-height: 250px; }
+  .field { display: block; margin-bottom: 16px; } .field:last-child { margin-bottom: 0; } .field>span { display: flex; justify-content: space-between; color: ${C.navy}; font: 700 12.5px ${HEAD}; margin-bottom: 7px; } .field>span small { color: ${C.muted}; font: 400 10.5px var(--font-body); }
+  .field input, .field textarea { width: 100%; border: 1px solid #DADDE6; border-radius: 9px; background: #fff; color: ${C.gray}; padding: 10px 12px; font: 13.5px var(--font-body); outline: none; } .field textarea { resize: vertical; line-height: 1.6; min-height: 250px; }
   .field input:focus, .field textarea:focus { border-color: ${C.navy2}; box-shadow: 0 0 0 3px rgba(72,95,146,.1); }
   .variables-card { padding: 18px; position: sticky; top: 16px; } .variables-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: ${C.navy}; font: 700 15px ${HEAD}; } .variables-heading small { color: ${C.orange}; background: #FBE7DF; padding: 3px 7px; border-radius: 999px; font: 700 9.5px ${MONO}; }
   .variables-card>p { color: ${C.muted}; font-size: 12px; line-height: 1.5; } .variable-list { display: flex; flex-wrap: wrap; gap: 7px; } .variable-list button { border: 1px solid ${C.line}; background: #FAFBFE; color: ${C.navy2}; padding: 6px 8px; border-radius: 7px; font: 600 10.5px ${MONO}; cursor: pointer; } .variable-list button:hover { border-color: ${C.orange}; color: ${C.orange}; }

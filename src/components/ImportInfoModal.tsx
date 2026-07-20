@@ -16,7 +16,7 @@ const C = {
   navy: "#11123E", navy3: "#8591AD", canvas: "#F4F6FB",
   line: "#E1E5EE", gray: "#33384D", grayMute: "#6E7385", orange: "#E8743B", good: "#2E9E6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 type Row = { email: string; linkedin: string; school: string };
 const emptyRow = (): Row => ({ email: "", linkedin: "", school: "" });

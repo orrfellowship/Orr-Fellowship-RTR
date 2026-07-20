@@ -7,34 +7,48 @@ import { ORR_ORANGE } from "@/lib/nav/config";
 // Cookie holding the user id an admin is previewing ("view as").
 export const VIEW_AS_COOKIE = "orr_view_as";
 
+const PROFILE_COLS = "id, full_name, email, role, school_id, is_active";
+// Profile fetches embed the school row (profiles.school_id → schools FK) so the
+// layout/page never need a second, dependent round-trip for it.
+const PROFILE_COLS_WITH_SCHOOL = `${PROFILE_COLS}, school:schools(id, name, tier, color_primary, logo_url)`;
+
+// Per-request store of school rows that rode along with a profile fetch —
+// getSchoolById serves from here instead of querying again.
+const schoolsSeen = cache(() => new Map<string, SchoolRow>());
+
+function extractProfile(data: any): Profile | null {
+  if (!data) return null;
+  const { school, ...profile } = data;
+  if (school?.id) schoolsSeen().set(school.id, school as SchoolRow);
+  return profile as Profile;
+}
+
 // Returns the logged-in user's profile, or null if unauthenticated / no profile.
 // Every protected page calls this to decide what to render. Wrapped in React
-// cache() so the layout and the page share one lookup per request (no double
-// auth.getUser + profiles round-trip on every navigation).
+// cache() so the layout and the page share one lookup per request. Uses
+// getClaims() — JWT signature verification (local when the project signs with
+// asymmetric keys) — instead of an auth.getUser() network round-trip.
 export const getCurrentProfile = cache(async (): Promise<Profile | null> => {
   const supabase = await createServerSupabase();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const { data: claimsData } = await supabase.auth.getClaims();
+  const userId = claimsData?.claims?.sub;
+  if (!userId) return null;
 
-  const { data, error } = await supabase
+  const { data } = await createServiceClient()
     .from("profiles")
-    .select("id, full_name, email, role, school_id, is_active")
-    .eq("id", user.id)
-    .single();
-
-  if (error || !data) return null;
-  return data as Profile;
+    .select(PROFILE_COLS_WITH_SCHOOL)
+    .eq("id", userId)
+    .maybeSingle();
+  return extractProfile(data);
 });
 
 export const getProfileById = cache(async (id: string): Promise<Profile | null> => {
   const { data } = await createServiceClient()
     .from("profiles")
-    .select("id, full_name, email, role, school_id, is_active")
+    .select(PROFILE_COLS_WITH_SCHOOL)
     .eq("id", id)
     .maybeSingle();
-  return (data as Profile) ?? null;
+  return extractProfile(data);
 });
 
 // Is an admin currently previewing as someone else? (used to keep preview read-only)
@@ -60,10 +74,13 @@ export async function resolveViewer(): Promise<{
 }
 
 // School row for a profile, shared by the layout (brand/accent) and the section
-// page. cache() dedupes the lookup within a single request render.
+// page. cache() dedupes the lookup within a single request render; schools that
+// were embedded in a profile fetch (schoolsSeen) resolve with no query at all.
 export type SchoolRow = { id: string; name: string; tier: string | null; color_primary: string | null; logo_url: string | null };
 export const getSchoolById = cache(async (schoolId: string | null): Promise<SchoolRow | null> => {
   if (!schoolId) return null;
+  const seen = schoolsSeen().get(schoolId);
+  if (seen) return seen;
   const { data } = await createServiceClient()
     .from("schools")
     .select("id, name, tier, color_primary, logo_url")

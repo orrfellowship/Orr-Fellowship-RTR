@@ -15,7 +15,7 @@ const C = {
   navy: "#11123E", navy2: "#485F92", orange: "#DD5434",
   gray: "#303333", grayMute: "#6E7385", line: "#E4E7EE", canvas: "#F7F8FB",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 // Re-exported so existing importers (ImportTable, ConsoleClient) keep their paths.
 export { norm, nameSchoolKey, findDuplicateGroups };

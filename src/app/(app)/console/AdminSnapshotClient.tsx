@@ -9,7 +9,7 @@ const C = {
   navy: "#11123E", orange: "#DD5434", gray: "#303333", grayMute: "#6E7385",
   line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 export type HelpRequest = { id: string; title: string; body: string | null; dedupeKey: string | null; created_at: string };
 export type MissingLinkedinCand = { id: string; name: string; email: string | null; school: string | null; area_of_study: string | null; gpa: string | null };

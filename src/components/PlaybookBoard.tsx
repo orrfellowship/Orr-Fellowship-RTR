@@ -10,7 +10,7 @@ const C = {
   navy: "#11123E", navy2: "#485F92", gray: "#303333", grayMute: "#6E7385",
   line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B", gold: "#C9A227",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 export type PBTask = { id: string; phaseId: string; phaseTitle: string; text: string; assigneeId: string | null; dueDate: string | null; done: boolean };
 export type PBMember = { id: string; full_name: string };

@@ -12,18 +12,25 @@ import {
 import { getCandidateFacets, listCandidates, updateCandidate } from "@/app/(app)/console/actions";
 import { phaseOf } from "@/lib/stages";
 import { evaluateCandidate } from "@/lib/triggers";
-import StandingsClient from "@/components/StandingsClient";
-import ResumeModal from "@/components/ResumeModal";
-import BulkImportModal from "@/components/BulkImportModal";
-import ImportInfoModal from "@/components/ImportInfoModal";
-import PlaybookBoard from "@/components/PlaybookBoard";
-import ResourcesPanel from "@/components/ResourcesPanel";
+import dynamic from "next/dynamic";
 import PersonPicker from "@/components/PersonPicker";
-import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
-import BudgetPanel, { type BudgetEntry, type Guidance } from "@/components/BudgetPanel";
+import type { CalEvent } from "@/components/RecruitingCalendar";
+import type { BudgetEntry, Guidance } from "@/components/BudgetPanel";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
-import { nameSchoolKey } from "@/components/DuplicateReview";
+import { nameSchoolKey } from "@/lib/duplicates";
+
+// Per-section code splitting: each /workspace/<section> route renders exactly
+// one of these, so they load as their own chunks instead of shipping the
+// calendar/budget/playbook/import code with every workspace page.
+const StandingsClient = dynamic(() => import("@/components/StandingsClient"));
+const ResumeModal = dynamic(() => import("@/components/ResumeModal"));
+const BulkImportModal = dynamic(() => import("@/components/BulkImportModal"));
+const ImportInfoModal = dynamic(() => import("@/components/ImportInfoModal"));
+const PlaybookBoard = dynamic(() => import("@/components/PlaybookBoard"));
+const ResourcesPanel = dynamic(() => import("@/components/ResourcesPanel"));
+const RecruitingCalendar = dynamic(() => import("@/components/RecruitingCalendar"));
+const BudgetPanel = dynamic(() => import("@/components/BudgetPanel"));
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -31,7 +38,7 @@ const C = {
   orange: "#DD5434", orangeSoft: "#FBE7DF", blue: "#8AB9E2", blueSoft: "#E1E9F4",
   gray: "#303333", grayMute: "#6E7385", line: "#E4E7EE", canvas: "#F7F8FB", gold: "#C9A227", good: "#2F8F6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 type Cand = {
   id: string; jazz_id: string | null; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null;
@@ -93,11 +100,14 @@ const CONTACTD = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
 const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
-  profile, initialSection, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
+  profile, initialSection, school, candidates, stageCounts = [], team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
   budgetEntries = [], budgetSchoolId = null, budgetGuidance = [],
   allCandidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], slimCandidates = [],
 }: {
   profile: Profile; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
+  // Org-wide weighted counts (school × stage, `n` candidates each) — feeds the
+  // snapshot's org counters and the Standings tab without shipping every row.
+  stageCounts?: { school_id: string | null; stage: string | null; n: number }[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
   lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[];
   allProfiles: { id: string; full_name: string }[];
@@ -237,16 +247,15 @@ export default function WorkspaceClient({
     ];
   }, [candidates, schoolGoal]);
 
-  // Org-wide breakdown (toggle on the Weekly Snapshot).
+  // Org-wide breakdown (toggle on the Weekly Snapshot) — weighted stage counts.
   const orgPipelineBoard = useMemo(() => {
-    const sourced   = allCandidates.filter((c) => c.stage && SOURCED.has(c.stage)).length;
-    const applied   = allCandidates.filter((c) => c.stage && APPLIED.has(c.stage)).length;
+    const count = (set: Set<string>) => stageCounts.reduce((s, r) => s + (r.stage && set.has(r.stage) ? r.n : 0), 0);
     const sum = (k: "goal_sourced" | "goal_applied") => allGoals.reduce((s, g) => s + (g[k] ?? 0), 0);
     return [
-      { label: "Sourced",   actual: sourced,   goal: sum("goal_sourced") },
-      { label: "Applied",   actual: applied,   goal: sum("goal_applied") },
+      { label: "Sourced",   actual: count(SOURCED),   goal: sum("goal_sourced") },
+      { label: "Applied",   actual: count(APPLIED),   goal: sum("goal_applied") },
     ];
-  }, [allCandidates, allGoals]);
+  }, [stageCounts, allGoals]);
 
   const activeBoard = breakdownScope === "team" ? pipelineBoard : orgPipelineBoard;
 
@@ -611,7 +620,7 @@ export default function WorkspaceClient({
 
         {/* ---- STANDINGS ---- */}
         {tab === "standings" && (
-          <StandingsClient schools={allSchools} candidates={allCandidates} goals={allGoals} mySchoolId={school?.id ?? null} />
+          <StandingsClient schools={allSchools} candidates={stageCounts} goals={allGoals} mySchoolId={school?.id ?? null} />
         )}
 
         {/* ---- APPLICANTS ---- */}

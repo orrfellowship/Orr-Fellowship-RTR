@@ -36,7 +36,10 @@ export function goalColor(pct: number): string {
   return "#ef4444";
 }
 
-type RawCandidate = { id: string; school_id: string | null; stage: string | null };
+// Weighted stage-count rows (one per school×stage, `n` candidates each) from
+// the candidate_stage_counts RPC. `n` defaults to 1 so plain candidate rows
+// still work.
+type RawCandidate = { school_id: string | null; stage: string | null; n?: number };
 type RawSchool = { id: string; name: string; tier: string; color_primary?: string | null; logo_url?: string | null };
 type RawGoal = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 
@@ -54,12 +57,15 @@ export function computeSchoolMetrics(
   const metrics: SchoolMetric[] = schools.map((school) => {
     const sc = candidates.filter((c) => c.school_id === school.id && isActive(c.stage));
     const ph = (c: RawCandidate) => phaseOf(c.stage) ?? "";
+    const w = (c: RawCandidate) => c.n ?? 1;
+    const sum = (rows: RawCandidate[]) => rows.reduce((s, c) => s + w(c), 0);
 
-    const sourced   = sc.filter((c) => ["sourced","contacted","applied","advanced","finalist","fellow"].includes(ph(c))).length;
-    const contacted = sc.filter((c) => ["contacted","applied","advanced","finalist","fellow"].includes(ph(c))).length;
-    const applied   = sc.filter((c) => ["applied","advanced","finalist","fellow"].includes(ph(c))).length;
-    const finalists = sc.filter((c) => ["finalist","fellow"].includes(ph(c))).length;
-    const fellows   = sc.filter((c) => ph(c) === "fellow").length;
+    const active    = sum(sc);
+    const sourced   = sum(sc.filter((c) => ["sourced","contacted","applied","advanced","finalist","fellow"].includes(ph(c))));
+    const contacted = sum(sc.filter((c) => ["contacted","applied","advanced","finalist","fellow"].includes(ph(c))));
+    const applied   = sum(sc.filter((c) => ["applied","advanced","finalist","fellow"].includes(ph(c))));
+    const finalists = sum(sc.filter((c) => ["finalist","fellow"].includes(ph(c))));
+    const fellows   = sum(sc.filter((c) => ph(c) === "fellow"));
 
     const g = goalMap.get(school.id) ?? { goal_sourced: 0, goal_contacted: 0, goal_applied: 0 };
 
@@ -72,8 +78,8 @@ export function computeSchoolMetrics(
 
     const yieldRate = sourced > 0 ? Math.min(applied / sourced, 1) : 0;
 
-    const depth = sc.length > 0
-      ? sc.reduce((sum, c) => sum + (PH_ORDER[ph(c)] ?? 0), 0) / (sc.length * 5)
+    const depth = active > 0
+      ? sc.reduce((acc, c) => acc + (PH_ORDER[ph(c)] ?? 0) * w(c), 0) / (active * 5)
       : 0;
 
     const orrScore = Math.round((goalAtt * 0.50 + yieldRate * 0.35 + depth * 0.15) * 100);
@@ -92,7 +98,7 @@ export function computeSchoolMetrics(
       applied,
       finalists,
       fellows,
-      active:       sc.length,
+      active,
       goal:         g.goal_applied,
       goalSourced:  g.goal_sourced,
       goalContacted: g.goal_contacted,

@@ -12,7 +12,7 @@ const C = {
   navy: "#11123E", navy2: "#485F92", gray: "#33384D", grayMute: "#6E7385",
   line: "#E1E5EE", canvas: "#F4F6FB", orange: "#E8743B", orangeBg: "#FBE7DF", good: "#2E9E6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 type Row = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null };
 

@@ -23,15 +23,60 @@ export async function fetchAllRows<T = any>(
   makeQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
   pageSize = 1000,
 ): Promise<T[]> {
-  const all: T[] = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await makeQuery(from, from + pageSize - 1);
-    if (error) break; // mirror the existing `?? []` tolerance rather than crashing the page
-    const batch = data ?? [];
-    all.push(...batch);
-    if (batch.length < pageSize) break;
+  // Page 0 alone first: most tables fit in one page, so this stays 1 request.
+  const first = await makeQuery(0, pageSize - 1);
+  if (first.error) return []; // mirror the existing `?? []` tolerance rather than crashing the page
+  const all: T[] = [...(first.data ?? [])];
+  if (all.length < pageSize) return all;
+  // Bigger tables: fetch the remaining pages in parallel waves rather than one
+  // at a time (no count round-trip needed — a short/empty page ends the scan).
+  const WAVE = 4;
+  for (let page = 1; ; page += WAVE) {
+    const results = await Promise.all(
+      Array.from({ length: WAVE }, (_, i) => {
+        const from = (page + i) * pageSize;
+        return makeQuery(from, from + pageSize - 1);
+      }),
+    );
+    for (const r of results) {
+      if (r.error) return all; // same tolerance: keep what we have
+      const batch = r.data ?? [];
+      all.push(...batch);
+      if (batch.length < pageSize) return all;
+    }
   }
-  return all;
+}
+
+// ---- aggregate candidate counts (phase19 RPCs) ---------------------------
+// Standings / Overview / Schools and the snapshot's misrouted check only need
+// per-school, per-stage COUNTS. One grouped RPC replaces paging the whole
+// candidates table and shrinks the RSC payload to a few dozen rows.
+export type StageCountRow = {
+  school_id: string | null;
+  university_raw: string | null;
+  stage: string | null;
+  not_interested: boolean;
+  n: number;
+};
+
+export const getCandidateStageCounts = cache(async (): Promise<StageCountRow[]> => {
+  const { data } = await createServiceClient().rpc("candidate_stage_counts");
+  return ((data as any[]) ?? []).map((r) => ({ ...r, n: Number(r.n) }));
+});
+
+// Collapse to (school_id, stage) for consumers that don't split by raw
+// university text (standings, workspace snapshot counters).
+export function collapseStageCounts(
+  rows: StageCountRow[],
+): { school_id: string | null; stage: string | null; n: number }[] {
+  const byKey = new Map<string, { school_id: string | null; stage: string | null; n: number }>();
+  for (const r of rows) {
+    const k = `${r.school_id ?? ""}|${r.stage ?? ""}`;
+    const cur = byKey.get(k);
+    if (cur) cur.n += r.n;
+    else byKey.set(k, { school_id: r.school_id, stage: r.stage, n: r.n });
+  }
+  return [...byKey.values()];
 }
 
 // ---- candidate column sets -------------------------------------------------

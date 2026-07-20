@@ -16,9 +16,6 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@fontsource-variable/cabin": "5.2.8",
-    "@fontsource-variable/jetbrains-mono": "5.2.8",
-    "@fontsource-variable/open-sans": "5.2.7",
     "@supabase/ssr": "0.12.1",
     "@supabase/supabase-js": "2.110.3",
     "@vercel/analytics": "^2.0.1",

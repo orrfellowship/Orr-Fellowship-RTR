@@ -6,7 +6,7 @@ import { isAdminPlus, type Profile } from "@/lib/types";
 import { canAccessWorkspaceSection } from "@/lib/nav/config";
 import {
   getTierSchoolIds, getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
-  CAND_COLS_STANDINGS, CAND_COLS_WORKSPACE,
+  getCandidateStageCounts, collapseStageCounts,
 } from "@/lib/queries";
 import WorkspaceClient from "../WorkspaceClient";
 import { listCandidates } from "../../console/actions";
@@ -54,7 +54,10 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
     candidates: S === "plan" || S === "board",
     phases: S === "plan" || S === "playbook",
     team: S === "plan" || S === "board" || S === "playbook" || S === "all",
-    allCandidates: S === "plan" || S === "standings" || S === "all",
+    // Org-wide standings + the snapshot's counters read grouped stage counts;
+    // the Candidates tab (S === "all") is server-paginated.
+    allCandidates: S === "all",
+    stageCounts: S === "plan" || S === "standings",
     allSchools: S === "standings" || S === "all",
     allGoals: S === "plan" || S === "standings",
     events: S === "plan",
@@ -77,19 +80,17 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
   const groupName = tier === "satellite" ? "Satellite School" : tier === "bonus" ? "Bonus School" : null;
   const playbookSchoolId = tierSchoolIds[0] ?? schoolId;
 
-  // Standings and the snapshot's org-wide counters only read id/school_id/stage.
-  const allCandSelect = (S === "standings" || S === "plan") ? CAND_COLS_STANDINGS : CAND_COLS_WORKSPACE;
   // The Candidates tab (S === "all") is server-paginated; it doesn't load every row.
   const paginatedList = S === "all";
 
   // Parallel, section-scoped fetches. Reference tables come from the shared
   // Data Cache (getSchoolsCached / getGoalsCached / getResourcesCached).
-  const [candidates, favs, team, phases, allCandidates, allProfiles, allSchools, allGoals, resources] = await Promise.all([
+  const [candidates, favs, team, phases, stageCountRows, allProfiles, allSchools, allGoals, resources] = await Promise.all([
     need.candidates ? fetchAllRows((from, to) => serviceDb.from("candidates").select("id, jazz_id, name, email, school_id, university_raw, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, direct_placement, source, created_by").in("school_id", tierSchoolIds).order("name").range(from, to)) : Promise.resolve([] as any[]),
     wantFavs ? serviceDb.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.team ? serviceDb.from("profiles").select("id, full_name, role").in("school_id", tierSchoolIds).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.phases ? serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").eq("school_id", playbookSchoolId).order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.allCandidates && !paginatedList ? fetchAllRows((from, to) => serviceDb.from("candidates").select(allCandSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
+    need.stageCounts ? getCandidateStageCounts() : Promise.resolve([]),
     need.allProfiles ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.allSchools ? getSchoolsCached() : Promise.resolve([] as any[]),
     need.allGoals ? getGoalsCached() : Promise.resolve([] as any[]),
@@ -178,7 +179,7 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
 
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
   const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
-  const allEnriched = paginatedList ? allPage.rows : (allCandidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
+  const allEnriched = paginatedList ? allPage.rows : [];
 
   return (
     <WorkspaceClient
@@ -186,6 +187,7 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
       initialSection={S}
       school={school ? { id: school.id, name: school.name, color_primary: school.color_primary, logo_url: school.logo_url } : null}
       candidates={enriched}
+      stageCounts={collapseStageCounts(stageCountRows)}
       team={team ?? []}
       phases={phasesWithReview}
       allSchools={allSchools ?? []}
