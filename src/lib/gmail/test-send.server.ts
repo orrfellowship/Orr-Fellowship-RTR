@@ -116,7 +116,29 @@ function encodeSubject(subject: string): string {
     .join("\r\n ");
 }
 
-export function buildGmailMimeMessage(input: GmailTestSendInput & { sender: string }): {
+// An attachment ready to embed: content is already base64 (NOT base64url).
+export type MimeAttachment = {
+  fileName: string;
+  mimeType: string;
+  contentBase64: string;
+};
+
+// Header-safe filename: strip CR/LF/quotes/backslashes and non-printable
+// characters so a stored name can never break out of its MIME header.
+export function sanitizeAttachmentFileName(name: string): string {
+  const cleaned = (name ?? "")
+    .replace(/[\r\n"\\/]+/g, " ")
+    .replace(/[^\x20-\x7E]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (cleaned || "attachment").slice(0, 120);
+}
+
+const wrap76 = (b64: string) => b64.match(/.{1,76}/g)?.join("\r\n") ?? "";
+
+export function buildGmailMimeMessage(
+  input: GmailTestSendInput & { sender: string; attachments?: MimeAttachment[] },
+): {
   mime: string;
   raw: string;
 } {
@@ -124,20 +146,53 @@ export function buildGmailMimeMessage(input: GmailTestSendInput & { sender: stri
   rejectHeaderInjection(sender, "Sender");
   const validated = validateGmailTestInput(input);
   const normalizedBody = validated.body.replace(/\r?\n/g, "\r\n");
-  const encodedBody = Buffer.from(normalizedBody, "utf8")
-    .toString("base64")
-    .match(/.{1,76}/g)
-    ?.join("\r\n") ?? "";
-  const mime = [
+  const encodedBody = wrap76(Buffer.from(normalizedBody, "utf8").toString("base64"));
+
+  const headers = [
     `From: ${sender}`,
     `To: ${validated.recipient}`,
     `Subject: ${encodeSubject(validated.subject)}`,
     "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=UTF-8",
-    "Content-Transfer-Encoding: base64",
-    "",
-    encodedBody,
-  ].join("\r\n");
+  ];
+
+  const attachments = input.attachments ?? [];
+  let mime: string;
+  if (attachments.length === 0) {
+    mime = [
+      ...headers,
+      "Content-Type: text/plain; charset=UTF-8",
+      "Content-Transfer-Encoding: base64",
+      "",
+      encodedBody,
+    ].join("\r\n");
+  } else {
+    // multipart/mixed: the plain-text body part first, then one part per file.
+    const boundary = `orr_${Buffer.from(`${validated.recipient}:${attachments.length}`).toString("hex").slice(0, 16)}_${Date.now().toString(36)}`;
+    const parts: string[] = [
+      ...headers,
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      "Content-Type: text/plain; charset=UTF-8",
+      "Content-Transfer-Encoding: base64",
+      "",
+      encodedBody,
+    ];
+    for (const a of attachments) {
+      const fileName = sanitizeAttachmentFileName(a.fileName);
+      const mimeType = /^[\w.+-]+\/[\w.+-]+$/.test(a.mimeType) ? a.mimeType : "application/octet-stream";
+      parts.push(
+        `--${boundary}`,
+        `Content-Type: ${mimeType}; name="${fileName}"`,
+        `Content-Disposition: attachment; filename="${fileName}"`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        wrap76(a.contentBase64.replace(/\s+/g, "")),
+      );
+    }
+    parts.push(`--${boundary}--`);
+    mime = parts.join("\r\n");
+  }
   return { mime, raw: Buffer.from(mime, "utf8").toString("base64url") };
 }
 

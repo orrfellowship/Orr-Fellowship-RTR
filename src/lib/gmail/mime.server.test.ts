@@ -49,5 +49,28 @@ rejects("semicolon-separated recipients are rejected", () => validateGmailTestIn
 rejects("empty subject is rejected", () => validateGmailTestInput({ recipient: "one@example.com", subject: " ", body: "Body" }));
 rejects("empty body is rejected", () => validateGmailTestInput({ recipient: "one@example.com", subject: "Test", body: " " }));
 
+// ---- Phase 23: attachments (multipart/mixed) --------------------------------
+const pdfBytes = Buffer.from("%PDF-1.4 fake").toString("base64");
+const withAtt = buildGmailMimeMessage({
+  sender: "fellow@orrfellowship.org",
+  recipient: "recipient@example.com",
+  subject: "With attachment",
+  body: "See attached.",
+  attachments: [{ fileName: "Orr One-Pager.pdf", mimeType: "application/pdf", contentBase64: pdfBytes }],
+});
+check("attachment message is multipart/mixed", /Content-Type: multipart\/mixed; boundary="[^"]+"/.test(withAtt.mime));
+check("attachment part carries the filename", withAtt.mime.includes('Content-Disposition: attachment; filename="Orr One-Pager.pdf"'));
+check("attachment part declares its MIME type", withAtt.mime.includes('Content-Type: application/pdf; name="Orr One-Pager.pdf"'));
+check("attachment bytes survive into the message", withAtt.mime.replace(/\r\n/g, "").includes(pdfBytes));
+const bodyBoundary = withAtt.mime.match(/boundary="([^"]+)"/)?.[1] ?? "";
+check("multipart message is closed with the final boundary", withAtt.mime.trimEnd().endsWith(`--${bodyBoundary}--`));
+check("plain body part still present in multipart", withAtt.mime.includes("Content-Type: text/plain; charset=UTF-8"));
+check("no-attachment message stays single-part", !buildGmailMimeMessage({ sender: "fellow@orrfellowship.org", recipient: "r@example.com", subject: "s", body: "b", attachments: [] }).mime.includes("multipart"));
+
+import { sanitizeAttachmentFileName } from "./test-send.server";
+check("filename CRLF/quote injection is stripped", !/[\r\n"\\]/.test(sanitizeAttachmentFileName('evil\r\nContent-Type: text/html"name.pdf')));
+check("empty filename falls back", sanitizeAttachmentFileName("  ") === "attachment");
+check("non-ascii filename becomes header-safe", !/[^\x20-\x7E]/.test(sanitizeAttachmentFileName("résumé 🚀.pdf")));
+
 console.log(failures === 0 ? "\nAll Gmail MIME checks passed." : `\n${failures} Gmail MIME check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

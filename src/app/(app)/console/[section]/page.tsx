@@ -18,6 +18,7 @@ import EmailCampaignsClient from "@/components/EmailCampaignsClient";
 import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
 import { loadOutreachAudiences, loadRecentCampaigns } from "@/lib/gmail/candidate-outreach.server";
+import { listOutreachTemplates } from "@/lib/gmail/outreach-templates.server";
 import { listPendingSchoolReviews } from "@/lib/schoolMatch";
 
 export default async function ConsoleSection({
@@ -67,7 +68,9 @@ async function ConsoleSectionData({
     } catch {
       statusUnavailable = true;
     }
-    const [audiences, recentCampaigns] = await Promise.all([loadOutreachAudiences(profile), loadRecentCampaigns(profile)]);
+    const [audiences, recentCampaigns, templates] = await Promise.all([
+      loadOutreachAudiences(profile), loadRecentCampaigns(profile), listOutreachTemplates(),
+    ]);
     return <EmailCampaignsClient
       gmailConnection={gmailConnection}
       gmailNotice={{
@@ -77,6 +80,8 @@ async function ConsoleSectionData({
       gmailCampaignSendEnabled
       audiences={audiences}
       recentCampaigns={recentCampaigns}
+      templates={templates.map((t) => ({ id: t.id, name: t.name, subject: t.subject, body: t.body, attachments: t.attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes })) }))}
+      canFreeCompose
     />;
   }
 

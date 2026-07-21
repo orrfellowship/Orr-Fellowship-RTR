@@ -7,7 +7,9 @@ import {
   GmailTestSendError,
   type GmailSendResult,
   type GmailSendSession,
+  type MimeAttachment,
 } from "./test-send.server";
+import { loadAttachmentBase64, type CampaignAttachment } from "./outreach-templates.server";
 
 // ============================================================================
 // Outreach send queue — the durable engine behind "click Send and walk away".
@@ -120,6 +122,8 @@ export type EnqueueInput = {
   body: string;
   recipients: EnqueueRecipient[];
   idempotencyKey?: string | null;
+  templateId?: string | null;               // admin template the campaign was sent from
+  attachments?: CampaignAttachment[];       // snapshot taken at enqueue; sent with every message
 };
 
 export type EnqueueResult = {
@@ -153,7 +157,8 @@ export type DrainSummary = {
 // Injected side-effects (default to Supabase / real Gmail; overridden in tests).
 export type OutreachStore = {
   findCampaignByKey: (createdBy: string, key: string) => Promise<{ id: string } | null>;
-  insertCampaign: (c: { createdBy: string; name: string; subject: string; body: string; idempotencyKey: string | null }) => Promise<string>;
+  insertCampaign: (c: { createdBy: string; name: string; subject: string; body: string; idempotencyKey: string | null; templateId: string | null; attachments: CampaignAttachment[] }) => Promise<string>;
+  campaignAttachments: (campaignId: string) => Promise<CampaignAttachment[]>;
   setCampaignTotal: (campaignId: string, total: number) => Promise<void>;
   insertSends: (rows: NewSendRow[]) => Promise<void>;
   senderSends24h: (senderUserId: string, now: number) => Promise<number>;
@@ -189,6 +194,7 @@ export type DrainDeps = {
   batchSize?: number;
   createSession?: (userId: string) => Promise<GmailSendSession>;
   sendMessage?: (accessToken: string, raw: string, fetchImpl: typeof fetch) => Promise<GmailSendResult>;
+  loadAttachment?: (storagePath: string) => Promise<string>; // → plain base64
   store?: Partial<OutreachStore>;
   notify?: (n: Parameters<typeof queueNotification>[0]) => Promise<unknown>;
 };
@@ -215,6 +221,7 @@ export async function enqueueOutreachCampaign(
   try {
     campaignId = await store.insertCampaign({
       createdBy: senderUserId, name: input.campaignName, subject: input.subject, body: input.body, idempotencyKey: key,
+      templateId: input.templateId ?? null, attachments: input.attachments ?? [],
     });
   } catch (error) {
     // The database unique constraint is the final guard against two concurrent
@@ -277,6 +284,25 @@ export async function drainOutreachQueue(deps: DrainDeps = {}): Promise<DrainSum
 
   const sessions = new Map<string, GmailSendSession | { error: string }>();
   const touchedCampaigns = new Set<string>();
+  // Attachments are per-campaign: resolve + download each campaign's snapshot
+  // once per drain pass and reuse the bytes for every recipient in the batch.
+  const loadAttachment = deps.loadAttachment ?? loadAttachmentBase64;
+  const campaignFiles = new Map<string, MimeAttachment[] | { error: string }>();
+  const attachmentsFor = async (campaignId: string): Promise<MimeAttachment[] | { error: string }> => {
+    const cached = campaignFiles.get(campaignId);
+    if (cached) return cached;
+    let value: MimeAttachment[] | { error: string };
+    try {
+      const refs = await store.campaignAttachments(campaignId);
+      value = await Promise.all(refs.map(async (a) => ({
+        fileName: a.file_name, mimeType: a.mime_type, contentBase64: await loadAttachment(a.storage_path),
+      })));
+    } catch {
+      value = { error: "Campaign attachment could not be loaded from storage." };
+    }
+    campaignFiles.set(campaignId, value);
+    return value;
+  };
   // Re-check DNC + per-candidate quota against current state for this batch.
   const candidateIds = Array.from(new Set(due.map((d) => d.candidateId).filter((v): v is string => !!v)));
   const flags = candidateIds.length ? await store.candidateFlags(candidateIds, startedAt) : new Map<string, CandidateFlags>();
@@ -308,7 +334,22 @@ export async function drainOutreachQueue(deps: DrainDeps = {}): Promise<DrainSum
       summary.failed++; continue;
     }
 
-    const { raw } = buildGmailMimeMessage({ sender: session.sender, recipient: row.toEmail, subject: row.renderedSubject, body: row.renderedBody });
+    // Storage hiccups are transient: requeue with backoff instead of burning
+    // the row, but give up after MAX_ATTEMPTS like any other retryable fault.
+    const files = await attachmentsFor(row.campaignId);
+    if ("error" in files) {
+      const attempts = row.attempts + 1;
+      if (attempts < MAX_ATTEMPTS) {
+        await store.requeue(row.id, { attempts, nextAttemptAt: nowFn() + backoffMs(attempts) });
+        summary.retried++;
+      } else {
+        await store.markFailed(row.id, { error: files.error, attempts });
+        summary.failed++;
+      }
+      continue;
+    }
+
+    const { raw } = buildGmailMimeMessage({ sender: session.sender, recipient: row.toEmail, subject: row.renderedSubject, body: row.renderedBody, attachments: files });
     let result: GmailSendResult;
     try {
       result = await sendMessage(session.accessToken, raw, session.fetchImpl);
@@ -391,10 +432,16 @@ function defaultStore(): OutreachStore {
     },
     async insertCampaign(c) {
       const { data, error } = await db().from("outreach_campaigns")
-        .insert({ created_by: c.createdBy, name: c.name, subject: c.subject, body: c.body, idempotency_key: c.idempotencyKey, status: "queued" })
+        .insert({ created_by: c.createdBy, name: c.name, subject: c.subject, body: c.body, idempotency_key: c.idempotencyKey, status: "queued", template_id: c.templateId, attachments: c.attachments })
         .select("id").single();
       if (error || !data) throw new Error(error?.message ?? "Failed to create campaign");
       return (data as any).id;
+    },
+    async campaignAttachments(campaignId) {
+      const { data, error } = await db().from("outreach_campaigns").select("attachments").eq("id", campaignId).maybeSingle();
+      if (error) throw new Error(`Failed to load campaign attachments: ${error.message}`);
+      const list = (data as any)?.attachments;
+      return Array.isArray(list) ? (list as CampaignAttachment[]) : [];
     },
     async setCampaignTotal(campaignId, total) {
       const { error } = await db().from("outreach_campaigns").update({ total_count: total, updated_at: new Date().toISOString() }).eq("id", campaignId);

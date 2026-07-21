@@ -56,6 +56,7 @@ check("failure notice flags rate limiting", /rate-limit/i.test(notice.body));
 type Row = QueuedSend & { status: string; error: string | null; sentAt: number | null; nextAttemptAt: number };
 function makeStore(seed: {
   rows?: Row[]; dnc?: Set<string>; sends7d?: Map<string, number>; senderSent24h?: number;
+  attachments?: { storage_path: string; file_name: string; mime_type: string; size_bytes: number }[];
 } = {}): { store: OutreachStore; rows: Row[]; notifications: any[]; campaigns: Map<string, any>; timeline: any[] } {
   const rows: Row[] = seed.rows ?? [];
   const campaigns = new Map<string, any>();
@@ -64,6 +65,7 @@ function makeStore(seed: {
   const store: OutreachStore = {
     async findCampaignByKey() { return null; },
     async insertCampaign(c) { const id = `camp-${campaigns.size + 1}`; campaigns.set(id, { ...c, status: "queued", total: 0 }); return id; },
+    async campaignAttachments() { return seed.attachments ?? []; },
     async setCampaignTotal(id, total) { campaigns.get(id).total = total; },
     async insertSends(newRows: NewSendRow[]) {
       newRows.forEach((r, i) => rows.push({
@@ -266,6 +268,47 @@ async function run() {
     await drainOutreachQueue({ store, createSession: session, sendMessage: okSend, sleep: noSleep, now: () => Date.now(), notify: async () => ({}) });
     check("a candidate send is logged to the timeline", timeline.length === 1 && timeline[0].candidateId === "cand-9" && timeline[0].subject === "Intro to Orr" && timeline[0].authorId === "sender-1");
     check("a team send (no candidate) is not timeline-logged", !timeline.some((t) => t.candidateId === null));
+  }
+
+  // Phase 23: campaign attachments ride along on every send in the campaign.
+  {
+    const seedRows: Row[] = [
+      { id: "s-1", campaignId: "camp-1", candidateId: null, senderUserId: "sender-1", toEmail: "a@x.org", renderedSubject: "s", renderedBody: "b", attempts: 0, status: "queued", error: null, sentAt: null, nextAttemptAt: 0 },
+      { id: "s-2", campaignId: "camp-1", candidateId: null, senderUserId: "sender-1", toEmail: "b@x.org", renderedSubject: "s", renderedBody: "b", attempts: 0, status: "queued", error: null, sentAt: null, nextAttemptAt: 0 },
+    ];
+    const { store, campaigns } = makeStore({
+      rows: seedRows,
+      attachments: [{ storage_path: "tpl/one.pdf", file_name: "Orr One-Pager.pdf", mime_type: "application/pdf", size_bytes: 5 }],
+    });
+    campaigns.set("camp-1", { name: "Camp", createdBy: "sender-1", status: "queued", total: 2 });
+    const raws: string[] = [];
+    let downloads = 0;
+    await drainOutreachQueue({
+      store, createSession: session, sleep: noSleep, now: () => Date.now(), notify: async () => ({}),
+      loadAttachment: async () => { downloads++; return Buffer.from("PDFBYTES").toString("base64"); },
+      sendMessage: async (_t, raw) => { raws.push(raw); return okSend(); },
+    });
+    const mimes = raws.map((r) => Buffer.from(r, "base64url").toString("utf8"));
+    check("every send in the campaign carries the attachment", mimes.length === 2 && mimes.every((m) => m.includes('filename="Orr One-Pager.pdf"')));
+    check("attachment bytes survive into the MIME", mimes.every((m) => m.includes(Buffer.from("PDFBYTES").toString("base64"))));
+    check("attachment content is downloaded once per campaign per pass, not per recipient", downloads === 1);
+  }
+
+  // Phase 23: a storage failure requeues the row (transient) instead of burning it.
+  {
+    const seedRows: Row[] = [
+      { id: "s-1", campaignId: "camp-1", candidateId: null, senderUserId: "sender-1", toEmail: "a@x.org", renderedSubject: "s", renderedBody: "b", attempts: 0, status: "queued", error: null, sentAt: null, nextAttemptAt: 0 },
+    ];
+    const { store, rows, campaigns } = makeStore({
+      rows: seedRows,
+      attachments: [{ storage_path: "tpl/missing.pdf", file_name: "x.pdf", mime_type: "application/pdf", size_bytes: 5 }],
+    });
+    campaigns.set("camp-1", { name: "Camp", createdBy: "sender-1", status: "queued", total: 1 });
+    const summary = await drainOutreachQueue({
+      store, createSession: session, sendMessage: okSend, sleep: noSleep, now: () => Date.now(), notify: async () => ({}),
+      loadAttachment: async () => { throw new Error("storage down"); },
+    });
+    check("attachment download failure retries the row with backoff", summary.retried === 1 && rows[0].status === "queued" && rows[0].attempts === 1);
   }
 
   assert.equal(failures, 0);

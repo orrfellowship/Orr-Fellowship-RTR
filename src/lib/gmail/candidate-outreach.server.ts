@@ -11,7 +11,7 @@ import { GmailTestSendError } from "./test-send.server";
 // typo'd merge token — fails loudly before anything is enqueued.
 export const OUTREACH_LIMITS = { campaignName: 120, subject: 200, body: 20_000, maxRecipients: 1000, idempotencyKey: 128 } as const;
 
-export type ValidatedOutreachInput = { campaignName: string; subject: string; body: string; ids: string[]; idempotencyKey: string };
+export type ValidatedOutreachInput = { campaignName: string; subject: string; body: string; ids: string[]; idempotencyKey: string; templateId: string | null };
 
 export function validateOutreachInput(value: unknown): ValidatedOutreachInput {
   const bad = (code: string, msg: string): never => { throw new GmailTestSendError(code, msg, 400); };
@@ -38,7 +38,15 @@ export function validateOutreachInput(value: unknown): ValidatedOutreachInput {
   if (new Set(list as string[]).size !== list.length) bad("duplicate_recipient", "A recipient was selected more than once.");
   const idempotencyKey = (v.idempotencyKey as string).trim();
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey)) bad("invalid_idempotency_key", "Invalid request identifier.");
-  return { campaignName, subject, body, ids: list as string[], idempotencyKey };
+  // Optional template reference; the routes resolve + enforce it per role.
+  let templateId: string | null = null;
+  if (v.templateId != null) {
+    if (typeof v.templateId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.templateId)) {
+      bad("invalid_template", "The selected template reference is invalid.");
+    }
+    templateId = v.templateId as string;
+  }
+  return { campaignName, subject, body, ids: list as string[], idempotencyKey, templateId };
 }
 
 // Real-candidate outreach (Phase 4). Turns a sender's selected candidates into
@@ -83,6 +91,8 @@ export function buildCandidateRecipients(
 export type CandidateCampaignInput = {
   campaignName: string; subject: string; body: string;
   selectedCandidateIds: string[]; idempotencyKey?: string | null;
+  templateId?: string | null;
+  attachments?: import("./outreach-templates.server").CampaignAttachment[];
 };
 
 export type CandidateCampaignDeps = {
@@ -125,6 +135,7 @@ export async function enqueueCandidateCampaign(
   const result = await enqueue(senderUserId, {
     campaignName: input.campaignName, subject: input.subject, body: input.body,
     recipients, idempotencyKey: input.idempotencyKey,
+    templateId: input.templateId ?? null, attachments: input.attachments ?? [],
   });
   return { ...result, skippedUnassigned };
 }
@@ -180,6 +191,8 @@ export type UsersCampaignInput = {
   campaignName: string; subject: string; body: string;
   selectedUserIds?: string[]; // omit/empty → every active user with an email
   idempotencyKey?: string | null;
+  templateId?: string | null;
+  attachments?: import("./outreach-templates.server").CampaignAttachment[];
 };
 
 export type UsersCampaignDeps = {
@@ -204,6 +217,7 @@ export async function enqueueUsersCampaign(
   return enqueue(senderUserId, {
     campaignName: input.campaignName, subject: input.subject, body: input.body,
     recipients, idempotencyKey: input.idempotencyKey,
+    templateId: input.templateId ?? null, attachments: input.attachments ?? [],
   });
 }
 

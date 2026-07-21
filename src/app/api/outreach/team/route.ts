@@ -3,6 +3,7 @@ import { getCurrentProfile, isPreviewing } from "@/lib/auth";
 import { isAdminPlus } from "@/lib/types";
 import { GmailTestSendError, safeTestSendError } from "@/lib/gmail/test-send.server";
 import { validateOutreachInput, enqueueUsersCampaign } from "@/lib/gmail/candidate-outreach.server";
+import { resolveCampaignContent } from "@/lib/gmail/outreach-templates.server";
 import { drainOutreachQueue } from "@/lib/gmail/outreach-queue.server";
 
 export const runtime = "nodejs";
@@ -33,9 +34,13 @@ export async function POST(request: Request) {
 
   try {
     const input = validateOutreachInput(body);
+    // This route is already admin-only; a template here just brings prefilled
+    // content + its attachments along.
+    const content = await resolveCampaignContent(profile.role, { subject: input.subject, body: input.body }, input.templateId);
     const result = await enqueueUsersCampaign(profile.id, profile.role, {
-      campaignName: input.campaignName, subject: input.subject, body: input.body,
+      campaignName: input.campaignName, subject: content.subject, body: content.body,
       selectedUserIds: input.ids, idempotencyKey: input.idempotencyKey,
+      templateId: content.templateId, attachments: content.attachments,
     });
     if (result.forbidden) return err(new GmailTestSendError("forbidden", "Only an admin can email the whole team.", 403));
     after(() => drainOutreachQueue().catch((error) => console.error(JSON.stringify({ level: "error", event: "outreach_after_drain_failed", route: "team", message: error instanceof Error ? error.message : "Unknown error" }))));

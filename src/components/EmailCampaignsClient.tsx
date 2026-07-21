@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import {
+  saveOutreachTemplate, setOutreachTemplateArchived,
+  uploadOutreachTemplateAttachment, deleteOutreachTemplateAttachment,
+} from "@/app/(app)/console/actions";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronLeft,
   ChevronRight, CircleAlert, History, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound,
@@ -94,18 +99,32 @@ function gmailNoticeText(notice: GmailNotice) {
   return notice.error ? (messages[notice.error] ?? "Gmail could not be connected. Please try again.") : null;
 }
 
+// Client-safe view of an admin template (no storage paths cross the boundary).
+export type OutreachTemplateView = {
+  id: string; name: string; subject: string; body: string;
+  attachments: { id: string; fileName: string; mimeType: string; sizeBytes: number }[];
+};
+
+const fmtBytes = (n: number) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+
 export default function EmailCampaignsClient({
   gmailConnection = DEFAULT_GMAIL_STATUS,
   gmailNotice = {},
   gmailCampaignSendEnabled = false,
   audiences = [],
   recentCampaigns = [],
+  templates = [],
+  canFreeCompose = false,
 }: {
   gmailConnection?: GmailConnectionStatus;
   gmailNotice?: GmailNotice;
   gmailCampaignSendEnabled?: boolean;
   audiences?: OutreachAudience[];
   recentCampaigns?: CampaignHistoryItem[];
+  // Admin-curated templates. Non-admins (canFreeCompose=false) MUST pick one —
+  // their subject/body fields are locked to it (the server enforces the same).
+  templates?: OutreachTemplateView[];
+  canFreeCompose?: boolean;
 }) {
   const [audienceKey, setAudienceKey] = useState<string>(audiences[0]?.key ?? "mine");
   const audience = audiences.find((a) => a.key === audienceKey) ?? audiences[0];
@@ -117,8 +136,20 @@ export default function EmailCampaignsClient({
   const [step, setStep] = useState(0);
   const [maxReached, setMaxReached] = useState(0);
   const [campaignName, setCampaignName] = useState("Fall 2026 Outreach");
-  const [subject, setSubject] = useState(INITIAL_CAMPAIGN_SUBJECT);
-  const [body, setBody] = useState(INITIAL_CAMPAIGN_BODY);
+  // Non-admins start empty and locked; picking a template fills these.
+  const [subject, setSubject] = useState(canFreeCompose ? INITIAL_CAMPAIGN_SUBJECT : "");
+  const [body, setBody] = useState(canFreeCompose ? INITIAL_CAMPAIGN_BODY : "");
+  const [templateId, setTemplateId] = useState<string>("");
+  const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
+  const templateLocked = !canFreeCompose;
+  const attachments = selectedTemplate?.attachments ?? [];
+
+  function pickTemplate(id: string) {
+    setTemplateId(id);
+    const t = templates.find((x) => x.id === id);
+    if (t) { setSubject(t.subject); setBody(t.body); }
+    else if (templateLocked) { setSubject(""); setBody(""); }
+  }
   const [activeField, setActiveField] = useState<"subject" | "body">("body");
   const [previewIndex, setPreviewIndex] = useState(0);
   const [confirmationFingerprint, setConfirmationFingerprint] = useState<string | null>(null);
@@ -167,7 +198,7 @@ export default function EmailCampaignsClient({
   const currentPreview = selectedRecipients[Math.min(previewIndex, Math.max(0, selectedRecipients.length - 1))];
   const unsupportedVariables = [...findUnsupportedOutreachVariables(subject), ...findUnsupportedOutreachVariables(body)];
   const selectedCandidateIds = Array.from(selectedIds);
-  const campaignFingerprint = JSON.stringify({ audienceKey, campaignName, subject, body, selectedCandidateIds });
+  const campaignFingerprint = JSON.stringify({ audienceKey, campaignName, subject, body, selectedCandidateIds, templateId });
   const confirmed = confirmationFingerprint === campaignFingerprint;
   const composeReady = !!campaignName.trim()
     && !!subject.trim()
@@ -175,7 +206,8 @@ export default function EmailCampaignsClient({
     && campaignName.length <= LIMITS.campaignName
     && subject.length <= LIMITS.subject
     && body.length <= LIMITS.body
-    && unsupportedVariables.length === 0;
+    && unsupportedVariables.length === 0
+    && (!templateLocked || !!selectedTemplate); // fellows must send from a template
   const canContinue = step === 0 ? selectedRecipients.length > 0 : step === 1 ? !!composeReady : true;
   const connectionNotice = gmailNoticeText(gmailNotice);
   // Reply/bounce tracking needs the gmail.metadata scope (added in Phase 6).
@@ -264,7 +296,7 @@ export default function EmailCampaignsClient({
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignName, subject, body, selectedIds: selectedCandidateIds, idempotencyKey }),
+        body: JSON.stringify({ campaignName, subject, body, selectedIds: selectedCandidateIds, idempotencyKey, templateId: templateId || null }),
       });
       const payload = await response.json() as EnqueueResponse | { success: false; error?: { message?: string } };
       if (!response.ok || payload.success !== true) {
@@ -468,6 +500,7 @@ export default function EmailCampaignsClient({
       })()}
 
       {!showSent && !showSending && (<>
+      {canFreeCompose && step === 0 && <OutreachTemplateManager templates={templates} />}
       <div className="stepper" aria-label="Campaign steps">
         {CAMPAIGN_STEPS.map((label, index) => {
           const accessible = index <= maxReached;
@@ -590,27 +623,41 @@ export default function EmailCampaignsClient({
 
       {step === 1 && (
         <section>
-          <div className="section-title"><div><h2>Compose your email</h2><p>Write one template — it&apos;s personalized for each recipient.</p></div></div>
+          <div className="section-title"><div><h2>Compose your email</h2><p>{templateLocked ? "Pick one of the templates your admins prepared — it's personalized for each recipient." : "Write one template — it's personalized for each recipient."}</p></div></div>
           <div className="compose-layout">
             <div className="form-card">
               <Field label="Campaign name" hint="Only visible to your recruiting team">
                 <input value={campaignName} maxLength={LIMITS.campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Campaign name" />
               </Field>
+              <Field label="Template" hint={templateLocked ? "Provided by your admins" : "Optional starting point — its attachments ride along"}>
+                <select value={templateId} onChange={(event) => pickTemplate(event.target.value)}>
+                  <option value="">{templateLocked ? "Choose a template…" : "None — write from scratch"}</option>
+                  {templates.map((t) => <option key={t.id} value={t.id}>{t.name}{t.attachments.length ? ` (${t.attachments.length} 📎)` : ""}</option>)}
+                </select>
+              </Field>
+              {templateLocked && templates.length === 0 && (
+                <div className="compose-warn"><CircleAlert size={15} /> No templates are available yet — ask an admin to create one in Email Campaigns.</div>
+              )}
               <Field label="Subject line">
-                <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" />
+                <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} readOnly={templateLocked} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)} placeholder={templateLocked ? "Pick a template above" : "Email subject"} />
               </Field>
               <Field label="Email body">
-                <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)} rows={14} />
+                <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} readOnly={templateLocked} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)} rows={14} placeholder={templateLocked ? "The template's message will appear here." : undefined} />
               </Field>
+              {attachments.length > 0 && (
+                <div className="attachment-chips">
+                  {attachments.map((a) => <span className="attachment-chip" key={a.id}>📎 {a.fileName} <small>{fmtBytes(a.sizeBytes)}</small></span>)}
+                </div>
+              )}
               {unsupportedVariables.length > 0 && <div className="compose-warn"><CircleAlert size={15} /> Unknown merge field(s): {unsupportedVariables.join(", ")}. Fix before continuing.</div>}
             </div>
             <aside className="variables-card">
-              <div className="variables-heading"><span>Merge variables</span><small>Insert into {activeField}</small></div>
-              <p>Personalize the template with each recipient&apos;s details.</p>
+              <div className="variables-heading"><span>Merge variables</span><small>{templateLocked ? "Filled automatically" : `Insert into ${activeField}`}</small></div>
+              <p>{templateLocked ? "These placeholders in the template are replaced with each recipient's details." : "Personalize the template with each recipient's details."}</p>
               <div className="variable-list">
-                {OUTREACH_MERGE_VARIABLES.map((variable) => <button type="button" key={variable} onClick={() => insertVariable(variable)}>{variable}</button>)}
+                {OUTREACH_MERGE_VARIABLES.map((variable) => <button type="button" key={variable} disabled={templateLocked} onClick={() => insertVariable(variable)}>{variable}</button>)}
               </div>
-              <div className="tip"><CircleAlert size={15} /><span>Click a variable to insert it at the cursor in the last-focused subject or body field.</span></div>
+              {!templateLocked && <div className="tip"><CircleAlert size={15} /><span>Click a variable to insert it at the cursor in the last-focused subject or body field.</span></div>}
             </aside>
           </div>
         </section>
@@ -648,6 +695,11 @@ export default function EmailCampaignsClient({
                 <div><span>Subject</span><strong>{renderHighlightedOutreachTemplate(subject, currentPreview.tokens)}</strong></div>
               </div>
               <div className="email-body">{renderHighlightedOutreachTemplate(body, currentPreview.tokens)}</div>
+              {attachments.length > 0 && (
+                <div className="attachment-chips email-attachments">
+                  {attachments.map((a) => <span className="attachment-chip" key={a.id}>📎 {a.fileName} <small>{fmtBytes(a.sizeBytes)}</small></span>)}
+                </div>
+              )}
             </article>
           </div>
         </section>
@@ -667,6 +719,8 @@ export default function EmailCampaignsClient({
                   <ReviewValue label="Recipients" value={`${selectedRecipients.length} personalized message${selectedRecipients.length === 1 ? "" : "s"}`} />
                   <ReviewValue label="Sending from" value={gmailConnection.connectedEmail ?? "Gmail not connected"} />
                   <ReviewValue label="Audience" value={audience?.label ?? "—"} />
+                  {selectedTemplate && <ReviewValue label="Template" value={selectedTemplate.name} />}
+                  <ReviewValue label="Attachments" value={attachments.length ? attachments.map((a) => a.fileName).join(", ") : "None"} />
                   <ReviewValue label="Subject template" value={subject} wide />
                 </div>
               </ReviewCard>
@@ -699,7 +753,7 @@ export default function EmailCampaignsClient({
       )}
 
       <div className="wizard-footer">
-        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady ? <span className="validation-note">Complete all fields to continue.</span> : null}</div>
+        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady ? <span className="validation-note">{templateLocked && !selectedTemplate ? "Pick a template to continue." : "Complete all fields to continue."}</span> : null}</div>
         <div className="footer-actions">
           {step > 0 && <button type="button" className="back-button" onClick={() => setStep((current) => current - 1)}><ArrowLeft size={16} /> Back</button>}
           {step < 3 && <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to {CAMPAIGN_STEPS[step + 1]} <ArrowRight size={16} /></button>}
@@ -796,6 +850,23 @@ const styles = `
   .aud-action.ghost { border-color: ${C.line}; color: ${C.muted}; } .aud-action:disabled { opacity: .45; cursor: not-allowed; }
   .candidate-empty { padding: 26px 18px; text-align: center; color: ${C.muted}; font-size: 13px; }
   .compose-warn { display: flex; align-items: center; gap: 8px; background: #FBE7DF; border: 1px solid ${C.orange}; color: #8A3A1E; border-radius: 9px; padding: 9px 12px; font-size: 12.5px; margin-top: 4px; }
+  .attachment-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .attachment-chip { display: inline-flex; align-items: center; gap: 6px; background: #EEF1F7; border: 1px solid ${C.line}; border-radius: 999px; padding: 5px 12px; font-size: 12.5px; font-weight: 600; color: ${C.navy}; }
+  .attachment-chip small { color: ${C.muted}; font-weight: 400; }
+  .email-attachments { padding: 12px 18px 16px; border-top: 1px solid ${C.line}; }
+  .tpl-manager { border: 1px solid ${C.line}; border-radius: 14px; background: #fff; margin-bottom: 18px; overflow: hidden; }
+  .tpl-manager-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 13px 18px; border: none; background: #FAFBFE; cursor: pointer; text-align: left; font: 700 14px var(--font-head); color: ${C.navy}; }
+  .tpl-manager-body { padding: 16px 18px; border-top: 1px solid ${C.line}; display: grid; gap: 14px; }
+  .tpl-row { display: flex; align-items: center; gap: 10px; border: 1px solid ${C.line}; border-radius: 10px; padding: 10px 14px; flex-wrap: wrap; }
+  .tpl-row strong { color: ${C.navy}; font-size: 13.5px; }
+  .tpl-row .muted-note { color: ${C.muted}; font-size: 12px; }
+  .tpl-row-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .tpl-btn { border: 1px solid ${C.line}; background: #fff; color: ${C.navy}; font-weight: 600; font-size: 12px; padding: 6px 11px; border-radius: 8px; cursor: pointer; }
+  .tpl-btn.primary { background: ${C.navy}; border-color: ${C.navy}; color: #fff; font-weight: 700; }
+  .tpl-btn.danger { color: ${C.orange}; border-color: ${C.orange}; }
+  .tpl-form { display: grid; gap: 10px; border: 1px dashed ${C.line}; border-radius: 10px; padding: 14px; }
+  .tpl-form input, .tpl-form textarea { width: 100%; border: 1px solid ${C.line}; border-radius: 8px; padding: 8px 11px; font: 13px var(--font-body); color: ${C.gray}; box-sizing: border-box; }
+  .tpl-note { font-size: 12.5px; color: ${C.muted}; }
   .reconnect-hint { color: ${C.orange}; font-weight: 600; }
   .history-card { border: 1px solid ${C.line}; border-radius: 14px; background: #fff; overflow: hidden; margin-bottom: 18px; }
   .history-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid ${C.line}; background: ${C.canvas}; font-family: ${HEAD}; font-weight: 700; font-size: 13.5px; color: ${C.navy}; }
@@ -847,3 +918,102 @@ const styles = `
   @media (max-width: 720px) { .email-campaigns-page { padding: 20px 14px 60px; } .campaign-heading, .section-title { align-items: flex-start; flex-direction: column; } .recipient-title-actions { width: 100%; justify-content: space-between; } .previewing-note { width: 100%; } .gmail-connection-card { grid-template-columns: auto minmax(0, 1fr); align-items: start; } .gmail-connection-card form, .gmail-connection-card>.gmail-action { grid-column: 1 / -1; width: 100%; } .stepper { grid-template-columns: repeat(4, minmax(48px, 1fr)); } .step { flex-direction: column; gap: 4px; font-size: 10px; padding: 7px 2px; } .metrics-grid { grid-template-columns: repeat(2, 1fr); } .compose-layout, .preview-layout, .review-grid { grid-template-columns: 1fr; } .review-details { grid-template-columns: 1fr; } .preview-title { align-items: stretch; } .recipient-switcher select { flex: 1; min-width: 0; } .email-meta { padding: 12px 14px; } .email-meta>div { grid-template-columns: 58px 1fr; } .email-body { min-height: 300px; padding: 22px 18px 30px; } .wizard-footer { align-items: flex-start; flex-direction: column; } .footer-actions { width: 100%; } .footer-actions button { flex: 1; justify-content: center; } .result-metrics { grid-template-columns: repeat(2, 1fr); } .campaign-results>div { flex-direction: column; } .result-status { align-items: flex-start; max-width: none; text-align: left; } }
   @media (max-width: 430px) { .metrics-grid { grid-template-columns: 1fr; } .metric div span { white-space: normal; } .step>span:last-child { display: none; } }
 `;
+
+// ============================================================================
+// Admin-only template manager (phase 23). Create/edit templates and manage
+// their attachments — the content fellows are locked to. Server actions do the
+// real permission checks; this UI simply isn't rendered for non-admins.
+// ============================================================================
+export function OutreachTemplateManager({ templates }: { templates: OutreachTemplateView[] }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<{ id: string | null; name: string; subject: string; body: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const act = async (fn: () => Promise<{ error?: string; ok?: unknown; id?: unknown }>) => {
+    setBusy(true); setError(null);
+    const res = await fn().catch(() => ({ error: "Something went wrong — try again." }));
+    setBusy(false);
+    if ("error" in res && res.error) { setError(res.error); return false; }
+    router.refresh();
+    return true;
+  };
+
+  const save = async () => {
+    if (!editing) return;
+    if (await act(() => saveOutreachTemplate({ id: editing.id, name: editing.name, subject: editing.subject, body: editing.body }))) setEditing(null);
+  };
+  const archive = async (id: string) => {
+    await act(() => setOutreachTemplateArchived(id, true));
+  };
+  const upload = async (templateId: string, file: File | null) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.set("templateId", templateId);
+    fd.set("file", file);
+    await act(() => uploadOutreachTemplateAttachment(fd));
+  };
+  const removeAttachment = async (attachmentId: string) => {
+    await act(() => deleteOutreachTemplateAttachment(attachmentId));
+  };
+
+  return (
+    <div className="tpl-manager">
+      <button type="button" className="tpl-manager-head" onClick={() => setOpen((v) => !v)}>
+        <span style={{ flex: 1 }}>Templates <small style={{ color: C.muted, fontWeight: 600 }}>· {templates.length} active · what fellows send from</small></span>
+        <span style={{ color: C.muted }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="tpl-manager-body">
+          {error && <div className="compose-warn"><CircleAlert size={15} /> {error}</div>}
+          {templates.map((t) => (
+            <div className="tpl-row" key={t.id}>
+              <div>
+                <strong>{t.name}</strong>
+                <div className="muted-note">{t.subject}</div>
+                {t.attachments.length > 0 && (
+                  <div className="attachment-chips">
+                    {t.attachments.map((a) => (
+                      <span className="attachment-chip" key={a.id}>
+                        📎 {a.fileName} <small>{fmtBytes(a.sizeBytes)}</small>
+                        <button type="button" className="tpl-btn danger" style={{ padding: "1px 7px", marginLeft: 4 }} disabled={busy} onClick={() => removeAttachment(a.id)} aria-label={`Remove ${a.fileName}`}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="tpl-row-actions">
+                <input type="file" accept=".pdf,.png,.jpg,.jpeg,.docx,.pptx" style={{ display: "none" }}
+                  ref={(el) => { fileRefs.current[t.id] = el; }}
+                  onChange={(e) => { upload(t.id, e.target.files?.[0] ?? null); e.target.value = ""; }} />
+                <button type="button" className="tpl-btn" disabled={busy} onClick={() => fileRefs.current[t.id]?.click()}>📎 Attach file</button>
+                <button type="button" className="tpl-btn" disabled={busy} onClick={() => setEditing({ id: t.id, name: t.name, subject: t.subject, body: t.body })}>Edit</button>
+                <button type="button" className="tpl-btn danger" disabled={busy} onClick={() => archive(t.id)}>Archive</button>
+              </div>
+            </div>
+          ))}
+          {templates.length === 0 && !editing && <div className="tpl-note">No templates yet — fellows can&apos;t send outreach until you create one.</div>}
+          {editing ? (
+            <div className="tpl-form">
+              <input value={editing.name} maxLength={120} placeholder="Template name (e.g. Fall intro — first touch)" onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
+              <input value={editing.subject} maxLength={200} placeholder="Subject — merge fields like {{first_name}} work here" onChange={(e) => setEditing({ ...editing, subject: e.target.value })} />
+              <textarea value={editing.body} rows={8} placeholder="Message body" onChange={(e) => setEditing({ ...editing, body: e.target.value })} />
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button type="button" className="tpl-btn" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
+                <button type="button" className="tpl-btn primary" disabled={busy} onClick={save}>{busy ? "Saving…" : editing.id ? "Save changes" : "Create template"}</button>
+              </div>
+              <div className="tpl-note">Attachments: PDF, PNG, JPG, DOCX, PPTX · 5 MB per file · 10 MB and 5 files per template. Fellows always send the template exactly as written here.</div>
+            </div>
+          ) : (
+            <button type="button" className="tpl-btn primary" style={{ justifySelf: "start" }} disabled={busy}
+              onClick={() => setEditing({ id: null, name: "", subject: INITIAL_CAMPAIGN_SUBJECT, body: INITIAL_CAMPAIGN_BODY })}>
+              + New template
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

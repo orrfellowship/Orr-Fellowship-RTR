@@ -1523,3 +1523,128 @@ export async function setBudgetGuidance(school_id: string | null, items: { categ
   bustCache([], ["/console", "/workspace"]);
   return { ok: true };
 }
+
+// ============================================================================
+// Outreach templates (phase 23) — ADMIN-CURATED. Fellows/leads can only send
+// from these; management is admin/super-admin only. Attachments live on the
+// template (uploaded here, stored in the private outreach-attachments bucket)
+// and are snapshotted onto campaigns at enqueue.
+// ============================================================================
+
+async function requireAdmin(): Promise<{ profile: NonNullable<Awaited<ReturnType<typeof getCurrentProfile>>> } | { error: string }> {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  return { profile };
+}
+
+export async function saveOutreachTemplate(input: { id?: string | null; name: string; subject: string; body: string }) {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const { OUTREACH_LIMITS } = await import("@/lib/gmail/candidate-outreach.server");
+  const { findUnsupportedOutreachVariables } = await import("@/lib/gmail/candidate-tokens");
+  const name = (input.name ?? "").trim();
+  const subject = (input.subject ?? "").trim();
+  const body = input.body ?? "";
+  if (!name || !subject || !body.trim()) return { error: "Name, subject, and message are required." };
+  if (name.length > 120) return { error: "Template name is too long." };
+  if (subject.length > OUTREACH_LIMITS.subject) return { error: "Subject is too long." };
+  if (/[\r\n]/.test(subject)) return { error: "Subject cannot contain line breaks." };
+  if (body.length > OUTREACH_LIMITS.body) return { error: "Message is too long." };
+  const unsupported = [...findUnsupportedOutreachVariables(subject), ...findUnsupportedOutreachVariables(body)];
+  if (unsupported.length) return { error: `Unknown merge field(s): ${unsupported.join(", ")}.` };
+
+  const db = createServiceClient();
+  if (input.id) {
+    const { error } = await db.from("outreach_templates")
+      .update({ name, subject, body, updated_at: new Date().toISOString() })
+      .eq("id", input.id);
+    if (error) return { error: error.message };
+    revalidatePath("/console");
+    revalidatePath("/workspace");
+    return { ok: true, id: input.id };
+  }
+  const { data, error } = await db.from("outreach_templates")
+    .insert({ name, subject, body, created_by: gate.profile.id })
+    .select("id").single();
+  if (error || !data) return { error: error?.message ?? "Template could not be saved." };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true, id: (data as any).id as string };
+}
+
+export async function setOutreachTemplateArchived(id: string, archived: boolean) {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const { error } = await createServiceClient().from("outreach_templates")
+    .update({ is_archived: archived, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// Attachment upload: called with FormData { templateId, file }. Type, size,
+// and per-template count/total limits are enforced here — fellows have no
+// upload surface at all.
+export async function uploadOutreachTemplateAttachment(formData: FormData) {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const { ATTACHMENT_LIMITS, ATTACHMENT_MIME_ALLOWLIST, ATTACHMENTS_BUCKET } = await import("@/lib/gmail/outreach-templates.server");
+
+  const templateId = formData.get("templateId");
+  const file = formData.get("file");
+  if (typeof templateId !== "string" || !templateId) return { error: "Missing template." };
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose a file to attach." };
+  if (!ATTACHMENT_MIME_ALLOWLIST.has(file.type)) return { error: "Allowed types: PDF, PNG, JPG, DOCX, PPTX." };
+  if (file.size > ATTACHMENT_LIMITS.maxFileBytes) return { error: `Files must be ${Math.round(ATTACHMENT_LIMITS.maxFileBytes / 1024 / 1024)} MB or smaller.` };
+
+  const db = createServiceClient();
+  const { data: tpl } = await db.from("outreach_templates").select("id").eq("id", templateId).maybeSingle();
+  if (!tpl) return { error: "Template not found." };
+  const { data: existing } = await db.from("outreach_template_attachments")
+    .select("id, size_bytes").eq("template_id", templateId);
+  const current = existing ?? [];
+  if (current.length >= ATTACHMENT_LIMITS.maxFiles) return { error: `A template can have at most ${ATTACHMENT_LIMITS.maxFiles} attachments.` };
+  const total = current.reduce((s, a: any) => s + Number(a.size_bytes), 0) + file.size;
+  if (total > ATTACHMENT_LIMITS.maxTotalBytes) return { error: `A template's attachments can total at most ${Math.round(ATTACHMENT_LIMITS.maxTotalBytes / 1024 / 1024)} MB.` };
+
+  const safeName = file.name.replace(/[^\w.\- ]+/g, "_").slice(0, 100) || "attachment";
+  const path = `${templateId}/${crypto.randomUUID()}-${safeName}`;
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const { error: upErr } = await db.storage.from(ATTACHMENTS_BUCKET).upload(path, bytes, { contentType: file.type });
+  if (upErr) return { error: `Upload failed: ${upErr.message}` };
+  const { error: insErr } = await db.from("outreach_template_attachments")
+    .insert({ template_id: templateId, file_name: file.name.slice(0, 200), mime_type: file.type, size_bytes: file.size, storage_path: path });
+  if (insErr) {
+    await db.storage.from(ATTACHMENTS_BUCKET).remove([path]); // don't leave an orphan object
+    return { error: insErr.message };
+  }
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function deleteOutreachTemplateAttachment(attachmentId: string) {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const { ATTACHMENTS_BUCKET } = await import("@/lib/gmail/outreach-templates.server");
+  const db = createServiceClient();
+  const { data: att } = await db.from("outreach_template_attachments")
+    .select("id, storage_path").eq("id", attachmentId).maybeSingle();
+  if (!att) return { error: "Attachment not found." };
+  const path = (att as any).storage_path as string;
+  const { error: delErr } = await db.from("outreach_template_attachments").delete().eq("id", attachmentId);
+  if (delErr) return { error: delErr.message };
+  // The drain downloads by storage path from each campaign's snapshot, so only
+  // remove the object when no still-draining campaign references it (an
+  // orphaned object is harmless; a missing one fails in-flight sends).
+  const { count } = await db.from("outreach_campaigns")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "queued")
+    .contains("attachments", JSON.stringify([{ storage_path: path }]));
+  if (!count) await db.storage.from(ATTACHMENTS_BUCKET).remove([path]).catch(() => {});
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}

@@ -2,6 +2,7 @@ import { NextResponse, after } from "next/server";
 import { getCurrentProfile, isPreviewing } from "@/lib/auth";
 import { GmailTestSendError, safeTestSendError } from "@/lib/gmail/test-send.server";
 import { validateOutreachInput, enqueueCandidateCampaign } from "@/lib/gmail/candidate-outreach.server";
+import { resolveCampaignContent } from "@/lib/gmail/outreach-templates.server";
 import { drainOutreachQueue } from "@/lib/gmail/outreach-queue.server";
 
 export const runtime = "nodejs";
@@ -32,9 +33,13 @@ export async function POST(request: Request) {
 
   try {
     const input = validateOutreachInput(body);
+    // Template enforcement: fellows/leads MUST send from an admin template
+    // (whose subject/body/attachments win); admins may free-compose.
+    const content = await resolveCampaignContent(profile.role, { subject: input.subject, body: input.body }, input.templateId);
     const result = await enqueueCandidateCampaign(profile.id, profile.role, {
-      campaignName: input.campaignName, subject: input.subject, body: input.body,
+      campaignName: input.campaignName, subject: content.subject, body: content.body,
       selectedCandidateIds: input.ids, idempotencyKey: input.idempotencyKey,
+      templateId: content.templateId, attachments: content.attachments,
     });
     after(() => drainOutreachQueue().catch((error) => console.error(JSON.stringify({ level: "error", event: "outreach_after_drain_failed", route: "candidates", message: error instanceof Error ? error.message : "Unknown error" }))));
     return NextResponse.json({

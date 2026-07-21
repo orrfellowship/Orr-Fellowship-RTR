@@ -39,6 +39,7 @@ a fresh database, in order, before any phase.
 | 24 | `phase20.sql` | School matching: aliases, trigram matcher, review queue |
 | 25 | `phase21.sql` | Backfill matcher over existing candidates; tier-wide group RLS |
 | 26 | `phase22.sql` | Fix: pin `search_path` on auth helpers so claim/reassign works |
+| 27 | `phase23.sql` | Outreach templates (admin-curated) + email attachments |
 
 > Files sort lexically as `0001…`, then `phase1, phase10, phase11 … phase2, phase3…`.
 > **This table is the true order — don't rely on the filename sort.**
