@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { deleteCandidate } from "@/app/(app)/console/actions";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 import { norm, nameSchoolKey, findDuplicateGroups, type DupCand } from "@/lib/duplicates";
+import ContactPopover from "@/components/ContactPopover";
+import PaginationControls from "@/components/PaginationControls";
 
 // Finds candidate records that look like duplicates of each other — regardless
 // of source (manual entry, bulk import, or JazzHR) — by matching on email or on
@@ -33,11 +35,15 @@ export default function DuplicateReview({ candidates, schools, onDeleted }: {
   // Deleted ids are filtered out locally so the row disappears the moment the
   // server confirms the delete, even before any parent state/refresh lands.
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
   const groups = useMemo(
     () => findDuplicateGroups(candidates.filter((c) => !deletedIds.has(c.id))),
     [candidates, deletedIds],
   );
   const schoolName = (c: DupCand) => candidateSchoolDisplay(c, schools).label;
+  const safePage = Math.min(page, Math.max(0, Math.ceil(groups.length / pageSize) - 1));
+  const shownGroups = groups.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
   const del = (c: DupCand) => {
     if (!confirm(`Delete "${c.name}"? This removes the record and its outreach/intros.`)) return;
@@ -58,7 +64,8 @@ export default function DuplicateReview({ candidates, schools, onDeleted }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, opacity: pending ? 0.7 : 1 }}>
       <div style={{ fontSize: 12.5, color: C.grayMute }}>{groups.length} possible duplicate group{groups.length === 1 ? "" : "s"} (matched by name or email). Keep one and delete the rest.</div>
-      {groups.map((g, gi) => (
+      <PaginationControls page={safePage} pageSize={pageSize} total={groups.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
+      {shownGroups.map((g, gi) => (
         <div key={gi} style={{ border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ padding: "8px 14px", background: C.canvas, fontSize: 11.5, fontWeight: 700, color: C.navy2, textTransform: "uppercase", letterSpacing: 0.4 }}>
             Same {g.reason} · {g.reason === "email" ? g.key : g.members[0].name}
@@ -66,7 +73,7 @@ export default function DuplicateReview({ candidates, schools, onDeleted }: {
           {g.members.map((c) => (
             <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderTop: `1px solid ${C.line}` }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: C.gray }}>{c.name}</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.gray }}><ContactPopover name={c.name} email={c.email} /></div>
                 <div style={{ fontSize: 12, color: C.grayMute }}>
                   {[c.email, schoolName(c), c.stage, c.source === "jazzhr" ? "JazzHR" : c.source === "user_created" ? "Manual" : null].filter(Boolean).join(" · ")}
                 </div>
@@ -76,6 +83,7 @@ export default function DuplicateReview({ candidates, schools, onDeleted }: {
           ))}
         </div>
       ))}
+      <PaginationControls page={safePage} pageSize={pageSize} total={groups.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
     </div>
   );
 }

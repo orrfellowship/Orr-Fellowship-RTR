@@ -29,7 +29,7 @@ check("offers Continue to Compose above the recipient list", src.includes("recip
 check("does not repeat the Gmail sender in the compose form", !src.includes("gmail-compose-sender"));
 check("review shows the shared subject template, not recipient one", src.includes('<ReviewValue label="Subject template" value={subject} wide />'));
 check("all-candidate admin audience is search-first", src.includes('audience?.key === "all" && !q && !pointPersonFilter') && src.includes("Search by name, email, or school, or choose a point person"));
-check("caps broad admin search results", src.includes("matchingRecipients.slice(0, 50)"));
+check("paginates broad recipient results", src.includes("shownRecipients") && src.includes("recipientPageSize") && src.includes("PaginationControls"));
 check("admins can filter contacts by point person", src.includes('aria-label="Filter by point person"') && src.includes("r.tokens.point_person !== pointPersonFilter"));
 
 console.log(failures === 0 ? "\nAll email campaign composer checks passed." : `\n${failures} check(s) failed.`);

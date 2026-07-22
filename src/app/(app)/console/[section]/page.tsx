@@ -194,7 +194,7 @@ async function ConsoleSectionData({
     need.stageCounts ? getCandidateStageCounts() : Promise.resolve([] as StageCountRow[]),
     need.schoolReviews ? listPendingSchoolReviews() : Promise.resolve([]),
     need.favs ? supabase.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.team ? supabase.from("profiles").select("id, full_name, school_id, role").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.team ? supabase.from("profiles").select("id, full_name, email, school_id, role").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.goals ? getGoalsCached() : Promise.resolve([] as any[]),
     need.phases ? supabase.from("playbook_phases").select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.resources ? getResourcesCached() : Promise.resolve([] as any[]),
@@ -207,7 +207,7 @@ async function ConsoleSectionData({
 
   // Candidates tab: first page + count. Full-set facets/slim data hydrate on
   // the client after paint so the route does not block TTFB on every candidate.
-  const PAGE_SIZE = 100;
+  const PAGE_SIZE = 50;
   const candPage = paginatedList
     ? await listCandidates({ variant: "console", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" })
     : { rows: [] as any[], total: 0 };

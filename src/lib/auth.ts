@@ -38,6 +38,7 @@ export const getCurrentProfile = cache(async (): Promise<Profile | null> => {
     .from("profiles")
     .select(PROFILE_COLS_WITH_SCHOOL)
     .eq("id", userId)
+    .eq("is_active", true)
     .maybeSingle();
   return extractProfile(data);
 });
@@ -47,6 +48,7 @@ export const getProfileById = cache(async (id: string): Promise<Profile | null> 
     .from("profiles")
     .select(PROFILE_COLS_WITH_SCHOOL)
     .eq("id", id)
+    .eq("is_active", true)
     .maybeSingle();
   return extractProfile(data);
 });

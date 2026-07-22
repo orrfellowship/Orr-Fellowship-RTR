@@ -94,13 +94,13 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
   const [candidates, favs, team, phases, stageCountRows, allProfiles, allSchools, allGoals, resources] = await Promise.all([
     need.candidates ? fetchAllRows((from, to) => serviceDb.from("candidates").select("id, jazz_id, name, email, school_id, university_raw, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, direct_placement, source, created_by").in("school_id", tierSchoolIds).order("name").range(from, to)) : Promise.resolve([] as any[]),
     wantFavs ? serviceDb.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.team ? serviceDb.from("profiles").select("id, full_name, role").in("school_id", tierSchoolIds).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.team ? serviceDb.from("profiles").select("id, full_name, email, role").in("school_id", tierSchoolIds).eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     // Tier-wide phase read: the tier's playbook stays visible no matter which
     // of the group's school rows it was created under (the "representative"
     // row can shift as schools are added).
     need.phases ? serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").in("school_id", tierSchoolIds.length ? tierSchoolIds : [playbookSchoolId]).order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.stageCounts ? getCandidateStageCounts() : Promise.resolve([]),
-    need.allProfiles ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.allProfiles ? serviceDb.from("profiles").select("id, full_name, email").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.allSchools ? getSchoolsCached() : Promise.resolve([] as any[]),
     need.allGoals ? getGoalsCached() : Promise.resolve([] as any[]),
     need.resources ? getResourcesCached() : Promise.resolve([] as any[]),
@@ -180,7 +180,7 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
 
   // Candidates tab: first page + count. Full-set facets/slim data hydrate on
   // the client after paint so the route does not block TTFB on every candidate.
-  const PAGE_SIZE = 100;
+  const PAGE_SIZE = 50;
   const allPage = paginatedList
     ? await listCandidates({ variant: "workspace", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" })
     : { rows: [] as any[], total: 0, ai: [] as any[] };

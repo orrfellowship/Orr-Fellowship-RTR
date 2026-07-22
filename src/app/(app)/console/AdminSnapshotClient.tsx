@@ -4,6 +4,8 @@ import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { LifeBuoy, Link2, ChevronDown, ChevronRight, CheckCircle2, Star, CopyX, Route } from "lucide-react";
 import { setCandidateLinkedin, resolveHelpRequest, resolveDirectPlacement } from "./actions";
+import ContactPopover from "@/components/ContactPopover";
+import PaginationControls from "@/components/PaginationControls";
 
 const C = {
   navy: "#11123E", orange: "#DD5434", gray: "#303333", grayMute: "#6E7385",
@@ -109,6 +111,9 @@ function DirectPlacementCategory({ candidates, defaultOpen }: { candidates: Dire
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [resolving, setResolving] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const shown = candidates.slice(page * pageSize, (page + 1) * pageSize);
 
   const resolve = (id: string) => {
     setResolving(id);
@@ -120,11 +125,12 @@ function DirectPlacementCategory({ candidates, defaultOpen }: { candidates: Dire
 
   return (
     <CategoryCard icon={<Star size={18} />} title="Direct Placement Potential" count={candidates.length} tone={C.orange} defaultOpen={defaultOpen}>
+      <PaginationControls page={page} pageSize={pageSize} total={candidates.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
       <div style={{ display: "flex", flexDirection: "column" }}>
-        {candidates.map((c) => (
+        {shown.map((c) => (
           <div key={c.id} style={{ display: "flex", gap: 12, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "flex-start" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: C.gray }}>{c.name}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: C.gray }}><ContactPopover name={c.name} email={c.email} /></div>
               <div style={{ fontSize: 12.5, color: C.grayMute, marginTop: 2 }}>
                 {[c.school, c.area_of_study, c.gpa ? `GPA ${c.gpa}` : null].filter(Boolean).join(" · ") || c.email}
               </div>
@@ -139,6 +145,7 @@ function DirectPlacementCategory({ candidates, defaultOpen }: { candidates: Dire
           </div>
         ))}
       </div>
+      <PaginationControls page={page} pageSize={pageSize} total={candidates.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
     </CategoryCard>
   );
 }

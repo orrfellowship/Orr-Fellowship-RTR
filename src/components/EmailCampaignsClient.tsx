@@ -11,6 +11,8 @@ import {
   ChevronRight, CircleAlert, History, Link2, Mail, Send, Unplug, UserRoundCheck, UsersRound,
 } from "lucide-react";
 import type { GmailConnectionStatus } from "@/lib/gmail/types";
+import ContactPopover from "@/components/ContactPopover";
+import PaginationControls from "@/components/PaginationControls";
 import {
   OUTREACH_MERGE_VARIABLES,
   findUnsupportedOutreachVariables,
@@ -160,6 +162,8 @@ export default function EmailCampaignsClient({
   // until the background drainer empties the queue.
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [progress, setProgress] = useState<CampaignProgress | null>(null);
+  const [recipientPage, setRecipientPage] = useState(0);
+  const [recipientPageSize, setRecipientPageSize] = useState(50);
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const inFlight = useRef(false);
@@ -189,7 +193,9 @@ export default function EmailCampaignsClient({
       return `${r.name} ${r.email ?? ""} ${r.school} ${r.tokens.point_person}`.toLowerCase().includes(q);
     });
   }, [allRecipients, audience?.key, search, stageFilter, pointPersonFilter]);
-  const filteredRecipients = isSearchOnlyAudience && !pointPersonFilter ? matchingRecipients.slice(0, 50) : matchingRecipients;
+  const filteredRecipients = matchingRecipients;
+  const shownRecipients = filteredRecipients.slice(recipientPage * recipientPageSize, (recipientPage + 1) * recipientPageSize);
+  useEffect(() => { setRecipientPage(0); }, [audienceKey, search, stageFilter, pointPersonFilter, recipientPageSize]);
 
   const selectedRecipients = useMemo(
     () => allRecipients.filter((r) => selectedIds.has(r.id) && recipientEligible(r)),
@@ -586,7 +592,7 @@ export default function EmailCampaignsClient({
                 <div><strong>{selectedRecipients.length}</strong> selected · Search {allRecipients.length} contacts or choose a point person</div>
               ) : (
                 <>
-                  <div><strong>{selectedRecipients.length}</strong> selected · {matchingRecipients.length} {matchingRecipients.length === 1 ? "match" : "matches"}{matchingRecipients.length > filteredRecipients.length ? ` · showing first ${filteredRecipients.length}` : ""}</div>
+                  <div><strong>{selectedRecipients.length}</strong> selected · {matchingRecipients.length} {matchingRecipients.length === 1 ? "match" : "matches"}</div>
                   <span>{filteredRecipients.filter((r) => !recipientEligible(r)).length} not emailable</span>
                 </>
               )}
@@ -599,14 +605,15 @@ export default function EmailCampaignsClient({
                   <div>Include</div><div>Recipient</div><div>School</div><div>Stage</div><div>Email status</div><div>Class</div>
                 </div>
                 {filteredRecipients.length === 0 && <div className="candidate-empty">No recipients match — {allRecipients.length === 0 ? "you have no candidates in this audience yet." : "adjust your search or filter."}</div>}
-                {filteredRecipients.map((r) => {
+                <PaginationControls page={recipientPage} pageSize={recipientPageSize} total={filteredRecipients.length} onPageChange={setRecipientPage} onPageSizeChange={setRecipientPageSize} />
+                {shownRecipients.map((r) => {
                   const eligible = recipientEligible(r);
                   const included = selectedIds.has(r.id) && eligible;
                   const reason = exclusionReasonFor(r);
                   return (
                     <div className={`candidate-table candidate-row ${eligible ? "" : "excluded"}`} key={r.id}>
                       <div><input type="checkbox" aria-label={`Include ${fullName(r)}`} checked={selectedIds.has(r.id)} disabled={!eligible} onChange={() => toggleCandidate(r)} /></div>
-                      <div><strong>{fullName(r)}</strong><small>{r.email ?? "No email on file"}</small></div>
+                      <div><strong><ContactPopover name={fullName(r)} email={r.email} /></strong><small>{r.email ?? "No email on file"}</small></div>
                       <div>{r.school || "—"}</div>
                       <div>{r.stage ? <StagePill stage={r.stage} /> : <span className="muted">—</span>}</div>
                       <div>{reason ? <StatusPill tone="warning">{reason}</StatusPill> : included ? <StatusPill tone="good">Included</StatusPill> : <StatusPill>Not selected</StatusPill>}</div>
@@ -614,7 +621,7 @@ export default function EmailCampaignsClient({
                     </div>
                   );
                 })}
-                {matchingRecipients.length > filteredRecipients.length && <div className="candidate-empty">More matches are available. Refine your search to find a specific contact.</div>}
+                <PaginationControls page={recipientPage} pageSize={recipientPageSize} total={filteredRecipients.length} onPageChange={setRecipientPage} onPageSizeChange={setRecipientPageSize} />
               </>)}
             </div>
           </div>

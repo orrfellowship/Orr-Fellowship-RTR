@@ -4,6 +4,8 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { fixMisroutedCandidates } from "@/app/(app)/console/actions";
 import { candidateSchoolDisplay, findMisrouted, type CandidateSchool } from "@/lib/candidateSchool";
+import ContactPopover from "@/components/ContactPopover";
+import PaginationControls from "@/components/PaginationControls";
 
 // School routing review — candidates whose stored school disagrees with where
 // their raw imported university text routes today (e.g. "IU Indianapolis"
@@ -31,6 +33,8 @@ export default function RoutingReview({ candidates, schools, onMoved }: {
   const [fixedIds, setFixedIds] = useState<Set<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null); // candidate id or "__all__"
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
 
   const flagged = useMemo(
     () => findMisrouted(candidates.filter((c) => !fixedIds.has(c.id)), schools),
@@ -39,6 +43,8 @@ export default function RoutingReview({ candidates, schools, onMoved }: {
 
   const suggestedLabel = (m: { candidate: RoutingCand; expectedSchoolId: string }) =>
     candidateSchoolDisplay({ school_id: m.expectedSchoolId, university_raw: m.candidate.university_raw }, schools).label;
+  const safePage = Math.min(page, Math.max(0, Math.ceil(flagged.length / pageSize) - 1));
+  const shown = flagged.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
   const apply = (items: { candidate: RoutingCand; expectedSchoolId: string }[], busy: string) => {
     setBusyId(busy); setError(null);
@@ -70,15 +76,17 @@ export default function RoutingReview({ candidates, schools, onMoved }: {
       </div>
       {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "9px 12px", fontSize: 12.5, color: "#8A3A1E" }}>{error}</div>}
 
+      <PaginationControls page={safePage} pageSize={pageSize} total={flagged.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
+
       <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
-        {flagged.map((m, i) => {
+        {shown.map((m, i) => {
           const c = m.candidate;
           const current = candidateSchoolDisplay(c, schools);
           return (
             <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: C.gray }}>
-                  {c.name}
+                  <ContactPopover name={c.name} email={c.email} />
                   <span style={{ fontWeight: 400, color: C.grayMute }}> · imported as &ldquo;{(c.university_raw ?? "").trim()}&rdquo;</span>
                 </div>
                 <div style={{ fontSize: 12, color: C.grayMute, marginTop: 2 }}>
@@ -96,6 +104,7 @@ export default function RoutingReview({ candidates, schools, onMoved }: {
           );
         })}
       </div>
+      <PaginationControls page={safePage} pageSize={pageSize} total={flagged.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
     </div>
   );
 }

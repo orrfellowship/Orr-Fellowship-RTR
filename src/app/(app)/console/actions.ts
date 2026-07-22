@@ -1467,9 +1467,9 @@ export async function getUserSnapshot(userId: string) {
   if (t.role === "admin" || t.role === "super_admin") return { ok: true as const, name: t.full_name, isAdmin: true, queue: [], tasksDone: 0, tasksTotal: 0 };
 
   const { ids: schoolIds } = await getTierSchoolIds(t.school_id);
-  const queue: { name: string; why: string }[] = [];
+  const queue: { name: string; email: string | null; why: string }[] = [];
   if (schoolIds.length) {
-    const cands = await fetchAllRows((from, to) => db.from("candidates").select("id, name, stage, point_person_id, not_interested").in("school_id", schoolIds).range(from, to));
+    const cands = await fetchAllRows((from, to) => db.from("candidates").select("id, name, email, stage, point_person_id, not_interested").in("school_id", schoolIds).range(from, to));
     const list = cands as any[];
     const ids = list.map((c) => c.id);
     const lastContact: Record<string, string> = {};
@@ -1482,7 +1482,7 @@ export async function getUserSnapshot(userId: string) {
     for (const c of list) {
       const ctxId = lead ? c.point_person_id : t.id;
       const tr = evaluateCandidate(c as any, { profileId: ctxId, lastContactISO: lastContact[c.id], now });
-      if (tr) queue.push({ name: c.name, why: tr.why });
+      if (tr) queue.push({ name: c.name, email: c.email, why: tr.why });
     }
   }
 

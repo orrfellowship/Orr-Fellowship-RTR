@@ -14,6 +14,8 @@ import {
 import dynamic from "next/dynamic";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import PersonPicker from "@/components/PersonPicker";
+import ContactPopover from "@/components/ContactPopover";
+import PaginationControls from "@/components/PaginationControls";
 import type { CalEvent } from "@/components/RecruitingCalendar";
 import type { BudgetEntry, Guidance } from "@/components/BudgetPanel";
 import { findDuplicateGroups, nameSchoolKey } from "@/lib/duplicates";
@@ -56,7 +58,7 @@ type Cand = {
   point_person_id: string | null; not_interested: boolean; is_favorite: boolean;
   source: string | null; created_by: string | null;
 };
-type TeamMember = { id: string; full_name: string; school_id?: string | null; role?: string | null };
+type TeamMember = { id: string; full_name: string; email?: string | null; school_id?: string | null; role?: string | null };
 // Slim full-set projection for the Candidates tab's full-dataset features
 // (duplicate detection, JazzHR match review, import dedupe warnings).
 type SlimCand = { id: string; name: string; email: string | null; school_id: string | null; jazz_id: string | null; source: string | null; stage: string | null; area_of_study: string | null; gpa: string | null; university_raw: string | null };
@@ -213,6 +215,7 @@ export default function ConsoleClient({
   const [appRows, setAppRows] = useState<Cand[]>(candidates);
   const [appTotal, setAppTotal] = useState<number>(candidatesTotal ?? candidates.length);
   const [appPage, setAppPage] = useState(0);
+  const [appPageSize, setAppPageSize] = useState(candidatesPageSize);
   const [appLoading, setAppLoading] = useState(false);
   const [candidateFacets, setCandidateFacets] = useState({
     majors: facetMajors,
@@ -382,7 +385,7 @@ export default function ConsoleClient({
   const open = appRows.find((c) => c.id === openId) ?? candidates.find((c) => c.id === openId) ?? null;
 
   // Fetch one page of candidates with the current filters/sort applied server-side.
-  const APP_PAGE_SIZE = candidatesPageSize;
+  const APP_PAGE_SIZE = appPageSize;
   const loadAppPage = async (page: number) => {
     setAppLoading(true);
     const res = await listCandidates({
@@ -407,7 +410,7 @@ export default function ConsoleClient({
     const t = setTimeout(() => { loadAppPage(0); }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appSearch, appSchool, appMajor, appStage, appMinGpa, appFavOnly, appCreator, appSort, showUnrouted]);
+  }, [appSearch, appSchool, appMajor, appStage, appMinGpa, appFavOnly, appCreator, appSort, showUnrouted, appPageSize]);
 
   const facetsLoaded = useRef(candidateFacets.slim.length > 0 || candidateFacets.majors.length > 0 || candidateFacets.stages.length > 0 || candidateFacets.unroutedCount > 0);
   useEffect(() => {
@@ -579,8 +582,6 @@ export default function ConsoleClient({
           const unroutedCount = candidateFacets.unroutedCount;
           const slimCandidateRows = candidateFacets.slim;
           const visible = appRows;
-          const totalPages = Math.max(1, Math.ceil(appTotal / APP_PAGE_SIZE));
-
           const toggleSort = (key: typeof appSort.key) =>
             setAppSort((p) => p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
           const arrow = (key: typeof appSort.key) => appSort.key === key ? (appSort.dir === "asc" ? " ▲" : " ▼") : "";
@@ -590,17 +591,8 @@ export default function ConsoleClient({
           const filtersActive = appSearch.trim() !== "" || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all" || appCreator !== "anyone";
 
           // Pagination control — rendered both above and below the table.
-          const pager = (where: "top" | "bottom") => appTotal > APP_PAGE_SIZE ? (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: where === "top" ? 16 : 16, marginBottom: where === "top" ? 0 : 0 }}>
-              <button onClick={() => loadAppPage(appPage - 1)} disabled={appPage <= 0 || appLoading}
-                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage <= 0 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage <= 0 || appLoading ? "default" : "pointer" }}>← Prev</button>
-              <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>
-                Page {(appPage + 1).toLocaleString()} of {totalPages.toLocaleString()} · {(appPage * APP_PAGE_SIZE + 1).toLocaleString()}–{Math.min((appPage + 1) * APP_PAGE_SIZE, appTotal).toLocaleString()} of {appTotal.toLocaleString()}
-              </span>
-              <button onClick={() => loadAppPage(appPage + 1)} disabled={appPage >= totalPages - 1 || appLoading}
-                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage >= totalPages - 1 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage >= totalPages - 1 || appLoading ? "default" : "pointer" }}>Next →</button>
-            </div>
-          ) : null;
+          const pager = (where: "top" | "bottom") => <div style={{ marginTop: where === "top" ? 8 : 0 }}><PaginationControls page={appPage} pageSize={APP_PAGE_SIZE} total={appTotal} loading={appLoading}
+            onPageChange={loadAppPage} onPageSizeChange={(size) => { setAppPage(0); setAppPageSize(size); }} /></div>;
 
           return (
           <>
@@ -754,7 +746,7 @@ export default function ConsoleClient({
                       onMouseEnter={(e) => (e.currentTarget.style.background = "#F0F4FA")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}><ContactPopover name={c.name} email={c.email} /></div>
                         <div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div>
                       </div>
                       <div style={{ fontSize: 13.5 }} onClick={(e) => e.stopPropagation()}>
@@ -912,7 +904,7 @@ export default function ConsoleClient({
           const renderSchoolCard = (s: typeof schools[0], showGoalForm = true) => {
             const accent = s.color_primary ?? C.navy2;
             const sc = stageCounts.filter((r) => r.school_id === s.id);
-            const teamSize = users.filter((u) => u.school_id === s.id).length;
+            const teamSize = users.filter((u) => u.is_active && u.school_id === s.id).length;
             const g = goals.find((g) => g.school_id === s.id);
             const draft = goalDraft(s.id);
             const sourced = countStages(sc, SOURCED);
@@ -1315,14 +1307,17 @@ export default function ConsoleClient({
 
 // ---- User Weekly Snapshot (read-only, for User Management) ----
 function UserSnapshotModal({ user, onClose }: { user: UserProfile; onClose: () => void }) {
-  const [data, setData] = useState<{ name: string; isAdmin: boolean; queue: { name: string; why: string }[]; tasksDone: number; tasksTotal: number } | null>(null);
+  const [data, setData] = useState<{ name: string; isAdmin: boolean; queue: { name: string; email: string | null; why: string }[]; tasksDone: number; tasksTotal: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
   useEffect(() => {
     let active = true;
     getUserSnapshot(user.id).then((r) => { if (!active) return; if ("ok" in r && r.ok) setData(r as any); else setError(("error" in r ? r.error : null) ?? "Could not load snapshot."); });
     return () => { active = false; };
   }, [user.id]);
   const taskPct = data && data.tasksTotal > 0 ? Math.round((data.tasksDone / data.tasksTotal) * 100) : 0;
+  const shownQueue = data?.queue.slice(page * pageSize, (page + 1) * pageSize) ?? [];
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.45)" }} />
@@ -1349,13 +1344,15 @@ function UserSnapshotModal({ user, onClose }: { user: UserProfile; onClose: () =
             </div>
             <div style={{ fontFamily: HEAD, fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 8 }}>Needs their attention</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {data.queue.map((q, i) => (
+              <PaginationControls page={page} pageSize={pageSize} total={data.queue.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
+              {shownQueue.map((q, i) => (
                 <div key={i} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "10px 12px" }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: C.gray }}>{q.name}</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: C.gray }}><ContactPopover name={q.name} email={q.email} /></div>
                   <div style={{ fontSize: 12, color: C.grayMute }}>{q.why}</div>
                 </div>
               ))}
               {data.queue.length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>All clear — nothing queued.</div>}
+              <PaginationControls page={page} pageSize={pageSize} total={data.queue.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
             </div>
           </>
         )}
@@ -1461,7 +1458,7 @@ function CandidateDrawer({ c, profile, team, schools, onClose, onSaved, startTra
           {!editing && c.created_by === profile.id && (
             <button onClick={startEdit} title="Edit candidate details" style={{ position: "absolute", top: 14, right: 54, background: C.orange, border: "none", color: "#fff", height: 32, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: "0 2px 8px rgba(221,84,52,.4)" }}>✎ Edit details</button>
           )}
-          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}>{c.name}</h2>
+          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}><ContactPopover name={c.name} email={c.email} /></h2>
           <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.72)" }}>{c.area_of_study}</div>
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>
         </div>

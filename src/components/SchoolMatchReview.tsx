@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { resolveSchoolMatch, dismissSchoolMatch, type SchoolMatchReviewRow } from "@/app/(app)/console/actions";
+import PaginationControls from "@/components/PaginationControls";
 
 // School match review — intake records the phase20 matcher couldn't place:
 // unresolved text (no in-group match ≥ 0.60) and tripwires (≥ 0.85 against a
@@ -34,9 +35,13 @@ export default function SchoolMatchReview({ reviews, schools }: {
   // Per-review UI state: the picked school and whether the picker shows every group.
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [allSchools, setAllSchools] = useState<Record<string, boolean>>({});
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
 
   const schoolById = useMemo(() => new Map(schools.map((s) => [s.id, s])), [schools]);
   const open = reviews.filter((r) => !handled.has(r.id));
+  const safePage = Math.min(page, Math.max(0, Math.ceil(open.length / pageSize) - 1));
+  const shown = open.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
   const pickFor = (r: SchoolMatchReviewRow) => picks[r.id] ?? r.suggested_school_id ?? "";
   const optionsFor = (r: SchoolMatchReviewRow) => {
@@ -64,7 +69,8 @@ export default function SchoolMatchReview({ reviews, schools }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "9px 12px", fontSize: 13, color: "#8A3A1E" }}>{error}</div>}
-      {open.map((r) => {
+      <PaginationControls page={safePage} pageSize={pageSize} total={open.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
+      {shown.map((r) => {
         const cross = r.cross_school_id ? schoolById.get(r.cross_school_id) : null;
         const suggestion = r.suggested_school_id ? schoolById.get(r.suggested_school_id) : null;
         const busy = busyId === r.id && pending;
@@ -117,6 +123,7 @@ export default function SchoolMatchReview({ reviews, schools }: {
           </div>
         );
       })}
+      <PaginationControls page={safePage} pageSize={pageSize} total={open.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
       <div style={{ fontSize: 12, color: C.grayMute }}>
         Assigning also saves what was typed as an alias for that school, so the same text matches automatically next time.
       </div>

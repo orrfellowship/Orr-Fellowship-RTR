@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", orange: "#DD5434",
@@ -29,14 +30,36 @@ export default function PersonPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0, width: 220 });
 
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    const place = () => {
+      const r = buttonRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const width = Math.max(220, Math.min(300, r.width));
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+      const roomBelow = window.innerHeight - r.bottom;
+      setMenuPos({ top: roomBelow >= 300 ? r.bottom + 4 : Math.max(8, r.top - 294), left, width });
     };
+    const onDoc = (e: MouseEvent) => {
+      const node = e.target as Node;
+      if (!wrapRef.current?.contains(node) && !menuRef.current?.contains(node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); buttonRef.current?.focus(); } };
+    place();
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   const selectedLabel = useMemo(() => {
@@ -63,7 +86,7 @@ export default function PersonPicker({
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
-      <button type="button" onClick={() => setOpen((v) => !v)}
+      <button ref={buttonRef} type="button" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((v) => !v)}
         style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left",
           fontSize, fontWeight: 600, color: value === "__team__" ? C.navy2 : (isAssigned ? C.navy : C.orange),
           border: `1px solid ${C.line}`, borderRadius: 7, padding: compact ? "4px 7px" : "6px 9px", background: "#fff", cursor: "pointer" }}>
@@ -71,8 +94,8 @@ export default function PersonPicker({
         <span style={{ color: C.grayMute, fontSize: 10 }}>▾</span>
       </button>
 
-      {open && (
-        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 80, minWidth: 220, maxWidth: 300,
+      {open && createPortal(
+        <div ref={menuRef} role="dialog" aria-label="Choose a person" style={{ position: "fixed", top: menuPos.top, left: menuPos.left, zIndex: 200, width: menuPos.width,
           background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(11,12,42,.14)", overflow: "hidden" }}>
           <div style={{ padding: 8, borderBottom: `1px solid ${C.line}` }}>
             <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={placeholder}
@@ -88,7 +111,8 @@ export default function PersonPicker({
             ))}
             {filtered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12.5, color: C.grayMute, fontStyle: "italic" }}>No matches.</div>}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

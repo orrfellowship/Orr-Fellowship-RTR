@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { approveJazzMatch, rejectJazzMatch } from "@/app/(app)/console/actions";
 import { routeToSchoolName } from "@/lib/stages";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
+import PaginationControls from "@/components/PaginationControls";
 
 const C = {
   navy: "#11123E", navy2: "#485F92", orange: "#DD5434", gold: "#C9A227",
@@ -31,6 +32,9 @@ export default function MatchReview({ reviews, candidates, schools, compact = fa
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const shown = reviews.slice(page * pageSize, (page + 1) * pageSize);
 
   const schoolName = (cand: Cand | null) => cand ? candidateSchoolDisplay(cand, schools).label : null;
 
@@ -51,7 +55,8 @@ export default function MatchReview({ reviews, candidates, schools, compact = fa
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, opacity: pending ? 0.7 : 1 }}>
-      {reviews.map((r) => {
+      <PaginationControls page={page} pageSize={pageSize} total={reviews.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
+      {shown.map((r) => {
         const snap = r.jazz_snapshot ?? {};
         const cand = candidates.find((c) => c.id === r.candidate_id) ?? null;
         const jazzSchool = routeToSchoolName(snap.university_raw) ?? snap.university_raw ?? null;
@@ -102,6 +107,7 @@ export default function MatchReview({ reviews, candidates, schools, compact = fa
           </div>
         );
       })}
+      <PaginationControls page={page} pageSize={pageSize} total={reviews.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
     </div>
   );
 }

@@ -18,7 +18,7 @@ export async function loadNavData(profile: Profile): Promise<NavData> {
     const { count: apps } = await db.from("candidates").select("id", { count: "exact", head: true });
     if (apps != null) badges.applicants = apps;
     // Users tab is available to all admins now, so show its count for admin+.
-    const { count: users } = await db.from("profiles").select("id", { count: "exact", head: true });
+    const { count: users } = await db.from("profiles").select("id", { count: "exact", head: true }).eq("is_active", true);
     if (users != null) badges.users = users;
     return { badges, thisWeek: null };
   }
