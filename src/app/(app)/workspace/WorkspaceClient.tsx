@@ -32,6 +32,7 @@ const ImportInfoModal = dynamic(() => import("@/components/ImportInfoModal"));
 const PlaybookBoard = dynamic(() => import("@/components/PlaybookBoard"));
 const ResourcesPanel = dynamic(() => import("@/components/ResourcesPanel"));
 const RecruitingCalendar = dynamic(() => import("@/components/RecruitingCalendar"));
+const RecruitingRounds = dynamic(() => import("@/components/RecruitingRounds"));
 const BudgetPanel = dynamic(() => import("@/components/BudgetPanel"));
 import { useIsMobile } from "@/lib/useIsMobile";
 
