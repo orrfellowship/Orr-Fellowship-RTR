@@ -16,6 +16,7 @@ import PaginationControls from "@/components/PaginationControls";
 import {
   OUTREACH_MERGE_VARIABLES,
   findUnsupportedOutreachVariables,
+  findManualPlaceholders,
   sendEtaLabel,
   type ComposerRecipient,
   type OutreachAudience,
@@ -255,6 +256,9 @@ export default function EmailCampaignsClient({
   );
   const currentPreview = selectedRecipients[Math.min(previewIndex, Math.max(0, selectedRecipients.length - 1))];
   const unsupportedVariables = [...findUnsupportedOutreachVariables(subject), ...findUnsupportedOutreachVariables(body)];
+  // Single-bracket [placeholders] must be replaced before sending — they never
+  // auto-fill. Blocks advancing past Compose (and sending) until they're gone.
+  const manualPlaceholders = [...new Set([...findManualPlaceholders(subject), ...findManualPlaceholders(body)])];
   const selectedCandidateIds = Array.from(selectedIds);
   const campaignFingerprint = JSON.stringify({ audienceKey, campaignName, subject, body, selectedCandidateIds, templateId });
   const confirmed = confirmationFingerprint === campaignFingerprint;
@@ -265,6 +269,7 @@ export default function EmailCampaignsClient({
     && subject.length <= LIMITS.subject
     && body.length <= LIMITS.body
     && unsupportedVariables.length === 0
+    && manualPlaceholders.length === 0
     && (!templateLocked || !!selectedTemplate); // fellows must send from a template
   const canContinue = step === 0 ? selectedRecipients.length > 0 : step === 1 ? !!composeReady : true;
   const connectionNotice = gmailNoticeText(gmailNotice);
@@ -713,6 +718,14 @@ export default function EmailCampaignsClient({
                 </div>
               )}
               {unsupportedVariables.length > 0 && <div className="compose-warn"><CircleAlert size={15} /> Unknown merge field(s): {unsupportedVariables.join(", ")}. Fix before continuing.</div>}
+              {manualPlaceholders.length > 0 && (
+                <div className="compose-warn placeholder-warn">
+                  <CircleAlert size={15} />
+                  {templateLocked
+                    ? <>This template still has placeholder(s) to fill: <b>{manualPlaceholders.join(", ")}</b>. Ask an admin to finish it — it can&apos;t be sent as-is.</>
+                    : <>Replace the placeholder(s) <b>{manualPlaceholders.join(", ")}</b> before continuing — the <span style={{ color: "#B42318", fontWeight: 700 }}>red</span> brackets won&apos;t auto-fill.</>}
+                </div>
+              )}
             </div>
             <aside className="variables-card">
               <div className="variables-heading"><span>Merge variables</span><small>{templateLocked ? "Filled automatically" : `Insert into ${activeField}`}</small></div>
@@ -820,7 +833,7 @@ export default function EmailCampaignsClient({
       )}
 
       <div className="wizard-footer">
-        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady ? <span className="validation-note">{templateLocked && !selectedTemplate ? "Pick a template to continue." : "Complete all fields to continue."}</span> : null}</div>
+        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady ? <span className="validation-note">{templateLocked && !selectedTemplate ? "Pick a template to continue." : manualPlaceholders.length > 0 ? `Replace ${manualPlaceholders.join(", ")} before continuing.` : "Complete all fields to continue."}</span> : null}</div>
         <div className="footer-actions">
           {step > 0 && <button type="button" className="back-button" onClick={() => setStep((current) => current - 1)}><ArrowLeft size={16} /> Back</button>}
           {step < 3 && <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to {CAMPAIGN_STEPS[step + 1]} <ArrowRight size={16} /></button>}
@@ -945,6 +958,7 @@ const styles = `
   .aud-action.ghost { border-color: ${C.line}; color: ${C.muted}; } .aud-action:disabled { opacity: .45; cursor: not-allowed; }
   .candidate-empty { padding: 26px 18px; text-align: center; color: ${C.muted}; font-size: 13px; }
   .compose-warn { display: flex; align-items: center; gap: 8px; background: #FBE7DF; border: 1px solid ${C.orange}; color: #8A3A1E; border-radius: 9px; padding: 9px 12px; font-size: 12.5px; margin-top: 4px; }
+  .compose-warn.placeholder-warn { background: #FDE7E4; border-color: #B42318; color: #7A1D12; }
   .attachment-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
   .attachment-chip { display: inline-flex; align-items: center; gap: 6px; background: #EEF1F7; border: 1px solid ${C.line}; border-radius: 999px; padding: 5px 12px; font-size: 12.5px; font-weight: 600; color: ${C.navy}; }
   .attachment-chip small { color: ${C.muted}; font-weight: 400; }

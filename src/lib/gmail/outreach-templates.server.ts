@@ -1,6 +1,6 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus, type AppRole } from "@/lib/types";
-import { findUnsupportedOutreachVariables } from "./candidate-tokens";
+import { findUnsupportedOutreachVariables, findManualPlaceholders } from "./candidate-tokens";
 import { GmailTestSendError } from "./test-send.server";
 
 // ============================================================================
@@ -146,6 +146,16 @@ export async function resolveCampaignContent(
   ];
   if (unsupported.length) {
     throw new GmailTestSendError("unsupported_merge_variable", `The template contains unknown merge field(s): ${unsupported.join(", ")}. Ask an admin to fix it.`, 400);
+  }
+  // Single-bracket [placeholders] must be filled in before anything goes out —
+  // they never auto-fill, so a live send would email the literal "[text]".
+  const placeholders = [
+    ...findManualPlaceholders(resolved.subject),
+    ...findManualPlaceholders(resolved.body),
+  ];
+  if (placeholders.length) {
+    const noun = isAdminPlus(role) ? "Fill in" : "The template still has";
+    throw new GmailTestSendError("unfilled_placeholder", `${noun} the placeholder(s) ${[...new Set(placeholders)].join(", ")} before sending.${isAdminPlus(role) ? "" : " Ask an admin to finish the template."}`, 400);
   }
   return resolved;
 }

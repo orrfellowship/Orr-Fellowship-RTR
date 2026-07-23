@@ -20,6 +20,16 @@ export function findUnsupportedOutreachVariables(template: string): string[] {
   return [...new Set(unsupported)];
 }
 
+// Single-bracket [placeholders] are things a person must replace on their own
+// before sending — unlike {{merge_fields}}, they never auto-fill. The composer
+// highlights them red and blocks sending until they're gone; the send path
+// re-checks server-side so a modified client can't slip one through. Matches
+// "[text]" on a single line (no nested brackets); {{merge}} tokens use braces
+// and never match here.
+export function findManualPlaceholders(template: string): string[] {
+  return [...new Set(template.match(/\[[^[\]\n]+\]/g) ?? [])];
+}
+
 export type OutreachTokens = {
   first_name: string; last_name: string; full_name: string;
   school: string; stage: string; class_year: string; point_person: string;

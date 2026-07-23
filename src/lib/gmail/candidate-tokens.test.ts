@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   findUnsupportedOutreachVariables,
+  findManualPlaceholders,
   renderOutreachTemplate,
   splitName,
   parseClassYear,
@@ -29,6 +30,12 @@ check("empty grad date → empty", parseClassYear(null) === "" && parseClassYear
 check("accepts all supported tokens", findUnsupportedOutreachVariables("Hi {{first_name}} at {{school}} ({{class_year}}) — {{stage}}, {{point_person}}").length === 0);
 check("flags a typo'd token", findUnsupportedOutreachVariables("Hi {{frist_name}}").includes("{{frist_name}}"));
 check("flags a malformed variable", findUnsupportedOutreachVariables("Hi {{first_name}").includes("Malformed merge variable"));
+
+// findManualPlaceholders — [single brackets] must be filled in before sending
+check("finds a single-bracket placeholder", findManualPlaceholders("Hi {{first_name}}, from [Your Name]").includes("[Your Name]"));
+check("finds multiple, de-duplicated", (() => { const p = findManualPlaceholders("[X] and [Y] and [X]"); return p.length === 2 && p.includes("[X]") && p.includes("[Y]"); })());
+check("ignores {{merge_fields}}", findManualPlaceholders("Hi {{first_name}} at {{school}}").length === 0);
+check("clean template has none", findManualPlaceholders("Hi there, thanks for your time.").length === 0);
 
 // rendering
 const tokens = candidateOutreachTokens({
