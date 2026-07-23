@@ -13,7 +13,7 @@ const src = readFileSync(new URL("./EmailCampaignsClient.tsx", import.meta.url),
 
 check("four wizard steps", src.includes('["Recipients", "Compose", "Preview", "Review"]'));
 check("sends real candidate outreach via the live endpoint", src.includes("/api/outreach/candidates"));
-check("supports the whole-team endpoint", src.includes("/api/outreach/team"));
+check("supports the fellow-cohort endpoint", src.includes("/api/outreach/team"));
 check("polls campaign status for live progress", src.includes("/api/google/campaign-status"));
 check("renders real merge tokens (not demo vars)", src.includes("OUTREACH_MERGE_VARIABLES") && src.includes("renderHighlightedOutreachTemplate"));
 check("highlights personalized values in the preview", src.includes("renderHighlightedOutreachTemplate") && src.includes('className="merge-value"'));

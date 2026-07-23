@@ -8,8 +8,8 @@ import { drainOutreachQueue } from "@/lib/gmail/outreach-queue.server";
 
 export const runtime = "nodejs";
 
-// Whole-team send (e.g. a cohort celebration) — ADMIN/SUPER ONLY. Temporary
-// audience; safe to remove after use. Sender/role from the session.
+// Fellow-cohort send — ADMIN/SUPER ONLY. Sender/role come from the session;
+// recipient IDs are resolved against classified fellow/team-lead profiles.
 
 function err(e: GmailTestSendError) {
   return NextResponse.json(safeTestSendError(e), { status: e.status, headers: { "Cache-Control": "private, no-store" } });
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
 
   const profile = await getCurrentProfile();
   if (!profile) return err(new GmailTestSendError("forbidden", "Sign in to send.", 403));
-  if (!isAdminPlus(profile.role)) return err(new GmailTestSendError("forbidden", "Only an admin can email the whole team.", 403));
+  if (!isAdminPlus(profile.role)) return err(new GmailTestSendError("forbidden", "Only an admin can email fellow cohorts.", 403));
   if (await isPreviewing()) return err(new GmailTestSendError("preview_read_only", "Exit View As mode before sending.", 403));
 
   let body: unknown;
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
       selectedUserIds: input.ids, idempotencyKey: input.idempotencyKey,
       templateId: content.templateId, attachments: content.attachments,
     });
-    if (result.forbidden) return err(new GmailTestSendError("forbidden", "Only an admin can email the whole team.", 403));
+    if (result.forbidden) return err(new GmailTestSendError("forbidden", "Only an admin can email fellow cohorts.", 403));
     after(() => drainOutreachQueue().catch((error) => console.error(JSON.stringify({ level: "error", event: "outreach_after_drain_failed", route: "team", message: error instanceof Error ? error.message : "Unknown error" }))));
     return NextResponse.json({
       success: true, campaignId: result.campaignId, total: result.queued + result.invalid,

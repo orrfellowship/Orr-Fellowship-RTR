@@ -156,20 +156,50 @@ async function defaultLoadProfileNames(ids: string[]): Promise<Map<string, strin
 }
 
 // ---------------------------------------------------------------------------
-// "Whole team" audience — email the RTR users themselves (fellows), not
-// candidates. ADMIN/SUPER ONLY (e.g. a celebration note to the fellows). These
+// Fellow-cohort audiences — email the RTR users themselves, not candidates.
+// ADMIN/SUPER ONLY (e.g. a note to first- or second-year fellows). These
 // recipients aren't candidates, so per-candidate rules (do_not_contact, 2/week)
 // don't apply — candidate_id is null and only the 300/sender/day cap governs.
 // ---------------------------------------------------------------------------
 
-export type OutreachUser = { id: string; fullName: string | null; email: string | null };
+export type OutreachUser = {
+  id: string;
+  fullName: string | null;
+  email: string | null;
+  role?: AppRole | null;
+  fellowshipYear?: 1 | 2 | null;
+};
 
-export function excludePreviouslyEmailedUsers<T extends { email: string | null }>(users: T[], sentEmails: Iterable<string>): T[] {
-  const sent = new Set(Array.from(sentEmails, (email) => email.trim().toLowerCase()).filter(Boolean));
-  return users.filter((user) => {
-    const email = user.email?.trim().toLowerCase();
-    return !!email && !sent.has(email);
+// Duplicate active profiles should never produce duplicate cohort recipients.
+// Prefer the team-lead row when the same person has both fellow + team-lead
+// profiles, then de-duplicate any remaining repeated email.
+export function dedupeOutreachUsers<T extends OutreachUser>(users: T[]): T[] {
+  const byName = new Map<string, T>();
+  for (const user of users) {
+    if (!user.email?.trim()) continue;
+    const nameKey = (user.fullName ?? "").trim().toLowerCase();
+    const key = nameKey || `id:${user.id}`;
+    const current = byName.get(key);
+    if (!current || (user.role === "team_lead" && current.role !== "team_lead")) byName.set(key, user);
+  }
+  const emails = new Set<string>();
+  return Array.from(byName.values()).filter((user) => {
+    const email = user.email!.trim().toLowerCase();
+    if (emails.has(email)) return false;
+    emails.add(email);
+    return true;
   });
+}
+
+export function splitFellowCohorts<T extends OutreachUser>(users: T[]): { firstYears: T[]; secondYears: T[] } {
+  const eligible = dedupeOutreachUsers(users).filter((user) =>
+    (user.role === "fellow" || user.role === "team_lead")
+    && (user.fellowshipYear === 1 || user.fellowshipYear === 2),
+  );
+  return {
+    firstYears: eligible.filter((user) => user.fellowshipYear === 1),
+    secondYears: eligible.filter((user) => user.fellowshipYear === 2),
+  };
 }
 
 export function buildUserRecipients(
@@ -189,7 +219,7 @@ export function buildUserRecipients(
 
 export type UsersCampaignInput = {
   campaignName: string; subject: string; body: string;
-  selectedUserIds?: string[]; // omit/empty → every active user with an email
+  selectedUserIds?: string[]; // omit/empty → every classified active fellow
   idempotencyKey?: string | null;
   templateId?: string | null;
   attachments?: import("./outreach-templates.server").CampaignAttachment[];
@@ -206,7 +236,7 @@ export async function enqueueUsersCampaign(
   input: UsersCampaignInput,
   deps: UsersCampaignDeps = {},
 ): Promise<EnqueueResult & { forbidden?: true }> {
-  // Emailing the whole team is an admin/super power — never a fellow's.
+  // Emailing fellow cohorts is an admin/super power — never a fellow's.
   if (!isAdminPlus(role)) return { forbidden: true, campaignId: "", queued: 0, skippedDnc: 0, skippedQuota: 0, invalid: 0, replayed: false };
   const loadUsers = deps.loadUsers ?? defaultLoadUsers;
   const enqueue = deps.enqueue ?? enqueueOutreachCampaign;
@@ -223,22 +253,30 @@ export async function enqueueUsersCampaign(
 
 async function defaultLoadUsers(ids: string[] | null): Promise<OutreachUser[]> {
   const db = createServiceClient();
-  let q = db.from("profiles").select("id, full_name, email").eq("is_active", true).not("email", "is", null);
+  let q = db.from("profiles")
+    .select("id, full_name, email, role, fellowship_year")
+    .eq("is_active", true)
+    .in("role", ["fellow", "team_lead"])
+    .not("fellowship_year", "is", null)
+    .not("email", "is", null);
   if (ids) q = q.in("id", ids);
-  const [{ data, error }, { data: sentRows, error: sentError }] = await Promise.all([
-    q,
-    db.from("outreach_sends").select("to_email").eq("status", "sent"),
-  ]);
-  if (error) throw new Error(`Failed to load team recipients: ${error.message}`);
-  if (sentError) throw new Error(`Failed to load prior outreach recipients: ${sentError.message}`);
-  const users = (data ?? []).map((p: any) => ({ id: p.id, fullName: p.full_name, email: p.email }));
-  return excludePreviouslyEmailedUsers(users, (sentRows ?? []).map((row: any) => row.to_email as string));
+  const { data, error } = await q;
+  if (error) throw new Error(`Failed to load fellow recipients: ${error.message}`);
+  const cohorts = splitFellowCohorts((data ?? []).map((p: any) => ({
+    id: p.id,
+    fullName: p.full_name,
+    email: p.email,
+    role: p.role,
+    fellowshipYear: p.fellowship_year,
+  })));
+  return [...cohorts.firstYears, ...cohorts.secondYears];
 }
 
 // ---------------------------------------------------------------------------
 // Audience loading for the composer. Fellows/leads see one audience — their own
-// assigned candidates. Admins/supers see all candidates + the whole-team
-// audience. Each recipient carries a precomputed token set so the client
+// assigned candidates. Admins/supers see all candidates + separate first- and
+// second-year fellow audiences. Each recipient carries a precomputed token set
+// so the client
 // preview matches the server's send.
 // ---------------------------------------------------------------------------
 
@@ -254,9 +292,10 @@ function candidateToComposer(row: any, schools: any[], ownerNames: Map<string, s
   };
 }
 
-function userToComposer(u: any): ComposerRecipient {
-  const tokens = candidateOutreachTokens({ name: u.full_name, stage: "", gradDate: "", school: "", pointPerson: "" });
-  return { id: u.id, name: (u.full_name ?? "").trim(), email: u.email, school: "", stage: "Team", classYear: "", area: u.role ?? null, doNotContact: false, tokens };
+function userToComposer(u: OutreachUser): ComposerRecipient {
+  const tokens = candidateOutreachTokens({ name: u.fullName, stage: "", gradDate: "", school: "", pointPerson: "" });
+  const yearLabel = u.fellowshipYear === 1 ? "First-year fellow" : "Second-year fellow";
+  return { id: u.id, name: (u.fullName ?? "").trim(), email: u.email, school: "", stage: yearLabel, classYear: "", area: u.role ?? null, doNotContact: false, tokens };
 }
 
 const CAND_FIELDS = "id, name, email, stage, grad_date, school_id, university_raw, point_person_id, do_not_contact, area_of_study";
@@ -269,16 +308,25 @@ export async function loadOutreachAudiences(profile: Profile): Promise<OutreachA
     const cands = await fetchAllRows<any>((from, to) => db.from("candidates").select(CAND_FIELDS).order("name").range(from, to));
     const ownerIds = Array.from(new Set(cands.map((c) => c.point_person_id).filter((v): v is string => !!v)));
     const ownerNames = ownerIds.length ? await defaultLoadProfileNames(ownerIds) : new Map<string, string>();
-    const [{ data: users, error: usersError }, { data: sentRows, error: sentError }] = await Promise.all([
-      db.from("profiles").select("id, full_name, email, role").eq("is_active", true).not("email", "is", null).order("full_name"),
-      db.from("outreach_sends").select("to_email").eq("status", "sent"),
-    ]);
-    if (usersError) throw new Error(`Failed to load team audience: ${usersError.message}`);
-    if (sentError) throw new Error(`Failed to load prior outreach recipients: ${sentError.message}`);
-    const team = excludePreviouslyEmailedUsers(users ?? [], (sentRows ?? []).map((row: any) => row.to_email as string));
+    const { data: userRows, error: usersError } = await db.from("profiles")
+      .select("id, full_name, email, role, fellowship_year")
+      .eq("is_active", true)
+      .in("role", ["fellow", "team_lead"])
+      .not("fellowship_year", "is", null)
+      .not("email", "is", null)
+      .order("full_name");
+    if (usersError) throw new Error(`Failed to load fellow audiences: ${usersError.message}`);
+    const { firstYears, secondYears } = splitFellowCohorts((userRows ?? []).map((p: any) => ({
+      id: p.id,
+      fullName: p.full_name,
+      email: p.email,
+      role: p.role,
+      fellowshipYear: p.fellowship_year,
+    })));
     return [
       { key: "all", label: "All candidates", description: "Every candidate in the pipeline", endpoint: "candidates", recipients: cands.map((c) => candidateToComposer(c, schools, ownerNames)) },
-      { key: "team", label: "Whole team", description: "Fellows & staff who have not received this outreach test", endpoint: "team", recipients: team.map(userToComposer) },
+      { key: "first_year_fellows", label: "First-year fellows", description: "Active first-year fellows and team leads", endpoint: "team", recipients: firstYears.map(userToComposer) },
+      { key: "second_year_fellows", label: "Second-year fellows", description: "Active second-year fellows and team leads", endpoint: "team", recipients: secondYears.map(userToComposer) },
     ];
   }
 

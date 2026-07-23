@@ -62,9 +62,9 @@ export type ComposerRecipient = {
 };
 
 // A selectable group. endpoint routes the send: "candidates" (assignment-scoped)
-// or "team" (admin-only whole-team).
+// or "team" (admin-only fellow cohorts).
 export type OutreachAudience = {
-  key: "mine" | "all" | "team";
+  key: "mine" | "all" | "first_year_fellows" | "second_year_fellows";
   label: string; description: string;
   endpoint: "candidates" | "team";
   recipients: ComposerRecipient[];

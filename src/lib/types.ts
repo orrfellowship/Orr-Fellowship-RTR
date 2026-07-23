@@ -10,6 +10,7 @@ export interface Profile {
   full_name: string;
   email: string;
   role: AppRole;
+  fellowship_year: 1 | 2 | null;
   school_id: string | null;
   is_active: boolean;
 }
