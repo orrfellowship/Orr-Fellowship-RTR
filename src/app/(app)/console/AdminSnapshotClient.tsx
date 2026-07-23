@@ -6,6 +6,7 @@ import { LifeBuoy, Link2, ChevronDown, ChevronRight, CheckCircle2, Star, CopyX, 
 import { setCandidateLinkedin, resolveHelpRequest, resolveDirectPlacement } from "./actions";
 import ContactPopover from "@/components/ContactPopover";
 import PaginationControls from "@/components/PaginationControls";
+import { FightNightCurrentRound } from "@/components/FightNightCampaign";
 
 const C = {
   navy: "#11123E", orange: "#DD5434", gray: "#303333", grayMute: "#6E7385",
@@ -64,6 +65,8 @@ export default function AdminSnapshotClient({ helpRequests, missingLinkedin, dir
           {cats.map((c) => <option key={c.id} value={c.id}>{c.label} ({c.count})</option>)}
         </select>
       </div>
+
+      <FightNightCurrentRound accent="#DD5434" compact />
 
       <div key={filter} style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 24 }}>
         {isSuper && show("dpp") && <DirectPlacementCategory candidates={directPlacement} defaultOpen={single} />}

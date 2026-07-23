@@ -14,6 +14,7 @@ const t = {
 };
 const FD = "var(--font-head)";
 const FM = "var(--font-mono)";
+const SIDEBAR_GOLD = "#D8BC7A";
 
 export default function Sidebar({
   groups, accent, brand, user, badges, thisWeek, collapsed, onToggleCollapse, onOpenPalette, onSignOut,
@@ -29,7 +30,8 @@ export default function Sidebar({
   onSignOut: () => void;
 }) {
   const pathname = usePathname();
-  const accentDim = `${accent}29`;
+  const visibleAccent = readableSidebarAccent(accent);
+  const accentDim = `${visibleAccent}29`;
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
   const kbd = { fontFamily: FM, fontSize: 10.5, padding: "2px 6px", borderRadius: 6, background: "rgba(255,255,255,0.08)", color: t.textMid, border: "1px solid rgba(255,255,255,0.1)" };
 
@@ -58,9 +60,9 @@ export default function Sidebar({
       {/* This Week card (fellow/lead only) */}
       {thisWeek && (!collapsed ? (
         <Link href="/workspace/snapshot" style={{ textDecoration: "none", margin: "0 16px 10px", border: `1px solid ${t.line}`, background: t.navy3, borderRadius: 14, padding: "13px 14px", display: "block", position: "relative" }}>
-          <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: 1.4, textTransform: "uppercase", color: accent, marginBottom: 11 }}>This Week</div>
+          <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: 1.4, textTransform: "uppercase", color: visibleAccent, marginBottom: 11 }}>This Week</div>
           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 11 }}>
-            <span style={{ width: 28, height: 28, borderRadius: 8, background: accentDim, display: "grid", placeItems: "center", color: accent, flexShrink: 0 }}><Inbox size={15} /></span>
+            <span style={{ width: 28, height: 28, borderRadius: 8, background: accentDim, display: "grid", placeItems: "center", color: visibleAccent, flexShrink: 0 }}><Inbox size={15} /></span>
             <span style={{ flex: 1, lineHeight: 1.1 }}>
               <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: t.textHi }}>{thisWeek.queueCount} queued</span>
               <span style={{ display: "block", fontSize: 11, color: t.textLo }}>Action queue</span>
@@ -72,14 +74,14 @@ export default function Sidebar({
             <span style={{ fontFamily: FM, fontSize: 11.5, color: t.textMid }}>{thisWeek.tasksDone} / {thisWeek.tasksTotal}</span>
           </div>
           <div style={{ height: 5, borderRadius: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-            <div style={{ width: `${taskPct}%`, height: "100%", background: accent, transition: "width .4s ease" }} />
+            <div style={{ width: `${taskPct}%`, height: "100%", background: visibleAccent, transition: "width .4s ease" }} />
           </div>
         </Link>
       ) : (
         <div style={{ display: "grid", placeItems: "center", padding: "0 0 8px", position: "relative" }}>
-          <Link href="/workspace/snapshot" title={`This week: ${thisWeek.queueCount} queued`} style={{ position: "relative", width: 44, height: 44, borderRadius: 12, background: t.navy3, border: `1px solid ${t.line}`, color: accent, display: "grid", placeItems: "center" }}>
+          <Link href="/workspace/snapshot" title={`This week: ${thisWeek.queueCount} queued`} style={{ position: "relative", width: 44, height: 44, borderRadius: 12, background: t.navy3, border: `1px solid ${t.line}`, color: visibleAccent, display: "grid", placeItems: "center" }}>
             <Inbox size={18} />
-            {thisWeek.queueCount > 0 && <span style={{ position: "absolute", top: -4, right: -4, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 9, background: accent, color: "#fff", fontSize: 10, fontFamily: FM, display: "grid", placeItems: "center", border: `2px solid ${t.navy2}` }}>{thisWeek.queueCount}</span>}
+            {thisWeek.queueCount > 0 && <span style={{ position: "absolute", top: -4, right: -4, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 9, background: visibleAccent, color: t.navy, fontSize: 10, fontWeight: 700, fontFamily: FM, display: "grid", placeItems: "center", border: `2px solid ${t.navy2}` }}>{thisWeek.queueCount}</span>}
           </Link>
         </div>
       ))}
@@ -109,13 +111,22 @@ export default function Sidebar({
                     padding: collapsed ? "11px 0" : "10px 12px", justifyContent: collapsed ? "center" : "flex-start",
                     borderRadius: 11, marginBottom: 3, position: "relative",
                     background: active ? t.navy4 : "transparent", color: active ? t.textHi : t.textMid,
-                    boxShadow: active ? `inset 0 0 0 1px ${accent}47, 0 4px 16px ${accent}1a` : "none",
+                    boxShadow: active ? `inset 0 0 0 1px ${visibleAccent}47, 0 4px 16px ${visibleAccent}1a` : "none",
                     animation: "orrRise .4s ease both", animationDelay: `${(si * 3 + ii) * 0.035}s` }}>
-                  {active && <span style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", width: 3, height: 20, borderRadius: 4, background: accent }} />}
-                  <Icon size={18} style={{ color: active ? accent : "inherit", flexShrink: 0 }} />
+                  {active && <span style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", width: 3, height: 20, borderRadius: 4, background: visibleAccent }} />}
+                  <Icon size={18} style={{ color: active ? visibleAccent : "inherit", flexShrink: 0 }} />
                   {!collapsed && <span style={{ fontSize: 14, fontWeight: active ? 600 : 500, flex: 1, whiteSpace: "nowrap" }}>{it.label}</span>}
                   {!collapsed && badge != null && badge > 0 && (
-                    <span style={{ fontFamily: FM, fontSize: 10.5, fontWeight: 500, padding: "2px 7px", borderRadius: 7, background: active ? accentDim : "rgba(255,255,255,0.06)", color: active ? accent : t.textLo }}>{badge}</span>
+                    <span style={{
+                      fontFamily: FM,
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      padding: "2px 7px",
+                      borderRadius: 7,
+                      background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)",
+                      color: active ? t.textHi : t.textMid,
+                      border: `1px solid ${active ? "rgba(255,255,255,0.12)" : "transparent"}`,
+                    }}>{badge}</span>
                   )}
                 </Link>
               );
@@ -126,18 +137,17 @@ export default function Sidebar({
 
       {/* Footer */}
       <div style={{ borderTop: `1px solid ${t.line}`, padding: collapsed ? "12px 14px" : "12px 16px", position: "relative" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 11, justifyContent: collapsed ? "center" : "flex-start" }}>
+        <div style={{ display: "flex", alignItems: collapsed ? "center" : "flex-start", gap: 11, justifyContent: collapsed ? "center" : "flex-start" }}>
           <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#3a3470,#5a4fb0)", display: "grid", placeItems: "center", flexShrink: 0, fontFamily: FD, fontWeight: 700, color: "#fff", fontSize: 13 }}>{initials(user.name)}</div>
           {!collapsed && (
             <>
-              <div style={{ lineHeight: 1.2, flex: 1, overflow: "hidden" }}>
+              <div style={{ lineHeight: 1.2, flex: 1, minWidth: 0, overflow: "hidden" }}>
                 <div style={{ fontSize: 13.5, fontWeight: 600, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.name}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
-                  <span style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: 0.6, textTransform: "uppercase", color: accent, padding: "1px 6px", borderRadius: 5, background: accentDim }}>{user.roleBadge}</span>
-                  {user.schoolName && <span style={{ fontSize: 11, color: t.textLo }}>· {user.schoolName}</span>}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4, marginTop: 5, minWidth: 0 }}>
+                  <span style={{ display: "inline-flex", maxWidth: "100%", fontFamily: FM, fontSize: 9, lineHeight: 1.2, letterSpacing: 1, textTransform: "uppercase", color: t.textHi, padding: "3px 6px", borderRadius: 5, background: "rgba(255,255,255,0.09)", border: `1px solid ${t.line}`, whiteSpace: "normal" }}>{user.roleBadge}</span>
                 </div>
               </div>
-              <button onClick={onSignOut} className="orr-ghost" title="Sign out" style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 6, borderRadius: 8, display: "grid", placeItems: "center" }}><LogOut size={16} /></button>
+              <button onClick={onSignOut} className="orr-ghost" title="Sign out" style={{ flexShrink: 0, background: "transparent", border: "none", color: t.textMid, cursor: "pointer", padding: 6, borderRadius: 8, display: "grid", placeItems: "center" }}><LogOut size={16} /></button>
             </>
           )}
         </div>
@@ -152,4 +162,33 @@ export default function Sidebar({
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
+}
+
+function readableSidebarAccent(color: string): string {
+  const rgb = hexToRgb(color);
+  const sidebar = hexToRgb(t.navy4);
+  if (!rgb || !sidebar) return color;
+  return contrastRatio(rgb, sidebar) >= 3 ? color : SIDEBAR_GOLD;
+}
+
+function hexToRgb(color: string): [number, number, number] | null {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return null;
+  const value = Number.parseInt(match[1], 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+function contrastRatio(a: [number, number, number], b: [number, number, number]): number {
+  const luminance = ([r, g, blue]: [number, number, number]) => {
+    const channel = (value: number) => {
+      const normalized = value / 255;
+      return normalized <= 0.04045
+        ? normalized / 12.92
+        : ((normalized + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(blue);
+  };
+  const light = Math.max(luminance(a), luminance(b));
+  const dark = Math.min(luminance(a), luminance(b));
+  return (light + 0.05) / (dark + 0.05);
 }

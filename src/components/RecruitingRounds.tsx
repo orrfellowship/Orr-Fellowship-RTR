@@ -1,6 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
+import { campaignPhases, campaignStatusFor } from "@/components/FightNightCampaign";
 
 const C = {
   navy: "#11123E",
@@ -16,79 +17,7 @@ const C = {
   good: "#2F8F6B",
 };
 const HEAD = "'Cabin', sans-serif";
-const RECRUITING_YEAR = 2026;
-const cycleDate = (monthIndex: number, day: number) => new Date(RECRUITING_YEAR, monthIndex, day);
-const APPLICATIONS_OPEN = cycleDate(6, 28);
-const APPLICATIONS_CLOSE = cycleDate(8, 25);
-const ONI_START = cycleDate(9, 7);
-const ONI_END = cycleDate(9, 14);
-const ROTC_DATE = cycleDate(9, 22);
-const FINALIST_DAY = cycleDate(11, 4);
-
 type CampaignPhaseStatus = "Completed" | "Current" | "Upcoming";
-type CampaignPhase = {
-  title: string;
-  timeFrame: string;
-  description: string;
-  start?: Date;
-  end: Date;
-};
-const dateOnly = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-
-export const campaignPhases: CampaignPhase[] = [
-  {
-    title: "Training Camp",
-    timeFrame: "Now - Applications Open (July 28)",
-    description: "Prepare school teams before applications open.",
-    end: APPLICATIONS_OPEN,
-  },
-  {
-    title: "Opening Bell",
-    timeFrame: "July 28 - Sept 25",
-    description: "Drive sourced candidates to submitted applications before the deadline.",
-    start: APPLICATIONS_OPEN,
-    end: APPLICATIONS_CLOSE,
-  },
-  {
-    title: "Media Week",
-    timeFrame: "ONIs (Oct 7 - Oct 14)",
-    description: "Track ONI logistics, readiness, and follow-up.",
-    start: ONI_START,
-    end: ONI_END,
-  },
-  {
-    title: "Weigh-In",
-    timeFrame: "ROTC (Oct 22)",
-    description: "Manage ROTC readiness, attendance, and follow-up.",
-    start: ROTC_DATE,
-    end: ROTC_DATE,
-  },
-  {
-    title: "Fight Night",
-    timeFrame: "Finalist Day (Dec 4)",
-    description: "Support Finalist Day execution and final-stage operations.",
-    start: FINALIST_DAY,
-    end: FINALIST_DAY,
-  },
-];
-
-function currentCampaignPhaseTitle(today: Date): string | null {
-  const todayTime = dateOnly(today);
-  const active = campaignPhases
-    .filter((phase) => todayTime <= dateOnly(phase.end))
-    .filter((phase) => !phase.start || todayTime >= dateOnly(phase.start))
-    // If phases share a handoff day, the later phase owns the top-level status.
-    .sort((a, b) => dateOnly(b.start ?? b.end) - dateOnly(a.start ?? a.end))[0];
-  return active?.title ?? null;
-}
-
-function campaignStatusFor(phase: CampaignPhase, currentTitle: string | null, today: Date): CampaignPhaseStatus {
-  const todayTime = dateOnly(today);
-  if (phase.title === currentTitle) return "Current";
-  if (phase.start && todayTime < dateOnly(phase.start)) return "Upcoming";
-  if (todayTime > dateOnly(phase.end)) return "Completed";
-  return currentTitle ? "Completed" : "Upcoming";
-}
 
 function toneFor(status: CampaignPhaseStatus, accent: string) {
   if (status === "Current") {
@@ -102,7 +31,6 @@ function toneFor(status: CampaignPhaseStatus, accent: string) {
 
 export default function RecruitingRounds({ accent = C.orange }: { accent?: string }) {
   const today = new Date();
-  const currentPhaseTitle = currentCampaignPhaseTitle(today);
 
   return (
     <section style={{ marginTop: 26 }}>
@@ -116,7 +44,7 @@ export default function RecruitingRounds({ accent = C.orange }: { accent?: strin
       <div style={{ overflowX: "auto", padding: "2px 0 8px" }}>
         <div style={{ display: "flex", alignItems: "stretch", minWidth: 980 }}>
         {campaignPhases.map((phase, index) => {
-          const status = campaignStatusFor(phase, currentPhaseTitle, today);
+          const status: CampaignPhaseStatus = campaignStatusFor(phase, today);
           const tone = toneFor(status, accent);
           const isCurrent = status === "Current";
           const connectorTone = isCurrent ? accent : C.line;

@@ -20,6 +20,7 @@ import PaginationControls from "@/components/PaginationControls";
 import type { CalEvent } from "@/components/RecruitingCalendar";
 import type { BudgetEntry, Guidance } from "@/components/BudgetPanel";
 import { findDuplicateGroups, nameSchoolKey } from "@/lib/duplicates";
+import { FightNightOverviewPulse } from "@/components/FightNightCampaign";
 
 // Per-section code splitting: each /console/<section> route renders exactly one
 // of these, so they load as their own chunks instead of shipping the calendar,
@@ -526,6 +527,12 @@ export default function ConsoleClient({
                 <SchoolFilter schools={schools} value={scope} onChange={setScope} />
               </div>
             </div>
+            <FightNightOverviewPulse
+              sourced={board.find((item) => item.label === "Sourced")?.actual ?? 0}
+              sourcedGoal={board.find((item) => item.label === "Sourced")?.goal ?? 0}
+              applied={board.find((item) => item.label === "Applied")?.actual ?? 0}
+              appliedGoal={board.find((item) => item.label === "Applied")?.goal ?? 0}
+            />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 340px))", justifyContent: "center", gap: 16, marginTop: 22 }}>
               {board.map((b) => {
                 const p = b.goal > 0 ? (b.actual / b.goal) * 100 : 0;

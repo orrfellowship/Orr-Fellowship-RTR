@@ -116,7 +116,7 @@ function SummaryCard({ label, value, color, sub, tooltip }: {
   label: string; value: string | number; color: string; sub?: string; tooltip?: string;
 }) {
   return (
-    <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 20px" }}>
+    <div style={{ background: "linear-gradient(180deg,#fff 0%,#FCFBF8 100%)", border: `1px solid ${C.line}`, borderTop: `3px solid ${C.gold}`, borderRadius: 14, padding: "14px 20px 16px", boxShadow: "0 7px 20px rgba(17,18,62,.045)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
         <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.2, color: C.grayMute, fontFamily: HEAD }}>{label}</div>
         {tooltip && (
@@ -326,7 +326,12 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
       {/* ─── GOAL ATTAINMENT ─── */}
       {subTab === "goal" && (
         <div>
-          {byTier.map(({ tier, rows }) => (
+          {byTier.map(({ tier, rows }, tierIndex) => {
+            const fightCardOffset = byTier
+              .slice(0, tierIndex)
+              .reduce((count, section) => count + section.rows.length, 0);
+
+            return (
             <div key={tier} style={{ marginBottom: 32 }}>
               <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, letterSpacing: 1, marginBottom: 10 }}>
                 {tierLabel(tier)}
@@ -334,61 +339,83 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {rows.map((m, rank) => {
                   const isMe = m.key === resolvedMyId;
+                  const sourcedPct = m.goalSourced > 0 ? Math.round(m.gS * 100) : 0;
+                  const appliedPct = m.goal > 0 ? Math.round(m.gA * 100) : 0;
                   return (
-                    <div key={m.key} onClick={() => setDrillId(m.key)}
-                      style={{ background: isMe ? `${m.color}0F` : "#fff", border: `1px solid ${isMe ? m.color : C.line}`, borderLeft: `4px solid ${m.color}`, borderRadius: 12, padding: "14px 18px", cursor: "pointer" }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = isMe ? `${m.color}18` : "#F0F4FA"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = isMe ? `${m.color}0F` : "#fff"; }}>
+                    <button
+                      key={m.key}
+                      type="button"
+                      onClick={() => setDrillId(m.key)}
+                      style={{
+                        width: "100%",
+                        display: "block",
+                        padding: 0,
+                        overflowX: "auto",
+                        overflowY: "hidden",
+                        textAlign: "left",
+                        background: isMe ? `${m.color}08` : "#fff",
+                        border: `1px solid ${isMe ? m.color : C.line}`,
+                        borderTop: `4px solid ${m.color}`,
+                        borderRadius: 14,
+                        boxShadow: isMe ? `0 9px 24px ${m.color}18` : "0 7px 20px rgba(17,18,62,.045)",
+                        cursor: "pointer",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = isMe ? `${m.color}12` : "#FBFBFD"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = isMe ? `${m.color}08` : "#fff"; }}
+                    >
+                      <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "7px 15px", background: C.navy, color: "#fff" }}>
+                        <span style={{ fontFamily: BODY, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.15, color: "#D8BC7A" }}>
+                          Fight card {String(fightCardOffset + rank + 1).padStart(2, "0")}
+                        </span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {isMe && <span style={{ fontSize: 9.5, color: "#fff", background: m.color, padding: "2px 7px", borderRadius: 99, fontWeight: 800 }}>Your school</span>}
+                          <span style={{ fontFamily: BODY, fontSize: 9.5, color: "rgba(255,255,255,.58)", textTransform: "uppercase", letterSpacing: .8 }}>{tier}</span>
+                        </span>
+                      </span>
 
-                      {/* School header row */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                        <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 16, color: C.navy3, width: 28, textAlign: "center", flexShrink: 0 }}>#{rank + 1}</div>
-                        <SchoolBadge m={m} size={24} />
-                        <div style={{ flex: 1, fontWeight: 700, color: C.gray, fontSize: 15 }}>
-                          {m.name}
-                          {isMe && <span style={{ marginLeft: 8, fontSize: 11, color: m.color, background: `${m.color}22`, padding: "2px 7px", borderRadius: 99, fontWeight: 700 }}>You</span>}
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(220px,1.65fr) repeat(2,minmax(130px,.8fr)) minmax(110px,.65fr)", minWidth: 760, alignItems: "stretch" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 18px" }}>
+                          <span style={{ display: "grid", placeItems: "center", width: 34, height: 34, flexShrink: 0, borderRadius: "50%", background: `${m.color}16`, color: m.color, fontFamily: HEAD, fontWeight: 800, fontSize: 13 }}>#{rank + 1}</span>
+                          <SchoolBadge m={m} size={32} />
+                          <span style={{ minWidth: 0 }}>
+                            <strong style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: C.navy, fontFamily: HEAD, fontSize: 16 }}>{m.name}</strong>
+                            <small style={{ display: "block", marginTop: 3, color: C.grayMute, fontFamily: BODY, fontSize: 10.5 }}>{m.active} active candidate{m.active === 1 ? "" : "s"}</small>
+                          </span>
                         </div>
-                        <div style={{ textAlign: "right", flexShrink: 0 }}>
-                          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: C.navy2, lineHeight: 1 }}>{m.orrScore}</div>
-                          <div style={{ fontSize: 9, color: C.grayMute, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8 }}>Orr Score</div>
-                        </div>
-                      </div>
 
-                      {/* Metric boxes side by side */}
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginLeft: 38 }}>
                         {([
-                          { label: "Sourced",   act: m.sourced,   goal: m.goalSourced,   ratio: m.gS },
-                          { label: "Applied",   act: m.applied,   goal: m.goal,          ratio: m.gA },
-                        ]).map(({ label, act, goal, ratio }) => {
-                          const pct  = goal > 0 ? Math.round(ratio * 100) : 0;
+                          { label: "Sourced", act: m.sourced, goal: m.goalSourced, pct: sourcedPct },
+                          { label: "Applied", act: m.applied, goal: m.goal, pct: appliedPct },
+                        ]).map(({ label, act, goal, pct }) => {
                           const tone = goal > 0 ? goalColor(pct) : C.navy3;
                           return (
-                            <div key={label} style={{ background: isMe ? `${m.color}0A` : C.canvas, borderRadius: 8, padding: "8px 10px" }}>
-                              <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: C.grayMute, marginBottom: 4, fontFamily: HEAD }}>{label}</div>
-                              <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 5 }}>
-                                <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: goal > 0 ? tone : C.navy2, lineHeight: 1 }}>{nf(act)}</span>
-                                {goal > 0 && <span style={{ fontSize: 10, color: C.grayMute }}>/ {nf(goal)}</span>}
-                              </div>
-                              {goal > 0 ? (
-                                <>
-                                  <div style={{ height: 4, borderRadius: 99, background: C.line, overflow: "hidden", marginBottom: 3 }}>
-                                    <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: tone, borderRadius: 99 }} />
-                                  </div>
-                                  <div style={{ fontSize: 10, fontWeight: 700, color: tone }}>{pct}%</div>
-                                </>
-                              ) : (
-                                <div style={{ fontSize: 10, color: C.grayMute }}>No goal set</div>
-                              )}
-                            </div>
+                            <span key={label} style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "13px 16px", borderLeft: `1px solid ${C.line}`, background: "rgba(247,248,251,.5)" }}>
+                              <small style={{ color: C.grayMute, fontFamily: BODY, fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>{label}</small>
+                              <span style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 5 }}>
+                                <strong style={{ color: tone, fontFamily: HEAD, fontSize: 21, lineHeight: 1 }}>{nf(act)}</strong>
+                                {goal > 0 && <small style={{ color: C.grayMute, fontSize: 9.5 }}>/ {nf(goal)}</small>}
+                              </span>
+                              <span style={{ height: 3, marginTop: 8, overflow: "hidden", borderRadius: 99, background: C.line }}>
+                                <span style={{ display: "block", height: "100%", width: `${Math.min(pct, 100)}%`, background: tone, borderRadius: 99 }} />
+                              </span>
+                              <small style={{ marginTop: 4, color: tone, fontSize: 9.5, fontWeight: 800 }}>{goal > 0 ? `${pct}% of goal` : "No goal set"}</small>
+                            </span>
                           );
                         })}
+
+                        <span style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "13px 16px", borderLeft: `1px solid ${C.line}`, background: `${m.color}08` }}>
+                          <small style={{ color: C.grayMute, fontFamily: BODY, fontSize: 8.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Campaign score</small>
+                          <strong style={{ marginTop: 5, color: C.navy, fontFamily: HEAD, fontSize: 27, lineHeight: 1 }}>{m.orrScore}</strong>
+                          <small style={{ marginTop: 4, color: C.grayMute, fontSize: 9 }}>View card →</small>
+                        </span>
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
             </div>
-          ))}
+            );
+          })}
           {stats.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>No schools configured yet.</div>}
         </div>
       )}

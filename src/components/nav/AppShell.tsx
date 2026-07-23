@@ -38,6 +38,7 @@ export default function AppShell({
   const [shellThisWeek, setShellThisWeek] = useState(thisWeek);
   const [shellNotifications, setShellNotifications] = useState(notifications);
   const [shellPeople, setShellPeople] = useState(viewAs?.people ?? []);
+  const viewerKey = viewAs?.previewing?.asName ?? user.name;
 
   // Build nav client-side (Lucide icon components aren't serializable as props).
   const groups = useMemo(() => navForRole(role), [role]);
@@ -53,6 +54,15 @@ export default function AppShell({
   }, []);
   const toggleCollapse = () => setCollapsed((v) => { const n = !v; try { localStorage.setItem(STORAGE_KEY, n ? "1" : "0"); } catch {} return n; });
 
+  // AppShell remains mounted across route refreshes and View As changes. Keep
+  // its client-side snapshot aligned with the newly resolved server viewer.
+  useEffect(() => {
+    setShellBadges(badges);
+    setShellThisWeek(thisWeek);
+    setShellNotifications(notifications);
+    setShellPeople(viewAs?.people ?? []);
+  }, [badges, thisWeek, notifications, viewAs?.people, viewerKey]);
+
   useEffect(() => {
     let active = true;
     fetch("/api/shell-data", { credentials: "same-origin" })
@@ -66,7 +76,7 @@ export default function AppShell({
       })
       .catch(() => {});
     return () => { active = false; };
-  }, [pathname]);
+  }, [pathname, viewerKey]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

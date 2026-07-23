@@ -22,6 +22,7 @@ import type { BudgetEntry, Guidance } from "@/components/BudgetPanel";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 import { nameSchoolKey } from "@/lib/duplicates";
+import { FightNightCurrentRound } from "@/components/FightNightCampaign";
 
 // Per-section code splitting: each /workspace/<section> route renders exactly
 // one of these, so they load as their own chunks instead of shipping the
@@ -344,6 +345,8 @@ export default function WorkspaceClient({
           <>
             <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Weekly Snapshot</h1>
             <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{plan.length} move{plan.length !== 1 ? "s" : ""} queued · {totalActive.toLocaleString()} active candidates</p>
+
+            <FightNightCurrentRound accent={accent} compact />
 
             {/* Pipeline breakdown — toggle between your team and the whole org */}
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>

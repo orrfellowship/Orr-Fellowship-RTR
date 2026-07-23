@@ -24,6 +24,14 @@ export async function loadNavData(profile: Profile): Promise<NavData> {
   }
 
   // ---- fellow / team_lead ----
+  // Match the default workspace Candidates query exactly: assignments follow
+  // the person across school boundaries and include every assigned row.
+  const { count: assigned } = await db
+    .from("candidates")
+    .select("id", { count: "exact", head: true })
+    .eq("point_person_id", profile.id);
+  if (assigned != null) badges.applicants = assigned;
+
   const { ids: schoolIds } = await getTierSchoolIds(profile.school_id);
   if (schoolIds.length === 0) return { badges, thisWeek: { queueCount: 0, tasksDone: 0, tasksTotal: 0 } };
 
@@ -32,7 +40,6 @@ export async function loadNavData(profile: Profile): Promise<NavData> {
     .select("id, stage, point_person_id, not_interested")
     .in("school_id", schoolIds)
     .range(from, to));
-  badges.applicants = list.filter((c: any) => !c.not_interested).length;
 
   // last contact per candidate
   const ids = list.map((c: any) => c.id);
