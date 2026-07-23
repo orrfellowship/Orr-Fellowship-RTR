@@ -17,6 +17,9 @@ import {
   OUTREACH_MERGE_VARIABLES,
   findUnsupportedOutreachVariables,
   findManualPlaceholders,
+  materializeTemplateBundle,
+  previewTemplateMaterialization,
+  templatePlaceholderKeys,
   sendEtaLabel,
   type ComposerRecipient,
   type OutreachAudience,
@@ -170,7 +173,7 @@ export default function EmailCampaignsClient({
   recentCampaigns = [],
   templates = [],
   canFreeCompose = false,
-  canCustomizeTemplate = false,
+  canAnswerTemplatePrompts = false,
   sendDisabledReason,
 }: {
   gmailConnection?: GmailConnectionStatus;
@@ -179,11 +182,11 @@ export default function EmailCampaignsClient({
   audiences?: OutreachAudience[];
   recentCampaigns?: CampaignHistoryItem[];
   // Admin-curated templates. `canFreeCompose` controls whether a template is
-  // required; `canCustomizeTemplate` lets template-required users edit their
-  // per-campaign copy without granting template-management access.
+  // required; `canAnswerTemplatePrompts` lets template-required users answer its
+  // explicit prompts without granting template-management access.
   templates?: OutreachTemplateView[];
   canFreeCompose?: boolean;
-  canCustomizeTemplate?: boolean;
+  canAnswerTemplatePrompts?: boolean;
   sendDisabledReason?: string;
 }) {
   const [audienceKey, setAudienceKey] = useState<string>(audiences[0]?.key ?? "mine");
@@ -200,16 +203,30 @@ export default function EmailCampaignsClient({
   const [subject, setSubject] = useState(canFreeCompose ? INITIAL_CAMPAIGN_SUBJECT : "");
   const [body, setBody] = useState(canFreeCompose ? INITIAL_CAMPAIGN_BODY : "");
   const [templateId, setTemplateId] = useState<string>("");
+  const [templateReplacements, setTemplateReplacements] = useState<Record<string, string>>({});
   const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
   const templateRequired = !canFreeCompose;
-  const contentLocked = templateRequired && !canCustomizeTemplate;
+  // Non-admin copy is always derived from the stored template plus explicit
+  // prompt answers. Direct editing would make the browser preview unverifiable.
+  const contentLocked = templateRequired;
   const attachments = selectedTemplate?.attachments ?? [];
+  const selectedTemplatePlaceholders = selectedTemplate
+    ? templatePlaceholderKeys(selectedTemplate.subject, selectedTemplate.body)
+    : [];
 
   function pickTemplate(id: string) {
     setTemplateId(id);
+    setTemplateReplacements({});
     const t = templates.find((x) => x.id === id);
     if (t) { setSubject(t.subject); setBody(t.body); }
     else if (templateRequired) { setSubject(""); setBody(""); }
+  }
+  function updateTemplateReplacement(placeholder: string, value: string) {
+    if (!selectedTemplate) return;
+    const next = { ...templateReplacements, [placeholder]: value };
+    setTemplateReplacements(next);
+    setSubject(previewTemplateMaterialization(selectedTemplate.subject, next));
+    setBody(previewTemplateMaterialization(selectedTemplate.body, next));
   }
   const [activeField, setActiveField] = useState<"subject" | "body">("body");
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -265,6 +282,10 @@ export default function EmailCampaignsClient({
   // Single-bracket [placeholders] must be replaced before sending — they never
   // auto-fill. Blocks advancing past Compose (and sending) until they're gone.
   const manualPlaceholders = [...new Set([...findManualPlaceholders(subject), ...findManualPlaceholders(body)])];
+  const templateCustomizationValid = !templateRequired || !selectedTemplate || materializeTemplateBundle(
+    [selectedTemplate.subject, selectedTemplate.body],
+    templateReplacements,
+  ).ok;
   const selectedCandidateIds = Array.from(selectedIds);
   const campaignFingerprint = JSON.stringify({ audienceKey, campaignName, subject, body, selectedCandidateIds, templateId });
   const confirmed = confirmationFingerprint === campaignFingerprint;
@@ -276,6 +297,7 @@ export default function EmailCampaignsClient({
     && body.length <= LIMITS.body
     && unsupportedVariables.length === 0
     && manualPlaceholders.length === 0
+    && templateCustomizationValid
     && (!templateRequired || !!selectedTemplate); // fellows must start from a template
   const canContinue = step === 0 ? selectedRecipients.length > 0 : step === 1 ? !!composeReady : true;
   const connectionNotice = gmailNoticeText(gmailNotice);
@@ -365,7 +387,15 @@ export default function EmailCampaignsClient({
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignName, subject, body, selectedIds: selectedCandidateIds, idempotencyKey, templateId: templateId || null }),
+        body: JSON.stringify({
+          campaignName,
+          subject,
+          body,
+          selectedIds: selectedCandidateIds,
+          idempotencyKey,
+          templateId: templateId || null,
+          templateReplacements: templateRequired ? templateReplacements : null,
+        }),
       });
       const payload = await response.json() as EnqueueResponse | { success: false; error?: { message?: string } };
       if (!response.ok || payload.success !== true) {
@@ -708,6 +738,17 @@ export default function EmailCampaignsClient({
               {templateRequired && templates.length === 0 && (
                 <div className="compose-warn"><CircleAlert size={15} /> No templates are available yet — ask an admin to create one in Email Campaigns.</div>
               )}
+              {templateRequired && canAnswerTemplatePrompts && selectedTemplate && selectedTemplatePlaceholders.map((placeholder) => (
+                <Field key={placeholder} label={placeholder.slice(1, -1)} hint="Required template prompt">
+                  <textarea
+                    value={templateReplacements[placeholder] ?? ""}
+                    maxLength={5_000}
+                    rows={placeholder.length > 40 ? 4 : 2}
+                    onChange={(event) => updateTemplateReplacement(placeholder, event.target.value)}
+                    placeholder={placeholder}
+                  />
+                </Field>
+              ))}
               <Field label="Subject line">
                 <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} readOnly={contentLocked} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)}
                   onDragOver={contentLocked ? undefined : allowMergeFieldDrop} onDrop={contentLocked ? undefined : (e) => insertMergeFieldOnDrop(e, subject, setSubject)}
@@ -730,9 +771,11 @@ export default function EmailCampaignsClient({
                   <div className="compose-warn-body">
                     <strong>{manualPlaceholders.length} template note{manualPlaceholders.length === 1 ? "" : "s"} {contentLocked ? "need attention" : "need your edits"}</strong>
                     <span>
-                      {contentLocked
-                        ? "Ask an admin to replace the bracketed text before this template is used."
-                        : "Replace the bracketed text in the subject or body before previewing. It won’t auto-fill."}
+                      {templateRequired && canAnswerTemplatePrompts
+                        ? "Complete the required template prompts above before previewing."
+                        : contentLocked
+                          ? "Ask an admin to replace the bracketed text before this template is used."
+                          : "Replace the bracketed text in the subject or body before previewing. It won’t auto-fill."}
                     </span>
                     <details>
                       <summary>View {manualPlaceholders.length === 1 ? "note" : "notes"}</summary>
@@ -858,7 +901,7 @@ export default function EmailCampaignsClient({
       )}
 
       <div className="wizard-footer">
-        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady && manualPlaceholders.length === 0 ? <span className="validation-note">{templateRequired && !selectedTemplate ? "Pick a template to continue." : "Complete all fields to continue."}</span> : null}</div>
+        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady ? <span className="validation-note">{templateRequired && !selectedTemplate ? "Pick a template to continue." : manualPlaceholders.length > 0 ? "Complete every required template prompt before continuing." : !templateCustomizationValid ? "The template prompt answers are invalid. Review them and try again." : "Complete all fields to continue."}</span> : null}</div>
         <div className="footer-actions">
           {step > 0 && <button type="button" className="back-button" onClick={() => setStep((current) => current - 1)}><ArrowLeft size={16} /> Back</button>}
           {step < 3 && <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to {CAMPAIGN_STEPS[step + 1]} <ArrowRight size={16} /></button>}

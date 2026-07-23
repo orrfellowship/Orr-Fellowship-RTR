@@ -99,6 +99,7 @@ function makeStore(seed: {
     },
     async loadAdminIds() { return ["admin-1"]; },
     async senderName() { return "Mark Stolte"; },
+    async senderIsAdmin() { return false; },
   };
   return { store, rows, notifications, campaigns, timeline };
 }
@@ -191,6 +192,8 @@ async function run() {
     check("drain sends the good one and fails the bad one", summary.sent === 1 && summary.failed === 1);
     check("failed campaign notifies sender + admin", notes.length === 2 && notes.some((n) => n.recipientId === "sender-1") && notes.some((n) => n.recipientId === "admin-1"));
     check("notification uses the outreach_error type + dedupe key", notes.every((n) => n.type === "outreach_error" && n.dedupeKey === "outreach_fail:camp-1"));
+    check("fellow failure notification links back to the workspace", notes.find((n) => n.recipientId === "sender-1")?.link === "/workspace/email-campaigns");
+    check("admin failure notification links to the console", notes.find((n) => n.recipientId === "admin-1")?.link === "/console/email-campaigns");
     void sendMessage;
   }
 

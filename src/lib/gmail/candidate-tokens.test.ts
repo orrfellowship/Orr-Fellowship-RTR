@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import {
   findUnsupportedOutreachVariables,
   findManualPlaceholders,
+  materializeTemplateBundle,
+  previewTemplateMaterialization,
+  templatePlaceholderKeys,
   renderOutreachTemplate,
   normalizeOutreachMergeVariables,
   splitName,
@@ -39,6 +42,37 @@ check("finds a single-bracket placeholder", findManualPlaceholders("Hi {{first_n
 check("finds multiple, de-duplicated", (() => { const p = findManualPlaceholders("[X] and [Y] and [X]"); return p.length === 2 && p.includes("[X]") && p.includes("[Y]"); })());
 check("ignores {{merge_fields}}", findManualPlaceholders("Hi {{first_name}} at {{school}}").length === 0);
 check("clean template has none", findManualPlaceholders("Hi there, thanks for your time.").length === 0);
+
+// Template materialization — only explicit prompt values enter fixed templates.
+const materializationTemplate = "Hi {{first_name}}, I'm [Your Name] at [Your Company].";
+const validMaterialization = materializeTemplateBundle(
+  [materializationTemplate],
+  { "[Your Name]": "Sam", "[Your Company]": "Acme" },
+);
+check("lists unique template prompt keys", templatePlaceholderKeys(materializationTemplate, "[Your Name]").join("|") === "[Your Name]|[Your Company]");
+check("previews filled prompts while leaving missing prompts visible", previewTemplateMaterialization(materializationTemplate, { "[Your Name]": "Sam" }).includes("Sam at [Your Company]"));
+check("reconstructs fixed content and normalizes legacy merge fields", validMaterialization.ok && validMaterialization.values[0] === "Hi {{candidate_first_name}}, I'm Sam at Acme.");
+check("rejects a missing template prompt value", (() => {
+  const result = materializeTemplateBundle([materializationTemplate], { "[Your Name]": "Sam" });
+  return !result.ok && result.reason === "replacement_keys_changed";
+})());
+check("rejects an unresolved manual placeholder in a prompt value", (() => {
+  const result = materializeTemplateBundle([materializationTemplate], { "[Your Name]": "[Your Name]", "[Your Company]": "Acme" });
+  return !result.ok && result.reason === "unfilled_placeholder";
+})());
+check("rejects an empty template prompt value", (() => {
+  const result = materializeTemplateBundle([materializationTemplate], { "[Your Name]": " ", "[Your Company]": "Acme" });
+  return !result.ok && result.reason === "unfilled_placeholder";
+})());
+check("rejects a merge variable in a template prompt value", (() => {
+  const result = materializeTemplateBundle([materializationTemplate], { "[Your Name]": "{{school}}", "[Your Company]": "Acme" });
+  return !result.ok && result.reason === "invalid_replacement";
+})());
+check("rejects extra browser-supplied template prompt keys", (() => {
+  const result = materializeTemplateBundle([materializationTemplate], { "[Your Name]": "Sam", "[Your Company]": "Acme", "[Injected]": "Buy now" });
+  return !result.ok && result.reason === "replacement_keys_changed";
+})());
+check("templates without manual placeholders require no prompt values", materializeTemplateBundle(["Hi {{first_name}}."], {}).ok && !materializeTemplateBundle(["Hi {{first_name}}."], { "[Injected]": "x" }).ok);
 
 // rendering
 const tokens = candidateOutreachTokens({

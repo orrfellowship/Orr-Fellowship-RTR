@@ -39,27 +39,42 @@ rejects("rejects a non-string recipient id", () => validateOutreachInput({ ...ba
 const TPL_ID = "3e0f8b1a-6c2d-4e5f-9a7b-1c2d3e4f5a6b";
 check("templateId defaults to null", validateOutreachInput(base).templateId === null);
 check("a valid templateId uuid is accepted", validateOutreachInput({ ...base, templateId: TPL_ID }).templateId === TPL_ID);
+check("template prompt answers are parsed", validateOutreachInput({ ...base, templateId: TPL_ID, templateReplacements: { "[Your Name]": "Sam" } }).templateReplacements?.["[Your Name]"] === "Sam");
+check("browser-supplied attachment fields are not accepted into validated input", !("attachments" in validateOutreachInput({ ...base, attachments: [{ storage_path: "attacker/file" }] })));
 rejects("rejects a malformed templateId", () => validateOutreachInput({ ...base, templateId: "not-a-uuid" }), "invalid_template");
+rejects("rejects malformed template prompt answers", () => validateOutreachInput({ ...base, templateId: TPL_ID, templateReplacements: ["Sam"] }), "invalid_template_replacements");
 
-import { resolveContentForSender, type OutreachTemplate } from "./outreach-templates.server";
+import { resolveContentForSender, validateResolvedCampaignText, type OutreachTemplate } from "./outreach-templates.server";
 const tpl: OutreachTemplate = {
-  id: TPL_ID, name: "Fall intro", subject: "Meet Orr, {{candidate_first_name}}", body: "Hi {{candidate_first_name}} — from {{fellow_point_person}}",
+  id: TPL_ID, name: "Fall intro", subject: "Meet Orr, {{candidate_first_name}}", body: "Hi {{candidate_first_name}} — I'm [Your Name] from [Your Company].",
   isArchived: false, updatedAt: "2026-07-01T00:00:00Z",
   attachments: [{ id: "a1", fileName: "one-pager.pdf", mimeType: "application/pdf", sizeBytes: 1234, storagePath: "t/one-pager.pdf" }],
 };
 const clientContent = { subject: "My own subject", body: "My own body" };
+const fellowContent = {
+  subject: "browser copy is not trusted",
+  body: "browser copy is not trusted",
+  templateReplacements: { "[Your Name]": "Sam", "[Your Company]": "Acme" },
+};
 
-{ // fellow with a template: the TEMPLATE's content and attachments win
-  const r = resolveContentForSender("fellow", clientContent, tpl);
-  check("fellow sends the template's subject/body, not their own", r.subject === tpl.subject && r.body === tpl.body && r.templateId === TPL_ID);
-  check("fellow's campaign snapshots the template attachments", r.attachments.length === 1 && r.attachments[0].storage_path === "t/one-pager.pdf");
+{ // fellow with a template: only placeholder substitutions + template attachments win
+  const r = resolveContentForSender("fellow", fellowContent, tpl);
+  check("fellow sends the server-reconstructed placeholder materialization", r.subject === tpl.subject && r.body === "Hi {{candidate_first_name}} — I'm Sam from Acme." && r.templateId === TPL_ID);
+  check("fellow browser-supplied subject/body are ignored", r.subject !== fellowContent.subject && r.body !== fellowContent.body);
+  check("fellow's campaign snapshots only the template attachments", r.attachments.length === 1 && r.attachments[0].storage_path === "t/one-pager.pdf");
 }
 { // fellow without a template (or an archived one): blocked
-  try { resolveContentForSender("fellow", clientContent, null); failures++; console.log("FAIL  fellow without template is rejected (no throw)"); }
+  try { resolveContentForSender("fellow", fellowContent, null); failures++; console.log("FAIL  fellow without template is rejected (no throw)"); }
   catch (e) { check("fellow without template is rejected", e instanceof GmailTestSendError && e.code === "template_required"); }
-  try { resolveContentForSender("team_lead", clientContent, { ...tpl, isArchived: true }); failures++; console.log("FAIL  archived template is rejected for leads (no throw)"); }
+  try { resolveContentForSender("team_lead", fellowContent, { ...tpl, isArchived: true }); failures++; console.log("FAIL  archived template is rejected for leads (no throw)"); }
   catch (e) { check("archived template is rejected for leads", e instanceof GmailTestSendError && e.code === "template_required"); }
 }
+rejects("fellow cannot omit a required template prompt", () => resolveContentForSender("fellow", { ...fellowContent, templateReplacements: { "[Your Name]": "Sam" } }, tpl), "template_customization_invalid");
+rejects("fellow cannot add a browser-invented template prompt", () => resolveContentForSender("fellow", { ...fellowContent, templateReplacements: { ...fellowContent.templateReplacements, "[Injected]": "Buy now" } }, tpl), "template_customization_invalid");
+rejects("fellow cannot leave a template prompt unresolved", () => resolveContentForSender("fellow", { ...fellowContent, templateReplacements: { ...fellowContent.templateReplacements, "[Your Name]": "[Your Name]" } }, tpl), "unfilled_placeholder");
+rejects("fellow cannot insert another merge field through a prompt", () => resolveContentForSender("fellow", { ...fellowContent, templateReplacements: { ...fellowContent.templateReplacements, "[Your Name]": "{{school}}" } }, tpl), "template_customization_invalid");
+rejects("completed template subject cannot contain a line break", () => validateResolvedCampaignText({ subject: "Hi\nthere", body: "Body" }), "invalid_campaign");
+rejects("completed template body cannot exceed the campaign limit", () => validateResolvedCampaignText({ subject: "Hi", body: "x".repeat(20_001) }), "invalid_campaign");
 { // admin: free compose allowed; with a template their edits still send but attachments ride
   const free = resolveContentForSender("admin", clientContent, null);
   check("admin may free-compose without a template", free.subject === clientContent.subject && free.templateId === null && free.attachments.length === 0);

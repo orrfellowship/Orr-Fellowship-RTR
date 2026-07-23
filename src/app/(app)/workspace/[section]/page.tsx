@@ -48,11 +48,11 @@ async function WorkspaceSectionData({ section, profile, previewMode, gmailQuery 
     const [audiences, recentCampaigns, templates] = await Promise.all([
       loadOutreachAudiences(profile), loadRecentCampaigns(profile), listOutreachTemplates(),
     ]);
-    // Fellows/leads start from an admin template but may customize the campaign
-    // and preview every personalized email. Sending remains disabled in both the
-    // UI and the candidate outreach route until the feature is opened to them.
+    // Fellows/leads start from an admin template, answer its explicit prompts,
+    // and preview every personalized email. Sending remains disabled in both
+    // the UI and candidate route until the feature is opened to them.
     return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{ result: gmailQuery.gmail, error: gmailQuery.gmail_error }} audiences={audiences} recentCampaigns={recentCampaigns}
-      canCustomizeTemplate
+      canAnswerTemplatePrompts
       sendDisabledReason="Sending will be enabled later. For now, you can compose, preview, and review the personalized emails."
       templates={templates.map((t) => ({ id: t.id, name: t.name, subject: t.subject, body: t.body, attachments: t.attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes })) }))} />;
   }
