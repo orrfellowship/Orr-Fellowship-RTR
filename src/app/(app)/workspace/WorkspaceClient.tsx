@@ -130,7 +130,9 @@ export default function WorkspaceClient({
   const [allStage, setAllStage] = useState("All stages");
   const [allMinGpa, setAllMinGpa] = useState("");
   const [allFavOnly, setAllFavOnly] = useState(false);
-  const [allMineOnly, setAllMineOnly] = useState(false);
+  // Fellows and team leads land on their own assignments. They can explicitly
+  // expand to the org-wide list with the scope button in the filter bar.
+  const [allMineOnly, setAllMineOnly] = useState(true);
   const [boardSearch, setBoardSearch] = useState("");
   const [boardStage, setBoardStage] = useState("All stages");
   const [boardFavOnly, setBoardFavOnly] = useState(false);
@@ -650,7 +652,9 @@ export default function WorkspaceClient({
           const SortHead = ({ k, label }: { k: typeof allSort.key; label: string }) => (
             <div onClick={() => toggleSort(k)} style={{ cursor: "pointer", userSelect: "none", color: allSort.key === k ? C.navy : C.grayMute }}>{label}{arrow(k)}</div>
           );
-          const filtersActive = allSearch.trim() !== "" || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMineOnly || allMinGpa.trim() !== "" || allSchool !== "all";
+          // Assignment scope is controlled separately from the ordinary filters,
+          // so "Clear" never turns the default personal view into an org-wide one.
+          const filtersActive = allSearch.trim() !== "" || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMinGpa.trim() !== "" || allSchool !== "all";
 
           // Pagination control — rendered both above and below the table.
           const pager = () => <PaginationControls page={allPageNum} pageSize={ALL_PAGE_SIZE} total={allTotal} loading={allLoading}
@@ -661,7 +665,7 @@ export default function WorkspaceClient({
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
                 <div>
                   <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Candidates</h1>
-                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{allTotal.toLocaleString()} candidate{allTotal !== 1 ? "s" : ""}{allLoading ? " · loading…" : ""} · click a row to view details</p>
+                  <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{allTotal.toLocaleString()} {allMineOnly ? "assigned " : ""}candidate{allTotal !== 1 ? "s" : ""}{allLoading ? " · loading…" : ""} · click a row to view details</p>
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
                   <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
@@ -690,10 +694,10 @@ export default function WorkspaceClient({
                 </button>
                 <button onClick={() => setAllMineOnly((v) => !v)}
                   style={{ padding: "9px 14px", borderRadius: 9, border: `1px solid ${allMineOnly ? accent : C.line}`, fontSize: 13.5, background: allMineOnly ? `${accent}18` : "#fff", color: allMineOnly ? accent : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-                  Assigned to me
+                  {allMineOnly ? "Show all candidates" : "Show assigned candidates"}
                 </button>
                 {filtersActive && (
-                  <button onClick={() => { setAllSearch(""); setAllMajor("All majors"); setAllStage("All stages"); setAllMinGpa(""); setAllFavOnly(false); setAllMineOnly(false); setAllSchool("all"); }}
+                  <button onClick={() => { setAllSearch(""); setAllMajor("All majors"); setAllStage("All stages"); setAllMinGpa(""); setAllFavOnly(false); setAllSchool("all"); }}
                     style={{ padding: "9px 12px", borderRadius: 9, border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
                     Clear
                   </button>

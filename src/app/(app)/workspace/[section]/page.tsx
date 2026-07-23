@@ -182,7 +182,7 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
   // the client after paint so the route does not block TTFB on every candidate.
   const PAGE_SIZE = 50;
   const allPage = paginatedList
-    ? await listCandidates({ variant: "workspace", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" })
+    ? await listCandidates({ variant: "workspace", page: 0, pageSize: PAGE_SIZE, mineOnly: true, sortKey: "name", sortDir: "asc" })
     : { rows: [] as any[], total: 0, ai: [] as any[] };
   const allFacets = { majors: [] as string[], stages: [] as string[], unroutedCount: 0, slim: [] as any[] };
 
