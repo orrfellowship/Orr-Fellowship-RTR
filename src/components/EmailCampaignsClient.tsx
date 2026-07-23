@@ -34,6 +34,49 @@ Would you be open to a quick conversation?
 Best,
 {{point_person}}`;
 
+// Friendly names for the merge tokens, shown on the draggable palette chips so
+// admins recognize a field without decoding the {{snake_case}} token.
+const MERGE_FIELD_LABELS: Record<string, string> = {
+  "{{first_name}}": "First name",
+  "{{last_name}}": "Last name",
+  "{{full_name}}": "Full name",
+  "{{school}}": "School",
+  "{{stage}}": "Stage",
+  "{{class_year}}": "Class year",
+  "{{point_person}}": "Point person",
+};
+
+// Custom dataTransfer type so a field only accepts drops that originate from our
+// palette (a chip), not arbitrary dragged text/files.
+const MERGE_FIELD_DND = "application/x-orr-merge-field";
+
+// A field is a valid drop target while a palette chip is being dragged over it.
+function allowMergeFieldDrop(e: React.DragEvent) {
+  if (!e.dataTransfer.types.includes(MERGE_FIELD_DND)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+}
+
+// Insert the dropped token where the drag caret landed. During dragover the
+// browser moves the field's caret to follow the pointer, so selectionStart at
+// drop time is the drop position; we fall back to the end if it's unavailable.
+function insertMergeFieldOnDrop(
+  e: React.DragEvent<HTMLInputElement | HTMLTextAreaElement>,
+  value: string,
+  setValue: (next: string) => void,
+) {
+  const token = e.dataTransfer.getData(MERGE_FIELD_DND);
+  if (!token) return;
+  e.preventDefault();
+  const el = e.currentTarget;
+  const start = el.selectionStart ?? value.length;
+  const end = el.selectionEnd ?? start;
+  const next = `${value.slice(0, start)}${token}${value.slice(end)}`;
+  setValue(next);
+  const caret = start + token.length;
+  requestAnimationFrame(() => { el.focus(); el.setSelectionRange(caret, caret); });
+}
+
 // One send result, in the same shape the Sent screen consumes.
 type DemoCampaignResult = {
   success: true; attempted: number; sent: number; failed: number; excluded: number;
@@ -646,10 +689,14 @@ export default function EmailCampaignsClient({
                 <div className="compose-warn"><CircleAlert size={15} /> No templates are available yet — ask an admin to create one in Email Campaigns.</div>
               )}
               <Field label="Subject line">
-                <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} readOnly={templateLocked} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)} placeholder={templateLocked ? "Pick a template above" : "Email subject"} />
+                <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} readOnly={templateLocked} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)}
+                  onDragOver={templateLocked ? undefined : allowMergeFieldDrop} onDrop={templateLocked ? undefined : (e) => insertMergeFieldOnDrop(e, subject, setSubject)}
+                  placeholder={templateLocked ? "Pick a template above" : "Email subject"} />
               </Field>
               <Field label="Email body">
-                <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} readOnly={templateLocked} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)} rows={14} placeholder={templateLocked ? "The template's message will appear here." : undefined} />
+                <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} readOnly={templateLocked} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)}
+                  onDragOver={templateLocked ? undefined : allowMergeFieldDrop} onDrop={templateLocked ? undefined : (e) => insertMergeFieldOnDrop(e, body, setBody)}
+                  rows={14} placeholder={templateLocked ? "The template's message will appear here." : undefined} />
               </Field>
               {attachments.length > 0 && (
                 <div className="attachment-chips">
@@ -661,10 +708,8 @@ export default function EmailCampaignsClient({
             <aside className="variables-card">
               <div className="variables-heading"><span>Merge variables</span><small>{templateLocked ? "Filled automatically" : `Insert into ${activeField}`}</small></div>
               <p>{templateLocked ? "These placeholders in the template are replaced with each recipient's details." : "Personalize the template with each recipient's details."}</p>
-              <div className="variable-list">
-                {OUTREACH_MERGE_VARIABLES.map((variable) => <button type="button" key={variable} disabled={templateLocked} onClick={() => insertVariable(variable)}>{variable}</button>)}
-              </div>
-              {!templateLocked && <div className="tip"><CircleAlert size={15} /><span>Click a variable to insert it at the cursor in the last-focused subject or body field.</span></div>}
+              <MergeFieldPalette disabled={templateLocked} onInsert={insertVariable} />
+              {!templateLocked && <div className="tip"><CircleAlert size={15} /><span>Drag a field into the subject or body, or click it to insert at the cursor in the last-focused field.</span></div>}
             </aside>
           </div>
         </section>
@@ -777,6 +822,34 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   return <label className="field"><span>{label}{hint && <small>{hint}</small>}</span>{children}</label>;
 }
 
+// Draggable merge-field chips. Each chip can be dragged into any field wired
+// with allowMergeFieldDrop/insertMergeFieldOnDrop, or clicked to insert at the
+// last-focused field's cursor (onInsert). Shared by the composer and the admin
+// template editor so both stay in sync as the token set grows.
+function MergeFieldPalette({ disabled, onInsert }: { disabled?: boolean; onInsert: (token: string) => void }) {
+  return (
+    <div className="variable-list">
+      {OUTREACH_MERGE_VARIABLES.map((variable) => (
+        <button
+          type="button"
+          key={variable}
+          disabled={disabled}
+          draggable={!disabled}
+          onDragStart={(e) => {
+            e.dataTransfer.setData(MERGE_FIELD_DND, variable);
+            e.dataTransfer.setData("text/plain", variable);
+            e.dataTransfer.effectAllowed = "copy";
+          }}
+          onClick={() => onInsert(variable)}
+          title={`${MERGE_FIELD_LABELS[variable] ?? variable} — drag into a field or click to insert`}
+        >
+          {variable}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function StatusPill({ children, tone = "default" }: { children: React.ReactNode; tone?: "default" | "good" | "warning" }) {
   return <span className={`status-pill ${tone}`}>{children}</span>;
 }
@@ -873,6 +946,8 @@ const styles = `
   .tpl-btn.danger { color: ${C.orange}; border-color: ${C.orange}; }
   .tpl-form { display: grid; gap: 10px; border: 1px dashed ${C.line}; border-radius: 10px; padding: 14px; }
   .tpl-form input, .tpl-form textarea { width: 100%; border: 1px solid ${C.line}; border-radius: 8px; padding: 8px 11px; font: 13px var(--font-body); color: ${C.gray}; box-sizing: border-box; }
+  .tpl-fields { border: 1px dashed ${C.line}; border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; background: #FAFBFE; }
+  .tpl-fields-head { display: flex; align-items: baseline; gap: 8px; color: ${C.navy}; font: 700 12.5px ${HEAD}; } .tpl-fields-head small { color: ${C.muted}; font-weight: 600; font-size: 11px; }
   .tpl-note { font-size: 12.5px; color: ${C.muted}; }
   .reconnect-hint { color: ${C.orange}; font-weight: 600; }
   .history-card { border: 1px solid ${C.line}; border-radius: 14px; background: #fff; overflow: hidden; margin-bottom: 18px; }
@@ -938,6 +1013,27 @@ export function OutreachTemplateManager({ templates }: { templates: OutreachTemp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  // Which editor field a click-to-insert lands in (drag targets the field
+  // directly). Tracks the last-focused of subject/body.
+  const [activeField, setActiveField] = useState<"subject" | "body">("body");
+  const tplSubjectRef = useRef<HTMLInputElement | null>(null);
+  const tplBodyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Click-to-insert a token at the cursor of the last-focused editor field.
+  const insertField = (token: string) => {
+    setEditing((cur) => {
+      if (!cur) return cur;
+      const which = activeField;
+      const el = which === "subject" ? tplSubjectRef.current : tplBodyRef.current;
+      const value = cur[which];
+      const start = el?.selectionStart ?? value.length;
+      const end = el?.selectionEnd ?? start;
+      const next = `${value.slice(0, start)}${token}${value.slice(end)}`;
+      const caret = start + token.length;
+      requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(caret, caret); });
+      return { ...cur, [which]: next };
+    });
+  };
 
   const act = async (fn: () => Promise<{ error?: string; ok?: unknown; id?: unknown }>) => {
     setBusy(true); setError(null);
@@ -1005,8 +1101,18 @@ export function OutreachTemplateManager({ templates }: { templates: OutreachTemp
           {editing ? (
             <div className="tpl-form">
               <input value={editing.name} maxLength={120} placeholder="Template name (e.g. Fall intro — first touch)" onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-              <input value={editing.subject} maxLength={200} placeholder="Subject — merge fields like {{first_name}} work here" onChange={(e) => setEditing({ ...editing, subject: e.target.value })} />
-              <textarea value={editing.body} rows={8} placeholder="Message body" onChange={(e) => setEditing({ ...editing, body: e.target.value })} />
+              <input ref={tplSubjectRef} value={editing.subject} maxLength={200} placeholder="Subject — merge fields like {{first_name}} work here"
+                onFocus={() => setActiveField("subject")}
+                onDragOver={allowMergeFieldDrop} onDrop={(e) => insertMergeFieldOnDrop(e, editing.subject, (v) => setEditing((cur) => cur && { ...cur, subject: v }))}
+                onChange={(e) => setEditing({ ...editing, subject: e.target.value })} />
+              <textarea ref={tplBodyRef} value={editing.body} rows={8} placeholder="Message body"
+                onFocus={() => setActiveField("body")}
+                onDragOver={allowMergeFieldDrop} onDrop={(e) => insertMergeFieldOnDrop(e, editing.body, (v) => setEditing((cur) => cur && { ...cur, body: v }))}
+                onChange={(e) => setEditing({ ...editing, body: e.target.value })} />
+              <div className="tpl-fields">
+                <div className="tpl-fields-head">Merge fields <small>drag into the subject or message, or click to insert</small></div>
+                <MergeFieldPalette onInsert={insertField} />
+              </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button type="button" className="tpl-btn" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
                 <button type="button" className="tpl-btn primary" disabled={busy} onClick={save}>{busy ? "Saving…" : editing.id ? "Save changes" : "Create template"}</button>

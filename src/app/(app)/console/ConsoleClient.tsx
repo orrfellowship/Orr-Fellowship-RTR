@@ -50,6 +50,23 @@ const HEAD = "var(--font-head)";
 // Thousands-separated integer (e.g. 1,200).
 const nf = (n: number) => Number(n || 0).toLocaleString("en-US");
 
+// Launch row for an admin review — a compact card that opens the quizlet-style
+// ReviewDeck instead of expanding a long inline list.
+function ReviewLaunchCard({ accent, title, count, blurb, onOpen }: {
+  accent: string; title: string; count: string; blurb: string; onOpen: () => void;
+}) {
+  return (
+    <button onClick={onOpen}
+      style={{ marginTop: 12, width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: `1px solid ${accent}`, borderRadius: 14, background: `${accent}0e`, cursor: "pointer", textAlign: "left" }}>
+      <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
+        {title} · <span style={{ color: C.orange }}>{count}</span>
+      </span>
+      <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>{blurb}</span>
+      <span style={{ color: accent, fontSize: 13, fontWeight: 700 }}>Review →</span>
+    </button>
+  );
+}
+
 type School = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
 type Cand = {
   id: string; jazz_id: string | null; name: string; email: string | null; school_id: string | null;
@@ -227,6 +244,9 @@ export default function ConsoleClient({
   const [dupOpen, setDupOpen] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
   const [smrOpen, setSmrOpen] = useState(false);
+  // Match-review decks on the JazzHR Sync tab and the dedicated Review Sync page.
+  const [syncMatchOpen, setSyncMatchOpen] = useState(false);
+  const [reviewSyncOpen, setReviewSyncOpen] = useState(false);
 
   // Snapshot task links land on /console/applicants?review=duplicates|routing —
   // open the matching panel so the admin isn't hunting for it.
@@ -614,40 +634,24 @@ export default function ConsoleClient({
 
             {/* JazzHR match review — applicants that may be an existing sourced candidate */}
             {adminPlus && reviews.length > 0 && (
-              <div style={{ marginTop: 16, border: `1px solid ${C.orange}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
-                <button onClick={() => setReviewOpen((v) => !v)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: `${C.orange}0e`, cursor: "pointer", textAlign: "left" }}>
-                  <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
-                    Match review · <span style={{ color: C.orange }}>{reviews.length} need{reviews.length === 1 ? "s" : ""} a decision</span>
-                  </span>
-                  <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>JazzHR applicants that may already be sourced</span>
-                  <span style={{ color: C.grayMute, fontSize: 15 }}>{reviewOpen ? "▲" : "▼"}</span>
-                </button>
-                {reviewOpen && (
-                  <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                    <MatchReview reviews={reviews} candidates={slimCandidateRows} schools={schools} />
-                  </div>
-                )}
-              </div>
+              <>
+                <ReviewLaunchCard accent={C.orange} title="Match review"
+                  count={`${reviews.length} need${reviews.length === 1 ? "s" : ""} a decision`}
+                  blurb="JazzHR applicants that may already be sourced"
+                  onOpen={() => setReviewOpen(true)} />
+                <MatchReview reviews={reviews} candidates={slimCandidateRows} schools={schools} open={reviewOpen} onClose={() => setReviewOpen(false)} />
+              </>
             )}
 
             {/* School match review — intake text the matcher couldn't place */}
             {adminPlus && schoolReviews.length > 0 && (
-              <div style={{ marginTop: 12, border: `1px solid ${C.gold}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
-                <button onClick={() => setSmrOpen((v) => !v)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: `${C.gold}14`, cursor: "pointer", textAlign: "left" }}>
-                  <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
-                    School match review · <span style={{ color: C.orange }}>{schoolReviews.length} unplaced</span>
-                  </span>
-                  <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>Typed school names that need a decision</span>
-                  <span style={{ color: C.grayMute, fontSize: 15 }}>{smrOpen ? "▲" : "▼"}</span>
-                </button>
-                {smrOpen && (
-                  <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                    <SchoolMatchReview reviews={schoolReviews} schools={schools} />
-                  </div>
-                )}
-              </div>
+              <>
+                <ReviewLaunchCard accent={C.gold} title="School match review"
+                  count={`${schoolReviews.length} unplaced`}
+                  blurb="Typed school names that need a decision"
+                  onOpen={() => setSmrOpen(true)} />
+                <SchoolMatchReview reviews={schoolReviews} schools={schools} open={smrOpen} onClose={() => setSmrOpen(false)} />
+              </>
             )}
 
             {/* Duplicate candidates — any source (manual, import, JazzHR) */}
@@ -655,21 +659,13 @@ export default function ConsoleClient({
               const dupCount = findDuplicateGroups(slimCandidateRows).length;
               if (dupCount === 0) return null;
               return (
-                <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
-                  <button onClick={() => setDupOpen((v) => !v)}
-                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: C.canvas, cursor: "pointer", textAlign: "left" }}>
-                    <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
-                      Potential duplicates · <span style={{ color: C.orange }}>{dupCount} group{dupCount === 1 ? "" : "s"}</span>
-                    </span>
-                    <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>Same name or email · any source</span>
-                    <span style={{ color: C.grayMute, fontSize: 15 }}>{dupOpen ? "▲" : "▼"}</span>
-                  </button>
-                  {dupOpen && (
-                    <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                      <DuplicateReview candidates={slimCandidateRows} schools={schools} onDeleted={handleCandidateDeleted} />
-                    </div>
-                  )}
-                </div>
+                <>
+                  <ReviewLaunchCard accent={C.orange} title="Potential duplicates"
+                    count={`${dupCount} group${dupCount === 1 ? "" : "s"}`}
+                    blurb="Same name or email · any source"
+                    onOpen={() => setDupOpen(true)} />
+                  <DuplicateReview candidates={slimCandidateRows} schools={schools} open={dupOpen} onClose={() => setDupOpen(false)} onDeleted={handleCandidateDeleted} />
+                </>
               );
             })()}
 
@@ -678,21 +674,13 @@ export default function ConsoleClient({
               const misroutedCount = findMisrouted(slimCandidateRows, schools).length;
               if (misroutedCount === 0) return null;
               return (
-                <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
-                  <button onClick={() => setRoutingOpen((v) => !v)}
-                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: C.canvas, cursor: "pointer", textAlign: "left" }}>
-                    <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
-                      School routing review · <span style={{ color: C.orange }}>{misroutedCount} candidate{misroutedCount === 1 ? "" : "s"}</span>
-                    </span>
-                    <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>Imported school text routes to a different school</span>
-                    <span style={{ color: C.grayMute, fontSize: 15 }}>{routingOpen ? "▲" : "▼"}</span>
-                  </button>
-                  {routingOpen && (
-                    <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                      <RoutingReview candidates={slimCandidateRows} schools={schools} onMoved={handleRoutingMoved} />
-                    </div>
-                  )}
-                </div>
+                <>
+                  <ReviewLaunchCard accent={C.navy} title="School routing review"
+                    count={`${misroutedCount} candidate${misroutedCount === 1 ? "" : "s"}`}
+                    blurb="Imported school text routes to a different school"
+                    onOpen={() => setRoutingOpen(true)} />
+                  <RoutingReview candidates={slimCandidateRows} schools={schools} open={routingOpen} onClose={() => setRoutingOpen(false)} onMoved={handleRoutingMoved} />
+                </>
               );
             })()}
 
@@ -1201,7 +1189,14 @@ export default function ConsoleClient({
               <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 14px" }}>
                 Applicants that look like an existing sourced candidate but couldn't be auto-linked (different email, nickname). <b>Match</b> links them (keeping notes & owner); <b>Add as new candidate</b> imports them separately.
               </p>
-              <MatchReview reviews={reviews} candidates={candidates} schools={schools} />
+              {reviews.length > 0 ? (
+                <button onClick={() => setSyncMatchOpen(true)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "10px 18px", borderRadius: 10, cursor: "pointer", fontSize: 13.5 }}>
+                  Review {reviews.length} match{reviews.length === 1 ? "" : "es"} →
+                </button>
+              ) : (
+                <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>Nothing to review — all matches were confident.</div>
+              )}
+              <MatchReview reviews={reviews} candidates={candidates} schools={schools} open={syncMatchOpen} onClose={() => setSyncMatchOpen(false)} />
             </div>
 
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
@@ -1272,7 +1267,14 @@ export default function ConsoleClient({
           <>
             <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Review Sync</h1>
             <p style={{ color: C.grayMute, margin: "4px 0 18px" }}>JazzHR applicants that may match an existing sourced candidate. Match to link them, or add as a new candidate.</p>
-            <MatchReview reviews={reviews} candidates={candidates} schools={schools} />
+            {reviews.length > 0 ? (
+              <button onClick={() => setReviewSyncOpen(true)} style={{ border: "none", background: C.orange, color: "#fff", fontWeight: 700, padding: "12px 20px", borderRadius: 10, cursor: "pointer", fontSize: 14 }}>
+                Review {reviews.length} possible match{reviews.length === 1 ? "" : "es"} →
+              </button>
+            ) : (
+              <div style={{ fontSize: 13.5, color: C.grayMute, fontStyle: "italic" }}>Nothing to review — all matches were confident.</div>
+            )}
+            <MatchReview reviews={reviews} candidates={candidates} schools={schools} open={reviewSyncOpen} onClose={() => setReviewSyncOpen(false)} />
           </>
         )}
       </div>
