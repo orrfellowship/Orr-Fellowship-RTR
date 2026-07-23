@@ -1542,10 +1542,10 @@ export async function saveOutreachTemplate(input: { id?: string | null; name: st
   const gate = await requireAdmin();
   if ("error" in gate) return gate;
   const { OUTREACH_LIMITS } = await import("@/lib/gmail/candidate-outreach.server");
-  const { findUnsupportedOutreachVariables } = await import("@/lib/gmail/candidate-tokens");
+  const { findUnsupportedOutreachVariables, normalizeOutreachMergeVariables } = await import("@/lib/gmail/candidate-tokens");
   const name = (input.name ?? "").trim();
-  const subject = (input.subject ?? "").trim();
-  const body = input.body ?? "";
+  const subject = normalizeOutreachMergeVariables(input.subject ?? "").trim();
+  const body = normalizeOutreachMergeVariables(input.body ?? "");
   if (!name || !subject || !body.trim()) return { error: "Name, subject, and message are required." };
   if (name.length > 120) return { error: "Template name is too long." };
   if (subject.length > OUTREACH_LIMITS.subject) return { error: "Subject is too long." };

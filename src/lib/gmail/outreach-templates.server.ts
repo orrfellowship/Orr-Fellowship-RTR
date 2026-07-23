@@ -1,6 +1,10 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { isAdminPlus, type AppRole } from "@/lib/types";
-import { findUnsupportedOutreachVariables, findManualPlaceholders } from "./candidate-tokens";
+import {
+  findManualPlaceholders,
+  findUnsupportedOutreachVariables,
+  normalizeOutreachMergeVariables,
+} from "./candidate-tokens";
 import { GmailTestSendError } from "./test-send.server";
 
 // ============================================================================
@@ -76,7 +80,9 @@ export async function listOutreachTemplates(opts: { includeArchived?: boolean } 
   const { data, error } = await q;
   if (error) throw new Error(`Failed to load outreach templates: ${error.message}`);
   return (data ?? []).map((t: any) => ({
-    id: t.id, name: t.name, subject: t.subject, body: t.body,
+    id: t.id, name: t.name,
+    subject: normalizeOutreachMergeVariables(t.subject),
+    body: normalizeOutreachMergeVariables(t.body),
     isArchived: t.is_archived, updatedAt: t.updated_at,
     attachments: (t.outreach_template_attachments ?? []).map((a: any) => ({
       id: a.id, fileName: a.file_name, mimeType: a.mime_type, sizeBytes: Number(a.size_bytes), storagePath: a.storage_path,
@@ -97,22 +103,27 @@ export function resolveContentForSender(
   client: { subject: string; body: string },
   template: OutreachTemplate | null,
 ): ResolvedCampaignContent {
+  const clientContent = {
+    subject: normalizeOutreachMergeVariables(client.subject),
+    body: normalizeOutreachMergeVariables(client.body),
+  };
   if (!isAdminPlus(role)) {
     // Fellows/leads: a live admin template is REQUIRED and its content wins.
     if (!template || template.isArchived) {
       throw new GmailTestSendError("template_required", "Pick one of the templates provided by your admins before sending.", 400);
     }
     return {
-      subject: template.subject, body: template.body,
+      subject: normalizeOutreachMergeVariables(template.subject),
+      body: normalizeOutreachMergeVariables(template.body),
       templateId: template.id, attachments: toCampaignAttachments(template.attachments),
     };
   }
   // Admins: template optional. When one is picked its attachments ride along,
   // but the (possibly edited) client subject/body is what sends.
   if (template && !template.isArchived) {
-    return { subject: client.subject, body: client.body, templateId: template.id, attachments: toCampaignAttachments(template.attachments) };
+    return { ...clientContent, templateId: template.id, attachments: toCampaignAttachments(template.attachments) };
   }
-  return { subject: client.subject, body: client.body, templateId: null, attachments: [] };
+  return { ...clientContent, templateId: null, attachments: [] };
 }
 
 export async function resolveCampaignContent(

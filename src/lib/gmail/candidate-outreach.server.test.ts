@@ -27,8 +27,8 @@ const cand = (over: Partial<OutreachCandidate> = {}): OutreachCandidate => ({
 // Token rendering from real fields.
 {
   const { recipients } = buildCandidateRecipients([cand()], {
-    subject: "Hi {{first_name}} ({{class_year}})",
-    body: "You're at {{school}}, stage {{stage}}. Reach out to {{point_person}}.",
+    subject: "Hi {{candidate_first_name}} ({{class_year}})",
+    body: "You're at {{school}}, stage {{stage}}. Reach out to {{fellow_point_person}}.",
     senderUserId: "fellow-1", isAdmin: false,
   });
   check("subject renders first name + class year", recipients[0].renderedSubject === "Hi Catherine (2027)");
@@ -49,7 +49,7 @@ async function run() {
   let enqueuedFor = "";
   let enqueuedRecipients: any[] = [];
   const result = await enqueueCandidateCampaign("fellow-1", "fellow", {
-    campaignName: "Spring outreach", subject: "Hi {{first_name}}", body: "From {{school}}",
+    campaignName: "Spring outreach", subject: "Hi {{candidate_first_name}}", body: "From {{school}}",
     selectedCandidateIds: ["mine", "theirs"], idempotencyKey: "k1",
   }, {
     loadCandidates: async () => [
@@ -68,7 +68,7 @@ async function run() {
   // Whole-team audience: build user recipients (candidate_id null) + admin gate.
   const teamRecipients = buildUserRecipients(
     [{ id: "u1", fullName: "Dana Fellow", email: "dana@orrfellowship.org" }, { id: "u2", fullName: "Sam", email: "sam@orrfellowship.org" }],
-    { subject: "Congrats {{first_name}}!", body: "So proud of you, {{full_name}}." },
+    { subject: "Congrats {{candidate_first_name}}!", body: "So proud of you, {{full_name}}." },
   );
   check("team recipients render name tokens and carry no candidate id", teamRecipients[0].renderedSubject === "Congrats Dana!" && teamRecipients[1].renderedBody === "So proud of you, Sam." && teamRecipients.every((r) => r.candidateId === null));
 
@@ -80,7 +80,7 @@ async function run() {
 
   let teamEnqueuedFor = "";
   const teamResult = await enqueueUsersCampaign("admin-1", "admin", {
-    campaignName: "Cohort celebration", subject: "Congrats {{first_name}}", body: "🎉",
+    campaignName: "Cohort celebration", subject: "Congrats {{candidate_first_name}}", body: "🎉",
   }, {
     loadUsers: async (ids) => { void ids; return [{ id: "u1", fullName: "Dana", email: "dana@orrfellowship.org" }]; },
     enqueue: async (sender, inp) => { teamEnqueuedFor = sender; return { campaignId: "camp-team", queued: inp.recipients.length, skippedDnc: 0, skippedQuota: 0, invalid: 0, replayed: false }; },

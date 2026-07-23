@@ -5,11 +5,28 @@
 // fails loudly at preview instead of shipping "{{frist_name}}" to a candidate.
 
 export const OUTREACH_MERGE_VARIABLES = [
-  "{{first_name}}", "{{last_name}}", "{{full_name}}",
-  "{{school}}", "{{stage}}", "{{class_year}}", "{{point_person}}",
+  "{{candidate_first_name}}", "{{candidate_last_name}}", "{{full_name}}",
+  "{{school}}", "{{stage}}", "{{class_year}}", "{{fellow_point_person}}",
 ] as const;
 
-const SUPPORTED = new Set(OUTREACH_MERGE_VARIABLES.map((v) => v.slice(2, -2)));
+const LEGACY_MERGE_VARIABLES: Record<string, keyof OutreachTokens> = {
+  first_name: "candidate_first_name",
+  last_name: "candidate_last_name",
+  point_person: "fellow_point_person",
+};
+
+const SUPPORTED = new Set([
+  ...OUTREACH_MERGE_VARIABLES.map((v) => v.slice(2, -2)),
+  ...Object.keys(LEGACY_MERGE_VARIABLES),
+]);
+
+// Keep saved templates made before the rename working, while presenting and
+// persisting the clearer names everywhere going forward.
+export function normalizeOutreachMergeVariables(template: string): string {
+  return template.replace(/\{\{\s*(first_name|last_name|point_person)\s*\}\}/gi, (_match, key: string) =>
+    `{{${LEGACY_MERGE_VARIABLES[key.toLowerCase()]}}}`,
+  );
+}
 
 // Any {{token}} whose key isn't supported, plus a catch for a stray unmatched
 // "{{" / "}}" (a malformed variable). Mirrors the demo's detector.
@@ -31,8 +48,8 @@ export function findManualPlaceholders(template: string): string[] {
 }
 
 export type OutreachTokens = {
-  first_name: string; last_name: string; full_name: string;
-  school: string; stage: string; class_year: string; point_person: string;
+  candidate_first_name: string; candidate_last_name: string; full_name: string;
+  school: string; stage: string; class_year: string; fellow_point_person: string;
 };
 
 // One recipient as the composer renders it: display fields + a precomputed token
@@ -61,7 +78,8 @@ export type CampaignHistoryItem = {
 
 export function renderOutreachTemplate(template: string, tokens: OutreachTokens): string {
   return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (match, key: string) => {
-    const value = (tokens as Record<string, string>)[key.toLowerCase()];
+    const normalizedKey = LEGACY_MERGE_VARIABLES[key.toLowerCase()] ?? key.toLowerCase();
+    const value = (tokens as Record<string, string>)[normalizedKey];
     return value !== undefined ? value : match;
   });
 }
@@ -101,12 +119,12 @@ export function candidateOutreachTokens(input: {
 }): OutreachTokens {
   const { first, last } = splitName(input.name);
   return {
-    first_name: first,
-    last_name: last,
+    candidate_first_name: first,
+    candidate_last_name: last,
     full_name: (input.name ?? "").trim(),
     school: input.school,
     stage: input.stage ?? "",
     class_year: parseClassYear(input.gradDate),
-    point_person: input.pointPerson,
+    fellow_point_person: input.pointPerson,
   };
 }

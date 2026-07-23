@@ -14,14 +14,14 @@ function rejects(name: string, fn: () => unknown, code: string) {
 
 const base = {
   campaignName: "Spring outreach",
-  subject: "Hi {{first_name}} at {{school}}",
-  body: "Class of {{class_year}} — reach out to {{point_person}}.",
+  subject: "Hi {{candidate_first_name}} at {{school}}",
+  body: "Class of {{class_year}} — reach out to {{fellow_point_person}}.",
   selectedCandidateIds: ["c1", "c2"],
   idempotencyKey: "abcd-1234-efgh",
 };
 
 const ok = validateOutreachInput(base);
-check("accepts a valid payload", ok.ids.length === 2 && ok.subject.includes("{{first_name}}"));
+check("accepts a valid payload", ok.ids.length === 2 && ok.subject.includes("{{candidate_first_name}}"));
 check("accepts selectedUserIds as the id field too", validateOutreachInput({ ...base, selectedCandidateIds: undefined, selectedUserIds: ["u1"] }).ids[0] === "u1");
 
 rejects("rejects an unknown merge token", () => validateOutreachInput({ ...base, body: "Hi {{frist_name}}" }), "unsupported_merge_variable");
@@ -41,7 +41,7 @@ rejects("rejects a malformed templateId", () => validateOutreachInput({ ...base,
 
 import { resolveContentForSender, type OutreachTemplate } from "./outreach-templates.server";
 const tpl: OutreachTemplate = {
-  id: TPL_ID, name: "Fall intro", subject: "Meet Orr, {{first_name}}", body: "Hi {{first_name}} — from {{point_person}}",
+  id: TPL_ID, name: "Fall intro", subject: "Meet Orr, {{candidate_first_name}}", body: "Hi {{candidate_first_name}} — from {{fellow_point_person}}",
   isArchived: false, updatedAt: "2026-07-01T00:00:00Z",
   attachments: [{ id: "a1", fileName: "one-pager.pdf", mimeType: "application/pdf", sizeBytes: 1234, storagePath: "t/one-pager.pdf" }],
 };

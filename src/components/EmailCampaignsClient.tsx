@@ -25,26 +25,26 @@ import {
 
 const CAMPAIGN_STEPS = ["Recipients", "Compose", "Preview", "Review"] as const;
 const LIMITS = { campaignName: 120, subject: 200, body: 20_000 };
-const INITIAL_CAMPAIGN_SUBJECT = "{{first_name}}, connect with the Orr Fellowship";
-const INITIAL_CAMPAIGN_BODY = `Hi {{first_name}},
+const INITIAL_CAMPAIGN_SUBJECT = "{{candidate_first_name}}, connect with the Orr Fellowship";
+const INITIAL_CAMPAIGN_BODY = `Hi {{candidate_first_name}},
 
 I wanted to reach out about the Orr Fellowship. Your background at {{school}} stood out to us, and I'd love to tell you more about what the Fellowship offers graduating seniors.
 
 Would you be open to a quick conversation?
 
 Best,
-{{point_person}}`;
+{{fellow_point_person}}`;
 
 // Friendly names for the merge tokens, shown on the draggable palette chips so
 // admins recognize a field without decoding the {{snake_case}} token.
 const MERGE_FIELD_LABELS: Record<string, string> = {
-  "{{first_name}}": "First name",
-  "{{last_name}}": "Last name",
+  "{{candidate_first_name}}": "Candidate first name",
+  "{{candidate_last_name}}": "Candidate last name",
   "{{full_name}}": "Full name",
   "{{school}}": "School",
   "{{stage}}": "Stage",
   "{{class_year}}": "Class year",
-  "{{point_person}}": "Point person",
+  "{{fellow_point_person}}": "Fellow point person",
 };
 
 // Custom dataTransfer type so a field only accepts drops that originate from our
@@ -231,7 +231,7 @@ export default function EmailCampaignsClient({
     [allRecipients],
   );
   const pointPersonOptions = useMemo(
-    () => Array.from(new Set(allRecipients.map((r) => r.tokens.point_person).filter(Boolean))).sort(),
+    () => Array.from(new Set(allRecipients.map((r) => r.tokens.fellow_point_person).filter(Boolean))).sort(),
     [allRecipients],
   );
   // Recipients matching the current search + stage filter (drives the list and
@@ -241,9 +241,9 @@ export default function EmailCampaignsClient({
     if (audience?.key === "all" && !q && !pointPersonFilter) return [];
     return allRecipients.filter((r) => {
       if (stageFilter && r.stage !== stageFilter) return false;
-      if (pointPersonFilter && r.tokens.point_person !== pointPersonFilter) return false;
+      if (pointPersonFilter && r.tokens.fellow_point_person !== pointPersonFilter) return false;
       if (!q) return true;
-      return `${r.name} ${r.email ?? ""} ${r.school} ${r.tokens.point_person}`.toLowerCase().includes(q);
+      return `${r.name} ${r.email ?? ""} ${r.school} ${r.tokens.fellow_point_person}`.toLowerCase().includes(q);
     });
   }, [allRecipients, audience?.key, search, stageFilter, pointPersonFilter]);
   const filteredRecipients = matchingRecipients;
@@ -1132,7 +1132,7 @@ export function OutreachTemplateManager({ templates }: { templates: OutreachTemp
           {editing ? (
             <div className="tpl-form">
               <input value={editing.name} maxLength={120} placeholder="Template name (e.g. Fall intro — first touch)" onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-              <input ref={tplSubjectRef} value={editing.subject} maxLength={200} placeholder="Subject — merge fields like {{first_name}} work here"
+              <input ref={tplSubjectRef} value={editing.subject} maxLength={200} placeholder="Subject — merge fields like {{candidate_first_name}} work here"
                 onFocus={() => setActiveField("subject")}
                 onDragOver={allowMergeFieldDrop} onDrop={(e) => insertMergeFieldOnDrop(e, editing.subject, (v) => setEditing((cur) => cur && { ...cur, subject: v }))}
                 onChange={(e) => setEditing({ ...editing, subject: e.target.value })} />
