@@ -43,14 +43,14 @@ export default function Sidebar({
       <div style={{ position: "absolute", inset: 0, background: `radial-gradient(420px 220px at -10% 15%, ${accent}22, transparent 70%)`, pointerEvents: "none" }} />
 
       {/* Brand */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: collapsed ? "20px 0 16px" : "20px 20px 16px", justifyContent: collapsed ? "center" : "flex-start", position: "relative" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: collapsed ? "20px 0 16px" : "20px 20px 16px", justifyContent: collapsed ? "center" : "flex-start", position: "relative" }}>
         <div style={{ width: 38, height: 38, borderRadius: 10, background: brand.logoUrl ? "#fff" : accent, display: "grid", placeItems: "center", flexShrink: 0, boxShadow: `0 6px 18px ${accent}55`, overflow: "hidden", fontFamily: FD, fontWeight: 700, color: "#fff", fontSize: 14, letterSpacing: 0.3, padding: brand.logoUrl ? 3 : 0, boxSizing: "border-box" }}>
           {brand.logoUrl ? <img src={brand.logoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : brand.crest}
         </div>
         {!collapsed && (
-          <div style={{ lineHeight: 1.1, overflow: "hidden" }}>
-            <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 16, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{brand.label}</div>
-            <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: 1.6, color: accent, textTransform: "uppercase", marginTop: 3, whiteSpace: "nowrap" }}>{brand.sublabel}</div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div title={brand.label} style={{ fontFamily: FD, fontWeight: 700, fontSize: 16, lineHeight: 1.15, color: t.textHi, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", overflowWrap: "anywhere" }}>{brand.label}</div>
+            <div style={{ display: "inline-flex", maxWidth: "100%", fontFamily: FM, fontSize: 9, lineHeight: 1.2, letterSpacing: 1.25, color: t.textHi, textTransform: "uppercase", marginTop: 6, padding: "3px 6px", borderRadius: 5, background: "rgba(255,255,255,0.09)", border: `1px solid ${t.line}`, whiteSpace: "normal" }}>{brand.sublabel}</div>
           </div>
         )}
       </div>

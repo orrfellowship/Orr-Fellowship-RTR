@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import type { CSSProperties } from "react";
 
 const C = {
@@ -26,7 +25,6 @@ const ONI_END = cycleDate(9, 14);
 const ROTC_DATE = cycleDate(9, 22);
 const FINALIST_DAY = cycleDate(11, 4);
 
-type RoundStatus = "Completed" | "Current" | "Upcoming";
 type CampaignPhaseStatus = "Completed" | "Current" | "Upcoming";
 type CampaignPhase = {
   title: string;
@@ -35,25 +33,6 @@ type CampaignPhase = {
   start?: Date;
   end: Date;
 };
-type RecruitingRound = {
-  number: number;
-  title: string;
-  timeFrame: string;
-  description: string;
-  start?: Date;
-  end: Date;
-};
-type PhaseMilestone = {
-  title: string;
-  timeFrame: string;
-  description: string;
-};
-type PhaseDetail = {
-  title: string;
-  subtitle: string;
-  milestones: PhaseMilestone[];
-};
-
 const dateOnly = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
 export const campaignPhases: CampaignPhase[] = [
@@ -93,124 +72,6 @@ export const campaignPhases: CampaignPhase[] = [
   },
 ];
 
-export const recruitingRounds: RecruitingRound[] = [
-  {
-    number: 1,
-    title: "Gear Check",
-    timeFrame: "Now - July 12",
-    description: "Log into RTR, confirm school assignments, review goals, and make sure the team is ready to use the tracker.",
-    end: cycleDate(6, 12),
-  },
-  {
-    number: 2,
-    title: "Scout the Arena",
-    timeFrame: "July 13 - July 20",
-    description: "Build the school recruiting plan: key dates, career fairs, student orgs, faculty/staff contacts, alumni, and campus opportunities.",
-    start: cycleDate(6, 13),
-    end: cycleDate(6, 20),
-  },
-  {
-    number: 3,
-    title: "Work the Corner",
-    timeFrame: "July 21 - Applications Open (July 28)",
-    description: "Assign owners, schedule outreach, prepare events, and get sourced candidates ready for application launch.",
-    start: cycleDate(6, 21),
-    end: APPLICATIONS_OPEN,
-  },
-];
-
-const phaseDetails: Record<string, PhaseDetail> = {
-  "Training Camp": {
-    title: "Training Camp Recruiting Rounds",
-    subtitle: "Pre-application milestones for getting each school team ready before applications open.",
-    milestones: recruitingRounds,
-  },
-  "Opening Bell": {
-    title: "Opening Bell Application Push",
-    subtitle: "Milestones for moving sourced candidates to submitted applications before the deadline.",
-    milestones: [
-      {
-        title: "Source the Pipeline",
-        timeFrame: "July 28 - Mid August",
-        description: "Add and update sourced candidates for each assigned school.",
-      },
-      {
-        title: "Land the First Punches",
-        timeFrame: "Mid August - Early September",
-        description: "Move sourced candidates from interest to applied status.",
-      },
-      {
-        title: "Final Bell Push",
-        timeFrame: "September 16 - September 25",
-        description: "Follow up with sourced-but-not-applied candidates before applications close.",
-      },
-    ],
-  },
-  "Media Week": {
-    title: "Media Week ONI Readiness",
-    subtitle: "Milestones for tracking Orr Network Interview logistics, readiness, and follow-up.",
-    milestones: [
-      {
-        title: "Schedule Check",
-        timeFrame: "Before ONIs",
-        description: "Confirm candidate/interviewer scheduling readiness.",
-      },
-      {
-        title: "Interview Week",
-        timeFrame: "Oct 7 - Oct 14",
-        description: "Track ONI activity, issues, and completion.",
-      },
-      {
-        title: "Evaluation Follow-Up",
-        timeFrame: "After ONIs",
-        description: "Confirm follow-up items and interview feedback are complete.",
-      },
-    ],
-  },
-  "Weigh-In": {
-    title: "Weigh-In ROTC Readiness",
-    subtitle: "Milestones for Reception on the Circle readiness, attendance, and follow-up.",
-    milestones: [
-      {
-        title: "RSVP Check",
-        timeFrame: "Before Oct 22",
-        description: "Review invite and RSVP readiness.",
-      },
-      {
-        title: "Reception on the Circle",
-        timeFrame: "Oct 22",
-        description: "Track attendance, fellow coverage, and event notes.",
-      },
-      {
-        title: "Post-Reception Follow-Up",
-        timeFrame: "After Oct 22",
-        description: "Capture candidate notes and next steps.",
-      },
-    ],
-  },
-  "Fight Night": {
-    title: "Fight Night Finalist Day",
-    subtitle: "Milestones for Finalist Day execution and final-stage recruiting operations.",
-    milestones: [
-      {
-        title: "Finalist Readiness",
-        timeFrame: "Before Dec 4",
-        description: "Confirm finalist readiness, logistics, and assignments.",
-      },
-      {
-        title: "Finalist Day",
-        timeFrame: "Dec 4",
-        description: "Support event execution and real-time tracking.",
-      },
-      {
-        title: "Final Outcomes",
-        timeFrame: "After Dec 4",
-        description: "Capture final-stage notes, outcomes, and follow-up items.",
-      },
-    ],
-  },
-};
-
 function currentCampaignPhaseTitle(today: Date): string | null {
   const todayTime = dateOnly(today);
   const active = campaignPhases
@@ -221,14 +82,6 @@ function currentCampaignPhaseTitle(today: Date): string | null {
   return active?.title ?? null;
 }
 
-function defaultSelectedPhaseTitle(today: Date): string {
-  const current = currentCampaignPhaseTitle(today);
-  if (current) return current;
-  const todayTime = dateOnly(today);
-  const upcoming = campaignPhases.find((phase) => todayTime < dateOnly(phase.start ?? phase.end));
-  return upcoming?.title ?? campaignPhases[campaignPhases.length - 1].title;
-}
-
 function campaignStatusFor(phase: CampaignPhase, currentTitle: string | null, today: Date): CampaignPhaseStatus {
   const todayTime = dateOnly(today);
   if (phase.title === currentTitle) return "Current";
@@ -237,24 +90,7 @@ function campaignStatusFor(phase: CampaignPhase, currentTitle: string | null, to
   return currentTitle ? "Completed" : "Upcoming";
 }
 
-function currentMainRoundNumber(today: Date): number | null {
-  const todayTime = dateOnly(today);
-  const active = recruitingRounds
-    .filter((round) => todayTime <= dateOnly(round.end))
-    .filter((round) => !round.start || todayTime >= dateOnly(round.start))
-    .sort((a, b) => (b.number ?? 0) - (a.number ?? 0))[0];
-  return active?.number ?? null;
-}
-
-function statusFor(round: RecruitingRound, currentNumber: number | null, today: Date): RoundStatus {
-  const todayTime = dateOnly(today);
-  if (round.number === currentNumber) return "Current";
-  if (round.start && todayTime < dateOnly(round.start)) return "Upcoming";
-  if (todayTime > dateOnly(round.end)) return "Completed";
-  return round.number && currentNumber && round.number < currentNumber ? "Completed" : "Upcoming";
-}
-
-function toneFor(status: RoundStatus | CampaignPhaseStatus, accent: string) {
+function toneFor(status: CampaignPhaseStatus, accent: string) {
   if (status === "Current") {
     return { border: accent, bg: `${accent}12`, pillBg: accent, pillFg: "#fff", text: accent };
   }
@@ -267,9 +103,6 @@ function toneFor(status: RoundStatus | CampaignPhaseStatus, accent: string) {
 export default function RecruitingRounds({ accent = C.orange }: { accent?: string }) {
   const today = new Date();
   const currentPhaseTitle = currentCampaignPhaseTitle(today);
-  const currentNumber = currentMainRoundNumber(today);
-  const [selectedPhaseTitle, setSelectedPhaseTitle] = useState(() => defaultSelectedPhaseTitle(today));
-  const selectedDetail = phaseDetails[selectedPhaseTitle] ?? phaseDetails["Training Camp"];
 
   return (
     <section style={{ marginTop: 26 }}>
@@ -286,30 +119,21 @@ export default function RecruitingRounds({ accent = C.orange }: { accent?: strin
           const status = campaignStatusFor(phase, currentPhaseTitle, today);
           const tone = toneFor(status, accent);
           const isCurrent = status === "Current";
-          const isSelected = selectedPhaseTitle === phase.title;
           const connectorTone = isCurrent ? accent : C.line;
           const currentStyle: CSSProperties = isCurrent
             ? { boxShadow: `0 8px 18px ${accent}1f` }
-            : isSelected
-              ? { boxShadow: "0 6px 16px rgba(17,18,62,0.10)" }
-              : { boxShadow: "none" };
-          const borderColor = isCurrent ? accent : isSelected ? C.navy : tone.border;
+            : { boxShadow: "none" };
           return (
             <div key={phase.title} style={{ display: "flex", alignItems: "center", flex: "1 0 0", minWidth: 0 }}>
-              <button
-                type="button"
-                aria-pressed={isSelected}
-                onClick={() => setSelectedPhaseTitle(phase.title)}
+              <div
                 style={{
-                  appearance: "none",
                   textAlign: "left",
                   font: "inherit",
-                  cursor: "pointer",
                   background: tone.bg,
-                  border: `${isCurrent || isSelected ? 2 : 1}px solid ${borderColor}`,
-                  borderTop: `4px solid ${isCurrent ? accent : isSelected ? C.navy : status === "Upcoming" ? C.line : tone.border}`,
+                  border: `${isCurrent ? 2 : 1}px solid ${isCurrent ? accent : tone.border}`,
+                  borderTop: `4px solid ${isCurrent ? accent : status === "Upcoming" ? C.line : tone.border}`,
                   borderRadius: 12,
-                  padding: isCurrent || isSelected ? "12px 13px" : "13px 14px",
+                  padding: isCurrent ? "12px 13px" : "13px 14px",
                   minHeight: 168,
                   flex: "1 1 0",
                   minWidth: 170,
@@ -332,7 +156,7 @@ export default function RecruitingRounds({ accent = C.orange }: { accent?: strin
                   <div style={{ fontSize: 12, color: C.grayMute, fontWeight: 700, marginTop: 3 }}>{phase.timeFrame}</div>
                 </div>
                 <p style={{ fontSize: 12.5, lineHeight: 1.4, color: C.gray, margin: 0 }}>{phase.description}</p>
-              </button>
+              </div>
               {index < campaignPhases.length - 1 && (
                 <div aria-hidden style={{ width: 34, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 7px" }}>
                   <div style={{ position: "relative", width: "100%", height: 2, borderRadius: 99, background: connectorTone }}>
@@ -341,59 +165,6 @@ export default function RecruitingRounds({ accent = C.orange }: { accent?: strin
                 </div>
               )}
               </div>
-          );
-        })}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 18, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 18px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-          <div>
-            <h3 style={{ fontSize: 17, color: C.navy, margin: 0, fontFamily: HEAD }}>{selectedDetail.title}</h3>
-            <p style={{ color: C.grayMute, margin: "3px 0 0", fontSize: 13 }}>{selectedDetail.subtitle}</p>
-          </div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-        {selectedDetail.milestones.map((milestone, index) => {
-          const isTrainingRound = selectedPhaseTitle === "Training Camp";
-          const round = isTrainingRound ? recruitingRounds[index] : null;
-          const status = round ? statusFor(round, currentNumber, today) : null;
-          const tone = status ? toneFor(status, accent) : { border: C.line, bg: "#fff", pillBg: C.canvas, pillFg: C.grayMute, text: C.grayMute };
-          const currentStyle: CSSProperties = status === "Current"
-            ? { boxShadow: `0 12px 28px ${accent}22`, transform: "translateY(-1px)" }
-            : {};
-          return (
-            <article
-              key={`${selectedPhaseTitle}-${milestone.title}`}
-              style={{
-                background: tone.bg,
-                border: `1px solid ${tone.border}`,
-                borderLeft: `4px solid ${status === "Upcoming" ? C.line : tone.border}`,
-                borderRadius: 12,
-                padding: "14px 16px",
-                minHeight: 166,
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                ...currentStyle,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: tone.text, letterSpacing: 0.4 }}>
-                  {round ? `Round ${round.number}` : "Milestone"}
-                </span>
-                {status && (
-                  <span style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", color: tone.pillFg, background: tone.pillBg, padding: "4px 8px", borderRadius: 999, whiteSpace: "nowrap" }}>
-                    {status}
-                  </span>
-                )}
-              </div>
-              <div>
-                <h3 style={{ fontFamily: HEAD, fontSize: 18, color: C.navy, margin: 0 }}>{milestone.title}</h3>
-                <div style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 700, marginTop: 3 }}>{milestone.timeFrame}</div>
-              </div>
-              <p style={{ fontSize: 13, lineHeight: 1.45, color: C.gray, margin: 0 }}>{milestone.description}</p>
-            </article>
           );
         })}
         </div>

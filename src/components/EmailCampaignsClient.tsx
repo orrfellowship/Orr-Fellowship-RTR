@@ -170,16 +170,21 @@ export default function EmailCampaignsClient({
   recentCampaigns = [],
   templates = [],
   canFreeCompose = false,
+  canCustomizeTemplate = false,
+  sendDisabledReason,
 }: {
   gmailConnection?: GmailConnectionStatus;
   gmailNotice?: GmailNotice;
   gmailCampaignSendEnabled?: boolean;
   audiences?: OutreachAudience[];
   recentCampaigns?: CampaignHistoryItem[];
-  // Admin-curated templates. Non-admins (canFreeCompose=false) MUST pick one —
-  // their subject/body fields are locked to it (the server enforces the same).
+  // Admin-curated templates. `canFreeCompose` controls whether a template is
+  // required; `canCustomizeTemplate` lets template-required users edit their
+  // per-campaign copy without granting template-management access.
   templates?: OutreachTemplateView[];
   canFreeCompose?: boolean;
+  canCustomizeTemplate?: boolean;
+  sendDisabledReason?: string;
 }) {
   const [audienceKey, setAudienceKey] = useState<string>(audiences[0]?.key ?? "mine");
   const audience = audiences.find((a) => a.key === audienceKey) ?? audiences[0];
@@ -196,14 +201,15 @@ export default function EmailCampaignsClient({
   const [body, setBody] = useState(canFreeCompose ? INITIAL_CAMPAIGN_BODY : "");
   const [templateId, setTemplateId] = useState<string>("");
   const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
-  const templateLocked = !canFreeCompose;
+  const templateRequired = !canFreeCompose;
+  const contentLocked = templateRequired && !canCustomizeTemplate;
   const attachments = selectedTemplate?.attachments ?? [];
 
   function pickTemplate(id: string) {
     setTemplateId(id);
     const t = templates.find((x) => x.id === id);
     if (t) { setSubject(t.subject); setBody(t.body); }
-    else if (templateLocked) { setSubject(""); setBody(""); }
+    else if (templateRequired) { setSubject(""); setBody(""); }
   }
   const [activeField, setActiveField] = useState<"subject" | "body">("body");
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -270,7 +276,7 @@ export default function EmailCampaignsClient({
     && body.length <= LIMITS.body
     && unsupportedVariables.length === 0
     && manualPlaceholders.length === 0
-    && (!templateLocked || !!selectedTemplate); // fellows must send from a template
+    && (!templateRequired || !!selectedTemplate); // fellows must start from a template
   const canContinue = step === 0 ? selectedRecipients.length > 0 : step === 1 ? !!composeReady : true;
   const connectionNotice = gmailNoticeText(gmailNotice);
   // Reply/bounce tracking needs the gmail.metadata scope (added in Phase 6).
@@ -687,30 +693,30 @@ export default function EmailCampaignsClient({
 
       {step === 1 && (
         <section>
-          <div className="section-title"><div><h2>Compose your email</h2><p>{templateLocked ? "Pick one of the templates your admins prepared — it's personalized for each recipient." : "Write one template — it's personalized for each recipient."}</p></div></div>
+          <div className="section-title"><div><h2>Compose your email</h2><p>{templateRequired ? "Start with a template from your admins, then customize it for this campaign." : "Write one template — it's personalized for each recipient."}</p></div></div>
           <div className="compose-layout">
             <div className="form-card">
               <Field label="Campaign name" hint="Only visible to your recruiting team">
                 <input value={campaignName} maxLength={LIMITS.campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Campaign name" />
               </Field>
-              <Field label="Template" hint={templateLocked ? "Provided by your admins" : "Optional starting point — its attachments ride along"}>
+              <Field label="Template" hint={templateRequired ? "Required starting point from your admins" : "Optional starting point — its attachments ride along"}>
                 <select value={templateId} onChange={(event) => pickTemplate(event.target.value)}>
-                  <option value="">{templateLocked ? "Choose a template…" : "None — write from scratch"}</option>
+                  <option value="">{templateRequired ? "Choose a template…" : "None — write from scratch"}</option>
                   {templates.map((t) => <option key={t.id} value={t.id}>{t.name}{t.attachments.length ? ` (${t.attachments.length} 📎)` : ""}</option>)}
                 </select>
               </Field>
-              {templateLocked && templates.length === 0 && (
+              {templateRequired && templates.length === 0 && (
                 <div className="compose-warn"><CircleAlert size={15} /> No templates are available yet — ask an admin to create one in Email Campaigns.</div>
               )}
               <Field label="Subject line">
-                <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} readOnly={templateLocked} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)}
-                  onDragOver={templateLocked ? undefined : allowMergeFieldDrop} onDrop={templateLocked ? undefined : (e) => insertMergeFieldOnDrop(e, subject, setSubject)}
-                  placeholder={templateLocked ? "Pick a template above" : "Email subject"} />
+                <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} readOnly={contentLocked} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)}
+                  onDragOver={contentLocked ? undefined : allowMergeFieldDrop} onDrop={contentLocked ? undefined : (e) => insertMergeFieldOnDrop(e, subject, setSubject)}
+                  placeholder={templateRequired ? "Pick a template above" : "Email subject"} />
               </Field>
               <Field label="Email body">
-                <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} readOnly={templateLocked} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)}
-                  onDragOver={templateLocked ? undefined : allowMergeFieldDrop} onDrop={templateLocked ? undefined : (e) => insertMergeFieldOnDrop(e, body, setBody)}
-                  rows={14} placeholder={templateLocked ? "The template's message will appear here." : undefined} />
+                <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} readOnly={contentLocked} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)}
+                  onDragOver={contentLocked ? undefined : allowMergeFieldDrop} onDrop={contentLocked ? undefined : (e) => insertMergeFieldOnDrop(e, body, setBody)}
+                  rows={14} placeholder={templateRequired ? "The template's message will appear here." : undefined} />
               </Field>
               {attachments.length > 0 && (
                 <div className="attachment-chips">
@@ -721,17 +727,17 @@ export default function EmailCampaignsClient({
               {manualPlaceholders.length > 0 && (
                 <div className="compose-warn placeholder-warn">
                   <CircleAlert size={15} />
-                  {templateLocked
+                  {contentLocked
                     ? <>This template still has placeholder(s) to fill: <b>{manualPlaceholders.join(", ")}</b>. Ask an admin to finish it — it can&apos;t be sent as-is.</>
                     : <>Replace the placeholder(s) <b>{manualPlaceholders.join(", ")}</b> before continuing — the <span style={{ color: "#B42318", fontWeight: 700 }}>red</span> brackets won&apos;t auto-fill.</>}
                 </div>
               )}
             </div>
             <aside className="variables-card">
-              <div className="variables-heading"><span>Merge variables</span><small>{templateLocked ? "Filled automatically" : `Insert into ${activeField}`}</small></div>
-              <p>{templateLocked ? "These placeholders in the template are replaced with each recipient's details." : "Personalize the template with each recipient's details."}</p>
-              <MergeFieldPalette disabled={templateLocked} onInsert={insertVariable} />
-              {!templateLocked && <div className="tip"><CircleAlert size={15} /><span>Drag a field into the subject or body, or click it to insert at the cursor in the last-focused field.</span></div>}
+              <div className="variables-heading"><span>Merge variables</span><small>{contentLocked ? "Filled automatically" : `Insert into ${activeField}`}</small></div>
+              <p>{contentLocked ? "These placeholders in the template are replaced with each recipient's details." : "Personalize the template with each recipient's details."}</p>
+              <MergeFieldPalette disabled={contentLocked} onInsert={insertVariable} />
+              {!contentLocked && <div className="tip"><CircleAlert size={15} /><span>Drag a field into the subject or body, or click it to insert at the cursor in the last-focused field.</span></div>}
             </aside>
           </div>
         </section>
@@ -813,19 +819,27 @@ export default function EmailCampaignsClient({
             </div>
             <aside className="send-card">
               <div className="send-icon"><Send size={22} /></div>
-              <h3>Send with Gmail</h3>
-              {gmailConnection.connected ? (
+              <h3>{sendDisabledReason ? "Preview only" : "Send with Gmail"}</h3>
+              {sendDisabledReason ? (
+                <p>{sendDisabledReason}</p>
+              ) : gmailConnection.connected ? (
                 <p><strong>{gmailConnection.connectedEmail}</strong> will send {selectedRecipients.length} personalized {selectedRecipients.length === 1 ? "message" : "messages"} — {sendEtaLabel(selectedRecipients.length)} to finish.</p>
               ) : (
                 <p>Connect your Gmail before sending.</p>
               )}
-              <div className="send-warning"><CircleAlert size={16} /><span>Do-Not-Contact and over-quota recipients are skipped automatically. There&apos;s no unsend — this goes out from your own inbox.</span></div>
-              <label className="campaign-confirmation">
-                <input type="checkbox" checked={confirmed} disabled={!gmailConnection.connected || sending} onChange={(event) => setConfirmationFingerprint(event.target.checked ? campaignFingerprint : null)} />
-                <span>I&apos;m ready to send {selectedRecipients.length} real emails through {gmailConnection.connectedEmail ?? "my connected Gmail"}.</span>
-              </label>
-              <button type="button" className="primary-action" disabled={!canSend} onClick={handleCampaignSend}><Send size={16} /> {sending ? "Queuing…" : "Send with Gmail"}</button>
-              {!gmailConnection.connected && <a className="gmail-action review-connect" href="/api/google/connect"><Link2 size={15} /> Connect Gmail</a>}
+              {sendDisabledReason ? (
+                <div className="send-warning"><CircleAlert size={16} /><span>No messages can be sent from this workspace yet. Use Preview to review each candidate&apos;s personalized email.</span></div>
+              ) : (
+                <>
+                  <div className="send-warning"><CircleAlert size={16} /><span>Do-Not-Contact and over-quota recipients are skipped automatically. There&apos;s no unsend — this goes out from your own inbox.</span></div>
+                  <label className="campaign-confirmation">
+                    <input type="checkbox" checked={confirmed} disabled={!gmailConnection.connected || sending} onChange={(event) => setConfirmationFingerprint(event.target.checked ? campaignFingerprint : null)} />
+                    <span>I&apos;m ready to send {selectedRecipients.length} real emails through {gmailConnection.connectedEmail ?? "my connected Gmail"}.</span>
+                  </label>
+                </>
+              )}
+              <button type="button" className="primary-action" disabled={!canSend} onClick={handleCampaignSend}><Send size={16} /> {sendDisabledReason ? "Sending not enabled" : sending ? "Queuing…" : "Send with Gmail"}</button>
+              {!sendDisabledReason && !gmailConnection.connected && <a className="gmail-action review-connect" href="/api/google/connect"><Link2 size={15} /> Connect Gmail</a>}
               {sendError && <div className="campaign-send-error" role="alert"><CircleAlert size={15} /> {sendError}</div>}
             </aside>
           </div>
@@ -833,7 +847,7 @@ export default function EmailCampaignsClient({
       )}
 
       <div className="wizard-footer">
-        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady ? <span className="validation-note">{templateLocked && !selectedTemplate ? "Pick a template to continue." : manualPlaceholders.length > 0 ? `Replace ${manualPlaceholders.join(", ")} before continuing.` : "Complete all fields to continue."}</span> : null}</div>
+        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady ? <span className="validation-note">{templateRequired && !selectedTemplate ? "Pick a template to continue." : manualPlaceholders.length > 0 ? `Replace ${manualPlaceholders.join(", ")} before continuing.` : "Complete all fields to continue."}</span> : null}</div>
         <div className="footer-actions">
           {step > 0 && <button type="button" className="back-button" onClick={() => setStep((current) => current - 1)}><ArrowLeft size={16} /> Back</button>}
           {step < 3 && <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to {CAMPAIGN_STEPS[step + 1]} <ArrowRight size={16} /></button>}

@@ -505,9 +505,11 @@ export default function ConsoleClient({
         {/* ---- OVERVIEW ---- */}
         {tab === "overview" && (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
-              <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Where the program stands</h1>
-              <SchoolFilter schools={schools} value={scope} onChange={setScope} />
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr auto 1fr", alignItems: "end", gap: 14 }}>
+              <h1 style={{ gridColumn: isMobile ? 1 : 2, fontSize: 30, color: C.navy, margin: 0, textAlign: "center" }}>Where the program stands</h1>
+              <div style={{ gridColumn: isMobile ? 1 : 3, justifySelf: isMobile ? "center" : "end" }}>
+                <SchoolFilter schools={schools} value={scope} onChange={setScope} />
+              </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 340px))", justifyContent: "center", gap: 16, marginTop: 22 }}>
               {board.map((b) => {
@@ -531,8 +533,7 @@ export default function ConsoleClient({
                 );
               })}
             </div>
-            <h2 style={{ fontFamily: HEAD, fontSize: 20, color: C.navy, margin: "32px 0 12px" }}>By school</h2>
-            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
+            <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 32 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr", padding: "10px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#FAFBFE" }}>
                 <div>School</div><div>Sourced</div><div>Applied</div>
               </div>

@@ -1,15 +1,15 @@
 import { NextResponse, after } from "next/server";
 import { getCurrentProfile, isPreviewing } from "@/lib/auth";
 import { GmailTestSendError, safeTestSendError } from "@/lib/gmail/test-send.server";
-import { validateOutreachInput, enqueueCandidateCampaign } from "@/lib/gmail/candidate-outreach.server";
+import { candidateOutreachSendingEnabled, validateOutreachInput, enqueueCandidateCampaign } from "@/lib/gmail/candidate-outreach.server";
 import { resolveCampaignContent } from "@/lib/gmail/outreach-templates.server";
 import { drainOutreachQueue } from "@/lib/gmail/outreach-queue.server";
 
 export const runtime = "nodejs";
 
-// Live outreach to real candidates. Sender + role come from the session; a
-// fellow can only email their own assignments (enforced in the engine), admins
-// can email any. Enqueues + pokes the drainer for instant first-send.
+// Live outreach to real candidates. Sender + role come from the session.
+// During the preview-only rollout, only admins may enqueue real messages;
+// assignment checks remain in the engine for when fellow sending opens later.
 
 function err(e: GmailTestSendError) {
   return NextResponse.json(safeTestSendError(e), { status: e.status, headers: { "Cache-Control": "private, no-store" } });
@@ -26,6 +26,9 @@ export async function POST(request: Request) {
   const profile = await getCurrentProfile();
   if (!profile) return err(new GmailTestSendError("forbidden", "Sign in to send outreach.", 403));
   if (await isPreviewing()) return err(new GmailTestSendError("preview_read_only", "Exit View As mode before sending.", 403));
+  if (!candidateOutreachSendingEnabled(profile.role)) {
+    return err(new GmailTestSendError("outreach_disabled", "Sending is not enabled for fellows or team leads yet.", 403));
+  }
 
   let body: unknown;
   try { body = await request.json(); }

@@ -13,6 +13,12 @@ export const OUTREACH_LIMITS = { campaignName: 120, subject: 200, body: 20_000, 
 
 export type ValidatedOutreachInput = { campaignName: string; subject: string; body: string; ids: string[]; idempotencyKey: string; templateId: string | null };
 
+// Rollout gate: admins may send live campaigns; fellows and team leads can
+// compose and preview in the workspace but cannot enqueue real messages yet.
+export function candidateOutreachSendingEnabled(role: AppRole): boolean {
+  return isAdminPlus(role);
+}
+
 export function validateOutreachInput(value: unknown): ValidatedOutreachInput {
   const bad = (code: string, msg: string): never => { throw new GmailTestSendError(code, msg, 400); };
   if (!value || typeof value !== "object" || Array.isArray(value)) bad("invalid_campaign", "Send valid campaign content.");
