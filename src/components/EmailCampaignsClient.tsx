@@ -40,7 +40,7 @@ Best,
 const MERGE_FIELD_LABELS: Record<string, string> = {
   "{{candidate_first_name}}": "Candidate first name",
   "{{candidate_last_name}}": "Candidate last name",
-  "{{full_name}}": "Full name",
+  "{{candidate_full_name}}": "Candidate full name",
   "{{school}}": "School",
   "{{stage}}": "Stage",
   "{{class_year}}": "Class year",

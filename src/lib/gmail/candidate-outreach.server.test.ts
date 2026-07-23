@@ -68,7 +68,7 @@ async function run() {
   // Whole-team audience: build user recipients (candidate_id null) + admin gate.
   const teamRecipients = buildUserRecipients(
     [{ id: "u1", fullName: "Dana Fellow", email: "dana@orrfellowship.org" }, { id: "u2", fullName: "Sam", email: "sam@orrfellowship.org" }],
-    { subject: "Congrats {{candidate_first_name}}!", body: "So proud of you, {{full_name}}." },
+    { subject: "Congrats {{candidate_first_name}}!", body: "So proud of you, {{candidate_full_name}}." },
   );
   check("team recipients render name tokens and carry no candidate id", teamRecipients[0].renderedSubject === "Congrats Dana!" && teamRecipients[1].renderedBody === "So proud of you, Sam." && teamRecipients.every((r) => r.candidateId === null));
 

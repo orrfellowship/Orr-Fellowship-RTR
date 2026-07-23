@@ -5,13 +5,14 @@
 // fails loudly at preview instead of shipping "{{frist_name}}" to a candidate.
 
 export const OUTREACH_MERGE_VARIABLES = [
-  "{{candidate_first_name}}", "{{candidate_last_name}}", "{{full_name}}",
+  "{{candidate_first_name}}", "{{candidate_last_name}}", "{{candidate_full_name}}",
   "{{school}}", "{{stage}}", "{{class_year}}", "{{fellow_point_person}}",
 ] as const;
 
 const LEGACY_MERGE_VARIABLES: Record<string, keyof OutreachTokens> = {
   first_name: "candidate_first_name",
   last_name: "candidate_last_name",
+  full_name: "candidate_full_name",
   point_person: "fellow_point_person",
 };
 
@@ -23,7 +24,7 @@ const SUPPORTED = new Set([
 // Keep saved templates made before the rename working, while presenting and
 // persisting the clearer names everywhere going forward.
 export function normalizeOutreachMergeVariables(template: string): string {
-  return template.replace(/\{\{\s*(first_name|last_name|point_person)\s*\}\}/gi, (_match, key: string) =>
+  return template.replace(/\{\{\s*(first_name|last_name|full_name|point_person)\s*\}\}/gi, (_match, key: string) =>
     `{{${LEGACY_MERGE_VARIABLES[key.toLowerCase()]}}}`,
   );
 }
@@ -48,7 +49,7 @@ export function findManualPlaceholders(template: string): string[] {
 }
 
 export type OutreachTokens = {
-  candidate_first_name: string; candidate_last_name: string; full_name: string;
+  candidate_first_name: string; candidate_last_name: string; candidate_full_name: string;
   school: string; stage: string; class_year: string; fellow_point_person: string;
 };
 
@@ -121,7 +122,7 @@ export function candidateOutreachTokens(input: {
   return {
     candidate_first_name: first,
     candidate_last_name: last,
-    full_name: (input.name ?? "").trim(),
+    candidate_full_name: (input.name ?? "").trim(),
     school: input.school,
     stage: input.stage ?? "",
     class_year: parseClassYear(input.gradDate),
