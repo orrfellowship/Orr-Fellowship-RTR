@@ -30,14 +30,14 @@ export default async function ConsoleSection({
 }) {
   const { section } = await params;
   const query = await searchParams;
-  const { profile, real } = await resolveViewer();
+  const { profile, real, previewing } = await resolveViewer();
   if (!profile) redirect("/login");
   if (!isAdminPlus(profile.role)) redirect("/workspace/snapshot");
   if (!canAccessConsoleSection(profile.role, section)) redirect("/console/overview");
 
   return (
     <Suspense fallback={<SectionSkeleton />}>
-      <ConsoleSectionData section={section} profile={profile} authenticatedUserId={(real ?? profile).id} gmailQuery={query} />
+      <ConsoleSectionData section={section} profile={profile} previewMode={!!previewing} authenticatedUserId={(real ?? profile).id} gmailQuery={query} />
     </Suspense>
   );
 }
@@ -47,11 +47,13 @@ export default async function ConsoleSection({
 async function ConsoleSectionData({
   section,
   profile,
+  previewMode,
   authenticatedUserId,
   gmailQuery,
 }: {
   section: string;
   profile: Profile;
+  previewMode: boolean;
   authenticatedUserId: string;
   gmailQuery: { gmail?: string; gmail_error?: string };
 }) {
@@ -265,6 +267,7 @@ async function ConsoleSectionData({
   return (
     <ConsoleClient
       profile={profile}
+      previewMode={previewMode}
       initialSection={S}
       schools={schools ?? []}
       candidates={enriched}

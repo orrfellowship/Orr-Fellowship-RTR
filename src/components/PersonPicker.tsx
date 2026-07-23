@@ -16,6 +16,7 @@ export default function PersonPicker({
   value, options, onChange, meId,
   placeholder = "Search people…", unassignedLabel = "Unassigned",
   teamOption = false, accent = C.orange, compact = false,
+  disabled = false, disabledReason = "This control is unavailable.", onDisabledAttempt,
 }: {
   value: string | null;
   options: PickerPerson[];
@@ -26,6 +27,9 @@ export default function PersonPicker({
   teamOption?: boolean;       // include a "Whole team" choice (stored by caller)
   accent?: string;
   compact?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
+  onDisabledAttempt?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -79,17 +83,29 @@ export default function PersonPicker({
   const fontSize = compact ? 12 : 13;
 
   const choose = (v: string | null, isTeam = false) => {
+    if (disabled) {
+      onDisabledAttempt?.();
+      return;
+    }
     onChange(v, isTeam);
     setOpen(false);
     setQuery("");
   };
 
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
-      <button ref={buttonRef} type="button" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+    <div ref={wrapRef} style={{ position: "relative" }} title={disabled ? disabledReason : undefined}>
+      <button ref={buttonRef} type="button" aria-haspopup="dialog" aria-expanded={open} aria-disabled={disabled}
+        onClick={() => {
+          if (disabled) {
+            onDisabledAttempt?.();
+            return;
+          }
+          setOpen((v) => !v);
+        }}
         style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left",
           fontSize, fontWeight: 600, color: value === "__team__" ? C.navy2 : (isAssigned ? C.navy : C.orange),
-          border: `1px solid ${C.line}`, borderRadius: 7, padding: compact ? "4px 7px" : "6px 9px", background: "#fff", cursor: "pointer" }}>
+          border: `1px solid ${C.line}`, borderRadius: 7, padding: compact ? "4px 7px" : "6px 9px", background: disabled ? C.canvas : "#fff",
+          cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.65 : 1 }}>
         <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedLabel}</span>
         <span style={{ color: C.grayMute, fontSize: 10 }}>▾</span>
       </button>

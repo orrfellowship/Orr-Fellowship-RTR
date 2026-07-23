@@ -727,9 +727,20 @@ export default function EmailCampaignsClient({
               {manualPlaceholders.length > 0 && (
                 <div className="compose-warn placeholder-warn">
                   <CircleAlert size={15} />
-                  {contentLocked
-                    ? <>This template still has placeholder(s) to fill: <b>{manualPlaceholders.join(", ")}</b>. Ask an admin to finish it — it can&apos;t be sent as-is.</>
-                    : <>Replace the placeholder(s) <b>{manualPlaceholders.join(", ")}</b> before continuing — the <span style={{ color: "#B42318", fontWeight: 700 }}>red</span> brackets won&apos;t auto-fill.</>}
+                  <div className="compose-warn-body">
+                    <strong>{manualPlaceholders.length} template note{manualPlaceholders.length === 1 ? "" : "s"} {contentLocked ? "need attention" : "need your edits"}</strong>
+                    <span>
+                      {contentLocked
+                        ? "Ask an admin to replace the bracketed text before this template is used."
+                        : "Replace the bracketed text in the subject or body before previewing. It won’t auto-fill."}
+                    </span>
+                    <details>
+                      <summary>View {manualPlaceholders.length === 1 ? "note" : "notes"}</summary>
+                      <div className="placeholder-list">
+                        {manualPlaceholders.map((placeholder) => <code key={placeholder}>{placeholder}</code>)}
+                      </div>
+                    </details>
+                  </div>
                 </div>
               )}
             </div>
@@ -847,7 +858,7 @@ export default function EmailCampaignsClient({
       )}
 
       <div className="wizard-footer">
-        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady ? <span className="validation-note">{templateRequired && !selectedTemplate ? "Pick a template to continue." : manualPlaceholders.length > 0 ? `Replace ${manualPlaceholders.join(", ")} before continuing.` : "Complete all fields to continue."}</span> : null}</div>
+        <div>{step === 0 && selectedRecipients.length === 0 ? <span className="validation-note">Select at least one recipient.</span> : step === 1 && !composeReady && manualPlaceholders.length === 0 ? <span className="validation-note">{templateRequired && !selectedTemplate ? "Pick a template to continue." : "Complete all fields to continue."}</span> : null}</div>
         <div className="footer-actions">
           {step > 0 && <button type="button" className="back-button" onClick={() => setStep((current) => current - 1)}><ArrowLeft size={16} /> Back</button>}
           {step < 3 && <button type="button" className="next-button" disabled={!canContinue} onClick={goNext}>Continue to {CAMPAIGN_STEPS[step + 1]} <ArrowRight size={16} /></button>}
@@ -971,8 +982,16 @@ const styles = `
   .aud-action { border: 1px solid ${C.navy2}; background: #fff; color: ${C.navy2}; font-weight: 700; font-size: 12.5px; padding: 8px 13px; border-radius: 9px; cursor: pointer; white-space: nowrap; }
   .aud-action.ghost { border-color: ${C.line}; color: ${C.muted}; } .aud-action:disabled { opacity: .45; cursor: not-allowed; }
   .candidate-empty { padding: 26px 18px; text-align: center; color: ${C.muted}; font-size: 13px; }
-  .compose-warn { display: flex; align-items: center; gap: 8px; background: #FBE7DF; border: 1px solid ${C.orange}; color: #8A3A1E; border-radius: 9px; padding: 9px 12px; font-size: 12.5px; margin-top: 4px; }
+  .compose-warn { display: flex; align-items: flex-start; gap: 9px; background: #FBE7DF; border: 1px solid ${C.orange}; color: #8A3A1E; border-radius: 10px; padding: 11px 13px; font-size: 12.5px; margin-top: 4px; }
+  .compose-warn>svg { flex: 0 0 auto; margin-top: 2px; }
   .compose-warn.placeholder-warn { background: #FDE7E4; border-color: #B42318; color: #7A1D12; }
+  .compose-warn-body { min-width: 0; display: grid; gap: 3px; line-height: 1.4; }
+  .compose-warn-body strong { color: #7A1D12; font-size: 12.5px; }
+  .compose-warn-body>span { color: #9B3A2C; font-size: 11.5px; }
+  .compose-warn-body details { margin-top: 3px; }
+  .compose-warn-body summary { width: fit-content; color: #8E2D20; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+  .placeholder-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .placeholder-list code { max-width: 100%; overflow-wrap: anywhere; color: #7A1D12; background: rgba(255,255,255,.6); border: 1px solid rgba(180,35,24,.2); border-radius: 6px; padding: 3px 6px; font: 600 10.5px ${MONO}; }
   .attachment-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
   .attachment-chip { display: inline-flex; align-items: center; gap: 6px; background: #EEF1F7; border: 1px solid ${C.line}; border-radius: 999px; padding: 5px 12px; font-size: 12.5px; font-weight: 600; color: ${C.navy}; }
   .attachment-chip small { color: ${C.muted}; font-weight: 400; }

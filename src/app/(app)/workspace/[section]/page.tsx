@@ -26,21 +26,21 @@ const TAB: Record<string, string> = {
 export default async function WorkspaceSection({ params, searchParams }: { params: Promise<{ section: string }>; searchParams: Promise<{ gmail?: string; gmail_error?: string }> }) {
   const { section } = await params;
   const gmailQuery = await searchParams;
-  const { profile } = await resolveViewer();
+  const { profile, previewing } = await resolveViewer();
   if (!profile) redirect("/login");
   if (isAdminPlus(profile.role)) redirect("/console/overview");
   if (!canAccessWorkspaceSection(profile.role, section)) redirect("/workspace/snapshot");
 
   return (
     <Suspense fallback={<SectionSkeleton />}>
-      <WorkspaceSectionData section={section} profile={profile} gmailQuery={gmailQuery} />
+      <WorkspaceSectionData section={section} profile={profile} previewMode={!!previewing} gmailQuery={gmailQuery} />
     </Suspense>
   );
 }
 
 // Each route renders exactly ONE section, so we only fetch what that section
 // reads. Everything else is passed empty — the other tabs' code never runs.
-async function WorkspaceSectionData({ section, profile, gmailQuery }: { section: string; profile: Profile; gmailQuery: { gmail?: string; gmail_error?: string } }) {
+async function WorkspaceSectionData({ section, profile, previewMode, gmailQuery }: { section: string; profile: Profile; previewMode: boolean; gmailQuery: { gmail?: string; gmail_error?: string } }) {
   // Live outreach composer — fellows/leads email their own assigned candidates.
   if (section === "email-campaigns") {
     let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
@@ -196,6 +196,7 @@ async function WorkspaceSectionData({ section, profile, gmailQuery }: { section:
   return (
     <WorkspaceClient
       profile={profile}
+      previewMode={previewMode}
       initialSection={S}
       school={school ? { id: school.id, name: school.name, color_primary: school.color_primary, logo_url: school.logo_url } : null}
       candidates={enriched}

@@ -14,6 +14,7 @@ import {
 import dynamic from "next/dynamic";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import PersonPicker from "@/components/PersonPicker";
+import ActionToast from "@/components/ActionToast";
 import ContactPopover from "@/components/ContactPopover";
 import PaginationControls from "@/components/PaginationControls";
 import type { CalEvent } from "@/components/RecruitingCalendar";
@@ -166,11 +167,11 @@ function countStages(rows: StageCount[], set: Set<string>): number {
 }
 
 export default function ConsoleClient({
-  profile, initialSection, schools, candidates, stageCounts = [], schoolReviews = [], team, goals, phases, users, reviews, resources,
+  profile, previewMode = false, initialSection, schools, candidates, stageCounts = [], schoolReviews = [], team, goals, phases, users, reviews, resources,
   events = [], people = [], budgetEntries = [], budgetGuidance = [],
   candidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], facetUnrouted = 0, slimCandidates = [],
 }: {
-  profile: Profile; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
+  profile: Profile; previewMode?: boolean; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
   // Aggregate sections (overview/standings/schools) read weighted counts — one
   // row per school × raw university × stage — instead of full candidate rows.
   stageCounts?: StageCount[];
@@ -279,8 +280,22 @@ export default function ConsoleClient({
   const [syncingIds, setSyncingIds] = useState(false);
   const [syncIdsMsg, setSyncIdsMsg] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
   const superUser = isSuper(profile.role);
   const adminPlus = isAdminPlus(profile.role);
+  const previewAssignmentMessage = "Exit View As to assign or reassign point people.";
+  const assignPointPerson = async (candidateId: string, ownerId: string | null): Promise<boolean> => {
+    if (previewMode) {
+      setAssignmentError(previewAssignmentMessage);
+      return false;
+    }
+    const result = await reassignPointPerson(candidateId, ownerId);
+    if (result?.error) {
+      setAssignmentError(result.error);
+      return false;
+    }
+    return true;
+  };
   // School picker options shown everywhere EXCEPT the Candidates page: core
   // schools individually + one "Satellite School" + one "Bonus School" group.
   const schoolPickOptions = useMemo(() => schoolSelectOptions(schools).map((o) => ({ id: o.value, name: o.label })), [schools]);
@@ -1281,7 +1296,9 @@ export default function ConsoleClient({
       </div>
 
       {open && (
-        <CandidateDrawer c={open} profile={profile} team={team} schools={schools} onClose={() => { setOpenId(null); if (tab === "applicants") loadAppPage(appPage); }} onSaved={() => loadAppPage(appPage)} startTransition={startTransition} superUser={superUser} />
+        <CandidateDrawer c={open} profile={profile} team={team} schools={schools} previewMode={previewMode}
+          onAssignPointPerson={assignPointPerson} onAssignmentBlocked={() => setAssignmentError(previewAssignmentMessage)}
+          onClose={() => { setOpenId(null); if (tab === "applicants") loadAppPage(appPage); }} onSaved={() => loadAppPage(appPage)} startTransition={startTransition} superUser={superUser} />
       )}
       {addOpen && (
         <AddCandidateModal schools={schools} team={team} meId={profile.id} existingEmails={new Set(candidateFacets.slim.map((c) => c.email?.toLowerCase() ?? "").filter(Boolean))} existingNames={new Set(candidateFacets.slim.filter((c) => c.name?.trim()).map((c) => nameSchoolKey(c.name, c.school_id)))} onClose={() => { setAddOpen(false); loadAppPage(0); }} startTransition={startTransition} />
@@ -1304,6 +1321,7 @@ export default function ConsoleClient({
       {snapshotUser && (
         <UserSnapshotModal user={snapshotUser} onClose={() => setSnapshotUser(null)} />
       )}
+      <ActionToast message={assignmentError} onClose={() => setAssignmentError(null)} />
     </>
   );
 }
@@ -1368,8 +1386,11 @@ type Connection = { id: string; fellow_id: string; name: string; relationship: s
 const REL_QUICK = ["Knows personally", "Went to school together", "Worked together", "Alumni connection", "Mutual friend"];
 
 // ---- Candidate Drawer ----
-function CandidateDrawer({ c, profile, team, schools, onClose, onSaved, startTransition, superUser }: {
+function CandidateDrawer({ c, profile, team, schools, previewMode, onAssignPointPerson, onAssignmentBlocked, onClose, onSaved, startTransition, superUser }: {
   c: Cand; profile: Profile; team: TeamMember[]; schools: School[];
+  previewMode: boolean;
+  onAssignPointPerson: (candidateId: string, ownerId: string | null) => Promise<boolean>;
+  onAssignmentBlocked: () => void;
   onClose: () => void; onSaved?: () => void; startTransition: (cb: () => void) => void;
   superUser: boolean;
 }) {
@@ -1492,7 +1513,10 @@ function CandidateDrawer({ c, profile, team, schools, onClose, onSaved, startTra
             <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>Point person</span>
             <div style={{ minWidth: 180 }}>
               <PersonPicker value={c.point_person_id} options={team} meId={profile.id}
-                onChange={(v) => startTransition(() => { reassignPointPerson(c.id, v); })} />
+                disabled={previewMode}
+                disabledReason="Exit View As to assign or reassign point people."
+                onDisabledAttempt={onAssignmentBlocked}
+                onChange={(v) => startTransition(() => { void onAssignPointPerson(c.id, v); })} />
             </div>
           </div>
 

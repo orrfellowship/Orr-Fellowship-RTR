@@ -14,6 +14,7 @@ import { phaseOf } from "@/lib/stages";
 import { evaluateCandidate } from "@/lib/triggers";
 import dynamic from "next/dynamic";
 import PersonPicker from "@/components/PersonPicker";
+import ActionToast from "@/components/ActionToast";
 import ContactPopover from "@/components/ContactPopover";
 import PaginationControls from "@/components/PaginationControls";
 import type { CalEvent } from "@/components/RecruitingCalendar";
@@ -103,11 +104,11 @@ const CONTACTD = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
 const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
-  profile, initialSection, school, candidates, stageCounts = [], team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
+  profile, previewMode = false, initialSection, school, candidates, stageCounts = [], team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
   budgetEntries = [], budgetSchoolId = null, budgetGuidance = [],
   allCandidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], slimCandidates = [],
 }: {
-  profile: Profile; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
+  profile: Profile; previewMode?: boolean; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   // Org-wide weighted counts (school × stage, `n` candidates each) — feeds the
   // snapshot's org counters and the Standings tab without shipping every row.
   stageCounts?: { school_id: string | null; stage: string | null; n: number }[];
@@ -158,10 +159,25 @@ export default function WorkspaceClient({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [planNow] = useState(Date.now);
   const canEdit = canEditPlaybook(profile.role);
   const canAssign = canReassign(profile.role);
+  const previewAssignmentMessage = "Exit View As to assign or reassign point people.";
+
+  const assignPointPerson = async (candidateId: string, ownerId: string | null): Promise<boolean> => {
+    if (previewMode) {
+      setAssignmentError(previewAssignmentMessage);
+      return false;
+    }
+    const result = await reassignPointPerson(candidateId, ownerId);
+    if (result?.error) {
+      setAssignmentError(result.error);
+      return false;
+    }
+    return true;
+  };
 
   const accent = school?.color_primary ?? C.orange;
 
@@ -416,8 +432,9 @@ export default function WorkspaceClient({
                           <div key={a.id} onClick={() => setOpenId(a.cand.id)} style={{ borderTop: `1px solid ${C.line}`, padding: "13px 18px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
                             <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, color: C.gray }}>{a.cand.name}</div><div style={{ fontSize: 13, color: C.grayMute }}>{a.why}</div></div>
                             {a.type === "Claim" && (
-                              <button onClick={(e) => { e.stopPropagation(); startTransition(() => { reassignPointPerson(a.cand.id, profile.id); }); }}
-                                style={{ border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 12.5, padding: "7px 12px", borderRadius: 8, cursor: "pointer", flexShrink: 0 }}>
+                              <button aria-disabled={previewMode} title={previewMode ? previewAssignmentMessage : undefined}
+                                onClick={(e) => { e.stopPropagation(); if (previewMode) setAssignmentError(previewAssignmentMessage); else startTransition(() => { void assignPointPerson(a.cand.id, profile.id); }); }}
+                                style={{ border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 12.5, padding: "7px 12px", borderRadius: 8, cursor: previewMode ? "not-allowed" : "pointer", opacity: previewMode ? 0.55 : 1, flexShrink: 0 }}>
                                 Claim
                               </button>
                             )}
@@ -502,8 +519,9 @@ export default function WorkspaceClient({
                 <p style={{ color: C.grayMute, margin: "4px 0 0" }}>{boardVisible.length.toLocaleString()}{boardFiltersActive ? ` of ${candidates.length.toLocaleString()}` : ""} candidate{candidates.length !== 1 ? "s" : ""}.</p>
               </div>
               {canAssign && pointPersonOptions.length > 0 && (
-                <button onClick={() => setAssignOpen(true)}
-                  style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>
+                <button aria-disabled={previewMode} title={previewMode ? previewAssignmentMessage : undefined}
+                  onClick={() => previewMode ? setAssignmentError(previewAssignmentMessage) : setAssignOpen(true)}
+                  style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: previewMode ? "not-allowed" : "pointer", opacity: previewMode ? 0.55 : 1, whiteSpace: "nowrap" }}>
                   ⚡ Assign Point People
                 </button>
               )}
@@ -553,10 +571,14 @@ export default function WorkspaceClient({
                       {canAssign ? (
                         <PersonPicker value={c.point_person_id} options={pointPersonOptions} meId={profile.id} accent={accent} compact
                           placeholder="Search your school…"
-                          onChange={(v) => startTransition(() => { reassignPointPerson(c.id, v); })} />
+                          disabled={previewMode}
+                          disabledReason={previewAssignmentMessage}
+                          onDisabledAttempt={() => setAssignmentError(previewAssignmentMessage)}
+                          onChange={(v) => startTransition(() => { void assignPointPerson(c.id, v); })} />
                       ) : !c.point_person_id ? (
-                        <button onClick={() => startTransition(() => { reassignPointPerson(c.id, profile.id); })}
-                          style={{ border: `1px solid ${accent}`, background: `${accent}12`, color: accent, fontWeight: 700, fontSize: 12.5, padding: "5px 9px", borderRadius: 7, cursor: "pointer" }}>
+                        <button aria-disabled={previewMode} title={previewMode ? previewAssignmentMessage : undefined}
+                          onClick={() => previewMode ? setAssignmentError(previewAssignmentMessage) : startTransition(() => { void assignPointPerson(c.id, profile.id); })}
+                          style={{ border: `1px solid ${accent}`, background: `${accent}12`, color: accent, fontWeight: 700, fontSize: 12.5, padding: "5px 9px", borderRadius: 7, cursor: previewMode ? "not-allowed" : "pointer", opacity: previewMode ? 0.55 : 1 }}>
                           Claim
                         </button>
                       ) : (
@@ -789,8 +811,10 @@ export default function WorkspaceClient({
           accent={accent}
           onClose={() => setAssignOpen(false)}
           startTransition={startTransition}
+          onAssign={assignPointPerson}
         />
       )}
+      <ActionToast message={assignmentError} onClose={() => setAssignmentError(null)} />
     </>
   );
 }
@@ -798,9 +822,10 @@ export default function WorkspaceClient({
 // ---- Assign Point People — a flashcard deck for quickly distributing candidates ----
 // Pick one team member, then go card-by-card: "Skip" or "Assign to <person>".
 // The deck is snapshotted when you start so it doesn't shift as you assign.
-function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, startTransition }: {
+function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, startTransition, onAssign }: {
   candidates: Cand[]; team: TeamMember[]; meId: string; accent: string;
   onClose: () => void; startTransition: (cb: () => void) => void;
+  onAssign: (candidateId: string, ownerId: string) => Promise<boolean>;
 }) {
   const [phase, setPhase] = useState<"pick" | "deck" | "done">("pick");
   const [personId, setPersonId] = useState<string | null>(null);
@@ -826,9 +851,13 @@ function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, start
   const assign = () => {
     if (!current || !personId) return;
     const id = current.id, pid = personId;
-    startTransition(() => { reassignPointPerson(id, pid); });
-    setAssigned((n) => n + 1);
-    advance();
+    startTransition(() => {
+      void onAssign(id, pid).then((ok) => {
+        if (!ok) return;
+        setAssigned((n) => n + 1);
+        advance();
+      });
+    });
   };
 
   // Keyboard: ← skip, → assign, Esc close.
