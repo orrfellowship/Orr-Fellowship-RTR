@@ -49,11 +49,10 @@ async function WorkspaceSectionData({ section, profile, previewMode, gmailQuery 
       loadOutreachAudiences(profile), loadRecentCampaigns(profile), listOutreachTemplates(),
     ]);
     // Fellows/leads start from an admin template, answer its explicit prompts,
-    // and preview every personalized email. Sending remains disabled in both
-    // the UI and candidate route until the feature is opened to them.
+    // preview every personalized email, and confirm before sending with Gmail.
     return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{ result: gmailQuery.gmail, error: gmailQuery.gmail_error }} audiences={audiences} recentCampaigns={recentCampaigns}
       canAnswerTemplatePrompts
-      sendDisabledReason="Sending will be enabled later. For now, you can compose, preview, and review the personalized emails."
+      gmailCampaignSendEnabled
       templates={templates.map((t) => ({ id: t.id, name: t.name, subject: t.subject, body: t.body, attachments: t.attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes })) }))} />;
   }
 

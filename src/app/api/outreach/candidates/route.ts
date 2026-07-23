@@ -8,8 +8,8 @@ import { drainOutreachQueue } from "@/lib/gmail/outreach-queue.server";
 export const runtime = "nodejs";
 
 // Live outreach to real candidates. Sender + role come from the session.
-// During the preview-only rollout, only admins may enqueue real messages;
-// assignment checks remain in the engine for when fellow sending opens later.
+// Fellows and team leads may enqueue assigned candidates; assignment and
+// admin-template checks remain enforced by the server-side send pipeline.
 
 function err(e: GmailTestSendError) {
   return NextResponse.json(safeTestSendError(e), { status: e.status, headers: { "Cache-Control": "private, no-store" } });
