@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { maskDemoRecipient } from "@/lib/gmail/demo-campaign";
+import { isAdminPlus } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -28,7 +29,7 @@ export async function GET(request: Request) {
   if (campaignError) return NextResponse.json({ success: false, error: { code: "status_unavailable", message: "Campaign status is temporarily unavailable." } }, { status: 500, headers: { "Cache-Control": "private, no-store" } });
   if (!campaign) return NextResponse.json({ success: false, error: { code: "not_found", message: "Campaign not found." } }, { status: 404, headers: { "Cache-Control": "private, no-store" } });
 
-  const { data: sendRows, error: sendsError } = await supabase.from("outreach_sends").select("to_email, status, error, gmail_message_id").eq("campaign_id", id);
+  const { data: sendRows, error: sendsError } = await supabase.from("outreach_sends").select("to_email, status, error, gmail_message_id, replied_at, bounced_at").eq("campaign_id", id);
   if (sendsError) return NextResponse.json({ success: false, error: { code: "status_unavailable", message: "Recipient status is temporarily unavailable." } }, { status: 500, headers: { "Cache-Control": "private, no-store" } });
   const rows = sendRows ?? [];
   const count = (s: string) => rows.filter((r) => (r as any).status === s).length;
@@ -39,11 +40,16 @@ export async function GET(request: Request) {
 
   const recipients = rows.map((r) => {
     const status = recipientStatus((r as any).status);
+    const recipientEmail = (r as any).to_email as string;
     return {
-      candidateName: maskDemoRecipient((r as any).to_email) ?? (r as any).to_email,
+      candidateName: isAdminPlus(user.role)
+        ? recipientEmail
+        : maskDemoRecipient(recipientEmail) ?? recipientEmail,
       maskedRecipient: null,
       status,
       messageId: (r as any).gmail_message_id ?? undefined,
+      replied: !!(r as any).replied_at,
+      bounced: !!(r as any).bounced_at,
       failureReason: status === "failed" ? ((r as any).error ?? "Send failed") : undefined,
       exclusionReason: status === "excluded" ? ((r as any).error ?? "Skipped") : undefined,
     };

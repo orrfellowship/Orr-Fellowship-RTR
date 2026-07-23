@@ -15,11 +15,14 @@ const groups = (role: any) => navForRole(role).map((g) => g.group).filter(Boolea
 // super_admin: Operations has Users AND Sync
 check("super_admin has Users + Sync", ids("super_admin").includes("users") && ids("super_admin").includes("sync"));
 check("super_admin Operations group present", groups("super_admin").includes("Operations"));
+check("super_admin has Campaign History", ids("super_admin").includes("campaign-history"));
 
 // admin: Operations includes Users + Review Sync; JazzHR Sync stays super-only
 check("admin has Review Sync", ids("admin").includes("review"));
 check("admin has Users", ids("admin").includes("users"));
+check("admin has Campaign History", ids("admin").includes("campaign-history"));
 check("admin has NO Sync", !ids("admin").includes("sync"));
+check("admin can access Campaign History", canAccessConsoleSection("admin", "campaign-history"));
 check("admin can access Email Campaigns", canAccessConsoleSection("admin", "email-campaigns"));
 check("super_admin can access Email Campaigns", canAccessConsoleSection("super_admin", "email-campaigns"));
 
@@ -36,6 +39,7 @@ for (const r of ["fellow", "team_lead"] as const) {
   check(`${r} HAS an Email Campaigns nav item`, ids(r).includes("email-campaigns"));
   check(`${r} can access the workspace Email Campaigns section`, canAccessWorkspaceSection(r, "email-campaigns"));
   check(`${r} cannot access the CONSOLE Email Campaigns section`, !canAccessConsoleSection(r, "email-campaigns"));
+  check(`${r} cannot access Campaign History`, !canAccessConsoleSection(r, "campaign-history"));
 }
 
 // palette results ⊆ allowed routes (flatNav IS the palette source, so trivially a subset of itself,

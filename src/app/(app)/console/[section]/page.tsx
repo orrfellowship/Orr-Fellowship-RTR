@@ -20,13 +20,25 @@ import type { GmailConnectionStatus } from "@/lib/gmail/types";
 import { loadOutreachAudiences, loadRecentCampaigns } from "@/lib/gmail/candidate-outreach.server";
 import { listOutreachTemplates } from "@/lib/gmail/outreach-templates.server";
 import { listPendingSchoolReviews } from "@/lib/schoolMatch";
+import CampaignHistoryClient from "@/components/CampaignHistoryClient";
+import { loadAdminCampaignHistory } from "@/lib/gmail/campaign-history.server";
 
 export default async function ConsoleSection({
   params,
   searchParams,
 }: {
   params: Promise<{ section: string }>;
-  searchParams: Promise<{ gmail?: string; gmail_error?: string }>;
+  searchParams: Promise<{
+    gmail?: string;
+    gmail_error?: string;
+    q?: string;
+    sender?: string;
+    school?: string;
+    status?: string;
+    from?: string;
+    to?: string;
+    page?: string;
+  }>;
 }) {
   const { section } = await params;
   const query = await searchParams;
@@ -55,9 +67,33 @@ async function ConsoleSectionData({
   profile: Profile;
   previewMode: boolean;
   authenticatedUserId: string;
-  gmailQuery: { gmail?: string; gmail_error?: string };
+  gmailQuery: {
+    gmail?: string;
+    gmail_error?: string;
+    q?: string;
+    sender?: string;
+    school?: string;
+    status?: string;
+    from?: string;
+    to?: string;
+    page?: string;
+  };
 }) {
   const S = section;
+
+  if (S === "campaign-history") {
+    const filters = {
+      q: gmailQuery.q,
+      senderId: gmailQuery.sender,
+      schoolId: gmailQuery.school,
+      status: gmailQuery.status,
+      from: gmailQuery.from,
+      to: gmailQuery.to,
+      page: Math.max(0, Number.parseInt(gmailQuery.page ?? "1", 10) - 1 || 0),
+    };
+    const history = await loadAdminCampaignHistory(profile, filters);
+    return <CampaignHistoryClient data={history} filters={filters} />;
+  }
 
   // Live outreach composer. Loads the viewer's audiences (all candidates + team
   // for admins) and their Gmail connection summary; no credential fields cross

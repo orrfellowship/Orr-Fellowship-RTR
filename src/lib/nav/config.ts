@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard, UserSearch, Trophy, GraduationCap, Users, RefreshCw,
-  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck, Wallet, Mails,
+  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck, Wallet, Mails, History,
 } from "lucide-react";
 import type { AppRole } from "@/lib/types";
 import { isAdminPlus, isSuper } from "@/lib/types";
@@ -36,7 +36,7 @@ export function accentFor(role: Role, school?: string): string {
 
 // ---- access (single source of truth for sidebar + route guards) ------------
 export const WORKSPACE_SECTIONS = ["snapshot", "my-school", "standings", "applicants", "email-campaigns", "playbook", "resources", "budget"] as const;
-export const CONSOLE_SECTIONS = ["snapshot", "overview", "applicants", "email-campaigns", "standings", "schools", "calendar", "budget", "users", "sync", "review", "playbook", "resources"] as const;
+export const CONSOLE_SECTIONS = ["snapshot", "overview", "applicants", "email-campaigns", "standings", "schools", "calendar", "budget", "campaign-history", "users", "sync", "review", "playbook", "resources"] as const;
 
 export function canAccessWorkspaceSection(role: Role, section: string): boolean {
   if (isAdminPlus(role)) return false; // admins/super use the console
@@ -58,6 +58,7 @@ function consoleNav(role: Role): NavGroup[] {
   // non-super admins get Review Sync in its place.
   const operations: NavItem[] = [
     { id: "budget", label: "Budget", href: "/console/budget", icon: Wallet, hint: "Allocations & expenses" },
+    { id: "campaign-history", label: "Campaign History", href: "/console/campaign-history", icon: History, hint: "Organization-wide outreach results" },
     { id: "users", label: "User Management", href: "/console/users", icon: Users, hint: "Roles, access & activity", badgeKey: "users" },
     ...(isSuper(role)
       ? [{ id: "sync", label: "Sync", href: "/console/sync", icon: RefreshCw, hint: "JazzHR integration" }]
