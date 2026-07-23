@@ -1142,11 +1142,11 @@ export default function ConsoleClient({
                         style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy2, fontWeight: 600, fontSize: 11.5, padding: "5px 8px", borderRadius: 7, cursor: "pointer" }}>Snapshot</button>
                     : <div />}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 9 }}>
-                    {superUser && (!u.last_sign_in_at || u.role === "super_admin") && (
+                    {superUser && (
                       <button
                         onClick={() => handleResendInvite(u)}
                         disabled={resendingInviteId === u.id || !u.is_active}
-                        title={!u.is_active ? "Reactivate this user before resending" : "Send a new account setup email"}
+                        title={!u.is_active ? "Reactivate this user before resending" : "Send a new account setup or password reset email"}
                         style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy2, fontWeight: 700, fontSize: 10.5, padding: "5px 7px", borderRadius: 7, cursor: resendingInviteId === u.id || !u.is_active ? "default" : "pointer", whiteSpace: "nowrap", opacity: resendingInviteId === u.id || !u.is_active ? 0.55 : 1 }}>
                         {resendingInviteId === u.id ? "Sending…" : "Resend invite"}
                       </button>

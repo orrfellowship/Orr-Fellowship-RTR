@@ -5,9 +5,14 @@ const auth = readFileSync(new URL("./auth.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../../db/phase24.sql", import.meta.url), "utf8");
 const nav = readFileSync(new URL("./nav/thisWeek.ts", import.meta.url), "utf8");
 const consoleActions = readFileSync(new URL("../app/(app)/console/actions.ts", import.meta.url), "utf8");
+const consoleClient = readFileSync(new URL("../app/(app)/console/ConsoleClient.tsx", import.meta.url), "utf8");
 const workspacePage = readFileSync(new URL("../app/(app)/workspace/[section]/page.tsx", import.meta.url), "utf8");
 const workspaceClient = readFileSync(new URL("../app/(app)/workspace/WorkspaceClient.tsx", import.meta.url), "utf8");
 const personPicker = readFileSync(new URL("../components/PersonPicker.tsx", import.meta.url), "utf8");
+const resendInviteAction = consoleActions.slice(
+  consoleActions.indexOf("export async function resendUserInvite"),
+  consoleActions.indexOf("export async function sendTestNotification"),
+);
 
 assert.match(auth, /\.eq\("is_active", true\)/, "profile resolution must reject inactive accounts");
 assert.match(migration, /drop policy if exists profiles_self_update/i, "self-service protected profile writes must be removed");
@@ -21,5 +26,8 @@ assert.match(workspacePage, /previewMode=\{!!previewing\}/, "workspace pages mus
 assert.match(workspaceClient, /disabled=\{previewMode\}/, "point-person picker must be read-only in View As");
 assert.match(workspaceClient, /ActionToast/, "assignment errors must be visible instead of silently discarded");
 assert.match(personPicker, /aria-disabled=\{disabled\}/, "disabled person pickers must expose their state accessibly");
+assert.match(consoleClient, /\{superUser && \(\s*<button[\s\S]*?handleResendInvite\(u\)/, "super admins must see Resend invite for every user");
+assert.match(resendInviteAction, /type:\s*"recovery"/, "resending an invite must use a secure recovery link");
+assert.doesNotMatch(resendInviteAction, /last_sign_in_at/, "prior sign-in must not prevent resending an account setup link");
 
 console.log("security hardening checks passed");
