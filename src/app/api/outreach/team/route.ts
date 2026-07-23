@@ -36,7 +36,11 @@ export async function POST(request: Request) {
     const input = validateOutreachInput(body);
     // This route is already admin-only; a template here just brings prefilled
     // content + its attachments along.
-    const content = await resolveCampaignContent(profile.role, { subject: input.subject, body: input.body }, input.templateId);
+    const content = await resolveCampaignContent(profile.role, {
+      subject: input.subject,
+      body: input.body,
+      templateReplacements: input.templateReplacements,
+    }, input.templateId);
     const result = await enqueueUsersCampaign(profile.id, profile.role, {
       campaignName: input.campaignName, subject: content.subject, body: content.body,
       selectedUserIds: input.ids, idempotencyKey: input.idempotencyKey,

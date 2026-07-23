@@ -48,6 +48,66 @@ export function findManualPlaceholders(template: string): string[] {
   return [...new Set(template.match(/\[[^[\]\n]+\]/g) ?? [])];
 }
 
+const MANUAL_PLACEHOLDER_RE = /\[[^[\]\n]+\]/g;
+export type TemplateReplacements = Record<string, string>;
+export type TemplateBundleMaterialization =
+  | { ok: true; values: string[] }
+  | { ok: false; reason: "replacement_keys_changed" | "unfilled_placeholder" | "invalid_replacement" };
+
+export function templatePlaceholderKeys(...templates: string[]): string[] {
+  return [...new Set(templates.flatMap(findManualPlaceholders))];
+}
+
+// Used while composing: filled prompts are rendered into the locked template;
+// unfilled prompts remain visible and continue to block Preview.
+export function previewTemplateMaterialization(
+  template: string,
+  replacements: TemplateReplacements,
+): string {
+  return normalizeOutreachMergeVariables(template).replace(MANUAL_PLACEHOLDER_RE, (placeholder) => {
+    const replacement = replacements[placeholder];
+    return typeof replacement === "string" && replacement.trim() ? replacement : placeholder;
+  });
+}
+
+// Strict server/client contract. The request carries only values for the exact
+// placeholder keys in the stored admin template. The final subject/body are
+// reconstructed from that template, never trusted from browser-composed text.
+export function materializeTemplateBundle(
+  templates: string[],
+  replacements: TemplateReplacements,
+): TemplateBundleMaterialization {
+  const expected = templatePlaceholderKeys(...templates);
+  const expectedSorted = [...expected].sort();
+  const actual = Object.keys(replacements).sort();
+  if (
+    actual.length !== expected.length
+    || actual.some((key, index) => key !== expectedSorted[index])
+  ) {
+    return { ok: false, reason: "replacement_keys_changed" };
+  }
+  for (const placeholder of expected) {
+    const value = replacements[placeholder];
+    if (
+      typeof value !== "string"
+      || !value.trim()
+      || findManualPlaceholders(value).length > 0
+    ) {
+      return { ok: false, reason: "unfilled_placeholder" };
+    }
+    if (
+      value.length > 5_000
+      || /\{\{|\}\}/.test(value)
+    ) {
+      return { ok: false, reason: "invalid_replacement" };
+    }
+  }
+  return {
+    ok: true,
+    values: templates.map((template) => previewTemplateMaterialization(template, replacements)),
+  };
+}
+
 export type OutreachTokens = {
   candidate_first_name: string; candidate_last_name: string; candidate_full_name: string;
   school: string; stage: string; class_year: string; fellow_point_person: string;

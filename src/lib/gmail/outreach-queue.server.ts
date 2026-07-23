@@ -174,6 +174,7 @@ export type OutreachStore = {
   finalizeCampaign: (campaignId: string, now: number) => Promise<FinalizedCampaign | null>;
   loadAdminIds: () => Promise<string[]>;
   senderName: (userId: string) => Promise<string | null>;
+  senderIsAdmin: (userId: string) => Promise<boolean>;
 };
 
 export type NewSendRow = {
@@ -405,8 +406,11 @@ export async function drainOutreachQueue(deps: DrainDeps = {}): Promise<DrainSum
     const done = await store.finalizeCampaign(campaignId, nowFn());
     if (!done?.justCompleted || done.failures.length === 0) continue;
     const senderName = (await store.senderName(done.senderUserId)) ?? undefined;
+    const senderLink = await store.senderIsAdmin(done.senderUserId)
+      ? "/console/email-campaigns"
+      : "/workspace/email-campaigns";
     const senderNotice = buildFailureNotice(done.name, done.total, done.failures);
-    await notify({ recipientId: done.senderUserId, type: "outreach_error", title: senderNotice.title, body: senderNotice.body, link: "/console/email-campaigns", dedupeKey: `outreach_fail:${campaignId}` });
+    await notify({ recipientId: done.senderUserId, type: "outreach_error", title: senderNotice.title, body: senderNotice.body, link: senderLink, dedupeKey: `outreach_fail:${campaignId}` });
     const adminNotice = buildFailureNotice(done.name, done.total, done.failures, { senderName });
     for (const adminId of await store.loadAdminIds()) {
       if (adminId === done.senderUserId) continue; // already notified as the sender
@@ -544,6 +548,11 @@ function defaultStore(): OutreachStore {
       const { data, error } = await db().from("profiles").select("full_name").eq("id", userId).maybeSingle();
       if (error) throw new Error(`Failed to load sender name: ${error.message}`);
       return data ? ((data as any).full_name as string) : null;
+    },
+    async senderIsAdmin(userId) {
+      const { data, error } = await db().from("profiles").select("role").eq("id", userId).maybeSingle();
+      if (error) throw new Error(`Failed to load sender role: ${error.message}`);
+      return data ? ["admin", "super_admin"].includes((data as any).role as string) : false;
     },
   };
 }
