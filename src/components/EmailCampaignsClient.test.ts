@@ -10,6 +10,7 @@ function check(name: string, condition: boolean) {
 // against the source (the send/render logic itself is covered by the
 // candidate-tokens / candidate-outreach unit tests).
 const src = readFileSync(new URL("./EmailCampaignsClient.tsx", import.meta.url), "utf8");
+const workspaceSrc = readFileSync(new URL("../app/(app)/workspace/[section]/page.tsx", import.meta.url), "utf8");
 
 check("four wizard steps", src.includes('["Recipients", "Compose", "Preview", "Review"]'));
 check("sends real candidate outreach via the live endpoint", src.includes("/api/outreach/candidates"));
@@ -35,7 +36,7 @@ check("uses the renamed candidate and fellow merge fields", src.includes("{{cand
 check("template-required users can answer admin template prompts", src.includes("canAnswerTemplatePrompts") && src.includes("contentLocked"));
 check("template prompts are materialized before preview or send", src.includes("materializeTemplateBundle") && src.includes("templateCustomizationValid") && src.includes("templateReplacements"));
 check("template-required copy is locked against direct edits", src.includes("const contentLocked = templateRequired"));
-check("supports preview-only campaigns with sending disabled", src.includes("sendDisabledReason") && src.includes("Sending not enabled"));
+check("workspace enables Gmail sending without a disabled reason", workspaceSrc.includes("gmailCampaignSendEnabled") && !workspaceSrc.includes("sendDisabledReason"));
 
 console.log(failures === 0 ? "\nAll email campaign composer checks passed." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

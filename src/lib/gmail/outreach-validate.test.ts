@@ -24,7 +24,7 @@ const ok = validateOutreachInput(base);
 check("accepts a valid payload", ok.ids.length === 2 && ok.subject.includes("{{candidate_first_name}}"));
 check("accepts selectedUserIds as the id field too", validateOutreachInput({ ...base, selectedCandidateIds: undefined, selectedUserIds: ["u1"] }).ids[0] === "u1");
 check("candidate sending remains enabled for admins", candidateOutreachSendingEnabled("admin") && candidateOutreachSendingEnabled("super_admin"));
-check("candidate sending is disabled for fellows and team leads", !candidateOutreachSendingEnabled("fellow") && !candidateOutreachSendingEnabled("team_lead"));
+check("candidate sending is enabled for fellows and team leads", candidateOutreachSendingEnabled("fellow") && candidateOutreachSendingEnabled("team_lead"));
 
 rejects("rejects an unknown merge token", () => validateOutreachInput({ ...base, body: "Hi {{frist_name}}" }), "unsupported_merge_variable");
 rejects("rejects a subject with a newline", () => validateOutreachInput({ ...base, subject: "Hi\nthere" }), "invalid_campaign");

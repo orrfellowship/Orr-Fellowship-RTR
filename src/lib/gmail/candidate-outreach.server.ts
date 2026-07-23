@@ -17,10 +17,10 @@ export type ValidatedOutreachInput = {
   templateReplacements: TemplateReplacements | null;
 };
 
-// Rollout gate: admins may send live campaigns; fellows and team leads can
-// compose and preview in the workspace but cannot enqueue real messages yet.
+// Live sending is enabled for every app role. Fellows and team leads remain
+// scoped to assigned candidates and admin-authored templates below.
 export function candidateOutreachSendingEnabled(role: AppRole): boolean {
-  return isAdminPlus(role);
+  return isAdminPlus(role) || role === "fellow" || role === "team_lead";
 }
 
 export function validateOutreachInput(value: unknown): ValidatedOutreachInput {
