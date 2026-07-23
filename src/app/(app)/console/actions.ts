@@ -13,7 +13,7 @@ function bustCache(tags: string[], paths: string[]) {
 }
 import { cookies } from "next/headers";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
-import { getCurrentProfile, isPreviewing, VIEW_AS_COOKIE } from "@/lib/auth";
+import { getCurrentProfile, isPreviewing, resolveViewer, VIEW_AS_COOKIE } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources, canReassign } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
 import { routeToSchoolNameByEmail } from "@/lib/stages";
@@ -518,7 +518,9 @@ export type CandidatePageParams = {
 export async function listCandidates(
   p: CandidatePageParams,
 ): Promise<{ rows: any[]; total: number }> {
-  const profile = await getCurrentProfile();
+  // This is a read-only action, so admin "View as" must query as the effective
+  // workspace viewer. Mutation actions continue to authorize the real actor.
+  const { profile } = await resolveViewer();
   if (!profile) return { rows: [], total: 0 };
   const db = createServiceClient();
 
