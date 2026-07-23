@@ -91,18 +91,27 @@ const exclusionReasonFor = (r: ComposerRecipient) =>
 
 function renderHighlightedOutreachTemplate(template: string, tokens: ComposerRecipient["tokens"]): ReactNode[] {
   const parts: ReactNode[] = [];
-  const tokenPattern = /\{\{\s*([a-z_]+)\s*\}\}/gi;
+  // Matches a {{merge_field}} (auto-filled, highlighted amber) OR a
+  // [single-bracket] manual placeholder — something the team must replace on
+  // their own before sending, highlighted red so it can't be missed.
+  const pattern = /\{\{\s*([a-z_]+)\s*\}\}|\[[^[\]\n]+\]/gi;
   let cursor = 0;
 
-  for (const match of template.matchAll(tokenPattern)) {
+  for (const match of template.matchAll(pattern)) {
     const index = match.index ?? 0;
-    const key = match[1].toLowerCase();
-    const value = (tokens as Record<string, string>)[key];
-
     parts.push(template.slice(cursor, index));
-    parts.push(value === undefined
-      ? match[0]
-      : <mark className="merge-value" title={match[0]} key={`${index}-${key}`}>{value}</mark>);
+
+    if (match[1] !== undefined) {
+      // {{merge_field}} — swap in the recipient's value (or leave as-is if unknown).
+      const key = match[1].toLowerCase();
+      const value = (tokens as Record<string, string>)[key];
+      parts.push(value === undefined
+        ? match[0]
+        : <mark className="merge-value" title={match[0]} key={`m-${index}`}>{value}</mark>);
+    } else {
+      // [manual placeholder] — keep the text, flag it red.
+      parts.push(<mark className="manual-placeholder" title="Replace this before sending" key={`p-${index}`}>{match[0]}</mark>);
+    }
     cursor = index + match[0].length;
   }
 
@@ -752,6 +761,12 @@ export default function EmailCampaignsClient({
                   {attachments.map((a) => <span className="attachment-chip" key={a.id}>📎 {a.fileName} <small>{fmtBytes(a.sizeBytes)}</small></span>)}
                 </div>
               )}
+              <div className="preview-legend">
+                <span className="lg"><mark className="merge-value">Aa</mark> auto-filled for each recipient</span>
+                {/\[[^[\]\n]+\]/.test(`${subject}\n${body}`) && (
+                  <span className="lg"><mark className="manual-placeholder">[ ]</mark> replace these before sending</span>
+                )}
+              </div>
             </article>
           </div>
         </section>
@@ -982,6 +997,8 @@ const styles = `
   .email-meta { padding: 14px 22px; border-bottom: 1px solid ${C.line}; background: #FAFBFE; } .email-meta>div { display: grid; grid-template-columns: 72px 1fr; gap: 10px; padding: 3px 0; font-size: 12px; } .email-meta span { color: ${C.muted}; } .email-meta strong { color: ${C.gray}; overflow-wrap: anywhere; }
   .email-body { min-height: 340px; padding: 28px 34px 40px; color: #34343C; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
   .merge-value { color: inherit; background: #FFE9B8; border-radius: 4px; padding: 1px 3px; margin: 0 -1px; box-decoration-break: clone; -webkit-box-decoration-break: clone; box-shadow: inset 0 -1px 0 rgba(201,162,39,.42); }
+  .manual-placeholder { color: #B42318; background: #FDE7E4; font-weight: 700; border-radius: 4px; padding: 1px 3px; margin: 0 -1px; box-decoration-break: clone; -webkit-box-decoration-break: clone; box-shadow: inset 0 -1px 0 rgba(180,35,24,.45); }
+  .preview-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 12px 22px 16px; border-top: 1px solid ${C.line}; font-size: 11.5px; color: ${C.muted}; } .preview-legend .lg { display: inline-flex; align-items: center; gap: 6px; } .preview-legend mark { font: 700 10px ${MONO}; }
   .review-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; } .review-main { display: grid; gap: 12px; } .review-card { padding: 18px; } .review-card>h3 { color: ${C.navy}; font-size: 15px; margin: 0 0 14px; }
   .review-details { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 22px; } .review-details>div { display: flex; flex-direction: column; gap: 3px; } .review-details .wide { grid-column: 1 / -1; } .review-details span { color: ${C.muted}; font-size: 10.5px; text-transform: uppercase; } .review-details strong { color: ${C.gray}; font-size: 13px; overflow-wrap: anywhere; }
   .recipient-list, .exclusion-list { display: grid; gap: 0; } .recipient-list>div, .exclusion-list>div { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid ${C.line}; } .recipient-list>div:first-child, .exclusion-list>div:first-child { border-top: 0; padding-top: 0; } .recipient-list>div:last-child, .exclusion-list>div:last-child { padding-bottom: 0; } .recipient-list>div>div, .exclusion-list>div>div { flex: 1; min-width: 0; } .recipient-list strong, .exclusion-list strong { display: block; color: ${C.gray}; font-size: 12.5px; } .recipient-list small, .exclusion-list small { display: block; color: ${C.muted}; font-size: 10.5px; margin-top: 2px; overflow-wrap: anywhere; } .recipient-list>div>svg { color: ${C.good}; }
