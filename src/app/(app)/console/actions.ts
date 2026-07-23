@@ -925,15 +925,9 @@ export async function resendUserInvite(userId: string) {
   if (!target?.email) return { error: "This user does not have an email address." };
   if (!target.is_active) return { error: "Reactivate this user before resending their invite." };
 
-  const { data: authData, error: authError } = await db.auth.admin.getUserById(userId);
-  if (authError) return { error: authError.message };
-  if (target.role !== "super_admin" && authData.user.last_sign_in_at) {
-    return { error: "Resend invite is only available for users who have never signed in." };
-  }
-
   // Existing Auth users cannot receive another `invite` link. A recovery link
-  // establishes the same secure, single-use session and lets an invited user
-  // choose their initial password without deleting or recreating their account.
+  // establishes the same secure, single-use session and lets any active user
+  // choose a new password without deleting or recreating their account.
   const { data, error } = await db.auth.admin.generateLink({
     type: "recovery",
     email: target.email,
