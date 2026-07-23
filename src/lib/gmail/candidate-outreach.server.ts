@@ -2,7 +2,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { getSchoolsCached, fetchAllRows } from "@/lib/queries";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 import { isAdminPlus, type AppRole, type Profile } from "@/lib/types";
-import { candidateOutreachTokens, renderOutreachTemplate, findUnsupportedOutreachVariables, type ComposerRecipient, type OutreachAudience, type CampaignHistoryItem, type TemplateReplacements } from "./candidate-tokens";
+import { candidateOutreachTokens, renderOutreachTemplate, findUnsupportedOutreachVariables, type ComposerRecipient, type OutreachAudience, type CampaignHistoryItem } from "./candidate-tokens";
 import { enqueueOutreachCampaign, type EnqueueRecipient, type EnqueueResult } from "./outreach-queue.server";
 import { GmailTestSendError } from "./test-send.server";
 
@@ -14,7 +14,6 @@ export const OUTREACH_LIMITS = { campaignName: 120, subject: 200, body: 20_000, 
 export type ValidatedOutreachInput = {
   campaignName: string; subject: string; body: string; ids: string[];
   idempotencyKey: string; templateId: string | null;
-  templateReplacements: TemplateReplacements | null;
 };
 
 // Live sending is enabled for every app role. Fellows and team leads remain
@@ -56,26 +55,7 @@ export function validateOutreachInput(value: unknown): ValidatedOutreachInput {
     }
     templateId = v.templateId as string;
   }
-  let templateReplacements: TemplateReplacements | null = null;
-  if (v.templateReplacements != null) {
-    if (typeof v.templateReplacements !== "object" || Array.isArray(v.templateReplacements)) {
-      bad("invalid_template_replacements", "Template prompt answers are invalid.");
-    }
-    const entries = Object.entries(v.templateReplacements as Record<string, unknown>);
-    if (
-      entries.length > 100
-      || entries.some(([key, value]) =>
-        !key
-        || key.length > 250
-        || typeof value !== "string"
-        || value.length > 5_000
-      )
-    ) {
-      bad("invalid_template_replacements", "Template prompt answers are invalid.");
-    }
-    templateReplacements = Object.fromEntries(entries) as TemplateReplacements;
-  }
-  return { campaignName, subject, body, ids: list as string[], idempotencyKey, templateId, templateReplacements };
+  return { campaignName, subject, body, ids: list as string[], idempotencyKey, templateId };
 }
 
 // Real-candidate outreach (Phase 4). Turns a sender's selected candidates into

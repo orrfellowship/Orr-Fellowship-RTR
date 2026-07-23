@@ -48,10 +48,10 @@ async function WorkspaceSectionData({ section, profile, previewMode, gmailQuery 
     const [audiences, recentCampaigns, templates] = await Promise.all([
       loadOutreachAudiences(profile), loadRecentCampaigns(profile), listOutreachTemplates(),
     ]);
-    // Fellows/leads start from an admin template, answer its explicit prompts,
+    // Fellows/leads start from an admin template, edit the full campaign copy,
     // preview every personalized email, and confirm before sending with Gmail.
     return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{ result: gmailQuery.gmail, error: gmailQuery.gmail_error }} audiences={audiences} recentCampaigns={recentCampaigns}
-      canAnswerTemplatePrompts
+      canCustomizeTemplate
       gmailCampaignSendEnabled
       templates={templates.map((t) => ({ id: t.id, name: t.name, subject: t.subject, body: t.body, attachments: t.attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes })) }))} />;
   }

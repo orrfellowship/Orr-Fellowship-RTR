@@ -3,9 +3,7 @@ import { isAdminPlus, type AppRole } from "@/lib/types";
 import {
   findManualPlaceholders,
   findUnsupportedOutreachVariables,
-  materializeTemplateBundle,
   normalizeOutreachMergeVariables,
-  type TemplateReplacements,
 } from "./candidate-tokens";
 import { GmailTestSendError } from "./test-send.server";
 
@@ -14,10 +12,9 @@ import { GmailTestSendError } from "./test-send.server";
 //
 // The product rule: fellows and team leads may only send outreach from a
 // template an admin/super-admin created. resolveCampaignContent() is the
-// server-side enforcement point — for non-admins it reconstructs subject/body
-// from the stored template plus exact [manual placeholder] answers. A modified
-// client therefore cannot alter fixed wording or merge fields. Admins may
-// free-compose (no template) or start from one.
+// server-side enforcement point. Non-admins may edit the template's prefilled
+// subject/body for their campaign, while admins may also free-compose without
+// selecting a template.
 //
 // Attachments belong to templates (admin-managed). At enqueue the current
 // attachment list is snapshotted onto the campaign, so later template edits
@@ -114,7 +111,7 @@ export function validateResolvedCampaignText(content: { subject: string; body: s
 // Pure decision core (unit-tested): who gets to send what.
 export function resolveContentForSender(
   role: AppRole,
-  client: { subject: string; body: string; templateReplacements?: TemplateReplacements | null },
+  client: { subject: string; body: string },
   template: OutreachTemplate | null,
 ): ResolvedCampaignContent {
   const clientContent = {
@@ -122,25 +119,14 @@ export function resolveContentForSender(
     body: normalizeOutreachMergeVariables(client.body),
   };
   if (!isAdminPlus(role)) {
-    // Fellows/leads: a live admin template is REQUIRED. Their submitted copy
-    // may only fill the template's explicit [manual placeholders].
+    // Fellows/leads: a live admin template is REQUIRED, but its prefilled copy
+    // may be edited for the campaign. Attachments still come only from the
+    // server-loaded template.
     if (!template || template.isArchived) {
       throw new GmailTestSendError("template_required", "Pick one of the templates provided by your admins before sending.", 400);
     }
-    const materialized = materializeTemplateBundle(
-      [template.subject, template.body],
-      client.templateReplacements ?? {},
-    );
-    if (!materialized.ok && materialized.reason === "unfilled_placeholder") {
-      throw new GmailTestSendError("unfilled_placeholder", "Fill in every single-bracket placeholder before sending.", 400);
-    }
-    if (!materialized.ok) {
-      throw new GmailTestSendError("template_customization_invalid", "Only replace the template's single-bracket placeholders; the rest of the admin template must stay unchanged.", 400);
-    }
-    const [subject, body] = materialized.values;
     return {
-      subject,
-      body,
+      ...clientContent,
       templateId: template.id, attachments: toCampaignAttachments(template.attachments),
     };
   }
@@ -154,7 +140,7 @@ export function resolveContentForSender(
 
 export async function resolveCampaignContent(
   role: AppRole,
-  client: { subject: string; body: string; templateReplacements?: TemplateReplacements | null },
+  client: { subject: string; body: string },
   templateId: string | null,
 ): Promise<ResolvedCampaignContent> {
   let template: OutreachTemplate | null = null;
@@ -175,9 +161,7 @@ export async function resolveCampaignContent(
     }
   }
   const resolved = resolveContentForSender(role, client, template);
-  // Re-check limits on the authoritative, server-reconstructed content.
-  // Browser payload validation is not sufficient for non-admin placeholder
-  // values because those are materialized only after the template is loaded.
+  // Re-check limits on the resolved content at the server boundary.
   validateResolvedCampaignText(resolved);
   // Templates are validated at save, but re-check here so a template edited
   // directly in the database can't ship an unresolved {{token}}.

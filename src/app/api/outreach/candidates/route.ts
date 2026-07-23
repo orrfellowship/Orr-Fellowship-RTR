@@ -37,12 +37,11 @@ export async function POST(request: Request) {
   try {
     const input = validateOutreachInput(body);
     // Template enforcement: fellows/leads MUST send from an admin template.
-    // Subject/body are rebuilt from its prompt answers and attachments come
-    // only from its server snapshot; admins may free-compose.
+    // They may edit its prefilled subject/body, while attachments still come
+    // only from the server-side template snapshot.
     const content = await resolveCampaignContent(profile.role, {
       subject: input.subject,
       body: input.body,
-      templateReplacements: input.templateReplacements,
     }, input.templateId);
     const result = await enqueueCandidateCampaign(profile.id, profile.role, {
       campaignName: input.campaignName, subject: content.subject, body: content.body,
