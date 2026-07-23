@@ -15,7 +15,11 @@ export type NotificationType =
   | "tagged"           // someone tagged you on a warm intro (Phase 4)
   | "event_reminder"   // day-before reminder for an "attend" event
   | "help_request"     // a fellow/lead asked an admin for help
-  | "missing_linkedin"; // admin nudge: active candidates missing a LinkedIn
+  | "missing_linkedin"  // admin nudge: active candidates missing a LinkedIn
+  | "outreach_error"    // an outreach campaign had failed sends (sender + admins)
+  | "outreach_reply"    // a candidate replied to your outreach
+  | "outreach_bounce"   // an outreach email bounced (bad address)
+  | "transactional_error"; // transactional digest worker incident
 
 export async function queueNotification(n: {
   recipientId: string;
@@ -29,19 +33,6 @@ export async function queueNotification(n: {
 }): Promise<{ ok: boolean; skipped?: boolean }> {
   const db = createServiceClient();
 
-  // Dedupe: don't re-queue an identical pending notification.
-  if (n.dedupeKey) {
-    const { data: existing } = await db
-      .from("notifications")
-      .select("id")
-      .eq("recipient_id", n.recipientId)
-      .eq("dedupe_key", n.dedupeKey)
-      .is("emailed_at", null)
-      .eq("superseded", false)
-      .limit(1);
-    if (existing && existing.length) return { ok: true, skipped: true };
-  }
-
   const { error } = await db.from("notifications").insert({
     recipient_id: n.recipientId,
     type: n.type,
@@ -52,6 +43,9 @@ export async function queueNotification(n: {
     send_after: (n.sendAfter ?? new Date()).toISOString(),
     dedupe_key: n.dedupeKey ?? null,
   });
+  // phase18.sql enforces this atomically. Concurrent/replayed inserts become a
+  // successful no-op instead of a read-then-insert race.
+  if (error?.code === "23505" && n.dedupeKey) return { ok: true, skipped: true };
   return { ok: !error };
 }
 

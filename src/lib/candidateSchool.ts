@@ -1,4 +1,4 @@
-import { routeToSchoolName } from "@/lib/stages";
+import { routeToSchoolName, routeUniversity } from "@/lib/stages";
 
 export type CandidateSchool = {
   id: string;
@@ -69,6 +69,57 @@ export function candidateSchoolDisplay(candidate: CandidateSchoolFields, schools
     isGrouped: true,
     isUnrouted: false,
   };
+}
+
+// Where the routing table says a raw university string belongs today: a core
+// school's own row, the representative row of a seeded satellite/bonus school's
+// tier, or the satellite representative for regional IU/Purdue campuses.
+// null = the string doesn't route (unknown school → Bonus catch-all is fine).
+export function expectedSchoolIdForRaw(raw: string | null | undefined, schools: CandidateSchool[]): string | null {
+  const typed = (raw ?? "").trim();
+  if (!typed) return null;
+  const route = routeUniversity(typed);
+  if (!route) return null;
+  if ("group" in route) return representativeSchoolId(schools, route.group);
+  const target = schools.find((s) => s.name.toLowerCase() === route.school.toLowerCase());
+  if (!target) return null;
+  return target.tier === "satellite" || target.tier === "bonus"
+    ? representativeSchoolId(schools, target.tier) ?? target.id
+    : target.id;
+}
+
+// True when school_id is the representative (alphabetically-first) row of the
+// satellite or bonus tier — i.e. an assignment produced by group routing, not a
+// deliberate admin placement on a specific school.
+export function isGroupRepresentativeSchool(schoolId: string, schools: CandidateSchool[]): boolean {
+  const s = schools.find((x) => x.id === schoolId);
+  if (!s || (s.tier !== "satellite" && s.tier !== "bonus")) return false;
+  return representativeSchoolId(schools, s.tier!) === schoolId;
+}
+
+// Candidates whose stored school no longer matches where their raw university
+// text routes — e.g. "IU Indianapolis" sitting in the Bonus group (or on the
+// flagship IU row) because the routing table filed it wrong at import time.
+// Flagged: unrouted candidates, group-routed (tier-representative) assignments,
+// and core-row assignments (those come from automated routing too — this is how
+// campus candidates stuck on flagship IU/Purdue get surfaced). A candidate an
+// admin placed on a specific satellite/bonus school is never second-guessed.
+export function findMisrouted<T extends CandidateSchoolFields & { id: string }>(
+  candidates: T[],
+  schools: CandidateSchool[],
+): { candidate: T; expectedSchoolId: string }[] {
+  const out: { candidate: T; expectedSchoolId: string }[] = [];
+  for (const c of candidates) {
+    const expected = expectedSchoolIdForRaw(c.university_raw, schools);
+    if (!expected || expected === c.school_id) continue;
+    if (c.school_id) {
+      const current = schools.find((s) => s.id === c.school_id);
+      const reroutable = current?.tier === "core" || isGroupRepresentativeSchool(c.school_id, schools);
+      if (!reroutable) continue;
+    }
+    out.push({ candidate: c, expectedSchoolId: expected });
+  }
+  return out;
 }
 
 export function candidateSchoolKey(candidate: CandidateSchoolFields, schools: CandidateSchool[]): string | null {

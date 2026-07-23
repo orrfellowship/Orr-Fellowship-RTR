@@ -2,14 +2,16 @@
 
 import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { LifeBuoy, Link2, ChevronDown, ChevronRight, CheckCircle2, Star } from "lucide-react";
+import { LifeBuoy, Link2, ChevronDown, ChevronRight, CheckCircle2, Star, CopyX, Route } from "lucide-react";
 import { setCandidateLinkedin, resolveHelpRequest, resolveDirectPlacement } from "./actions";
+import ContactPopover from "@/components/ContactPopover";
+import PaginationControls from "@/components/PaginationControls";
 
 const C = {
   navy: "#11123E", orange: "#DD5434", gray: "#303333", grayMute: "#6E7385",
   line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 export type HelpRequest = { id: string; title: string; body: string | null; dedupeKey: string | null; created_at: string };
 export type MissingLinkedinCand = { id: string; name: string; email: string | null; school: string | null; area_of_study: string | null; gpa: string | null };
@@ -23,10 +25,12 @@ function timeAgo(iso: string): string {
   const d = Math.floor(h / 24); return d === 1 ? "yesterday" : `${d}d ago`;
 }
 
-export default function AdminSnapshotClient({ helpRequests, missingLinkedin, directPlacement = [], isSuper = false }: {
+export default function AdminSnapshotClient({ helpRequests, missingLinkedin, directPlacement = [], duplicateGroups = 0, misrouted = 0, isSuper = false }: {
   helpRequests: HelpRequest[];
   missingLinkedin: MissingLinkedinCand[];
   directPlacement?: DirectPlacementCand[];
+  duplicateGroups?: number;
+  misrouted?: number;
   isSuper?: boolean;
 }) {
   const [deckOpen, setDeckOpen] = useState(false);
@@ -37,6 +41,8 @@ export default function AdminSnapshotClient({ helpRequests, missingLinkedin, dir
   const cats = [
     ...(isSuper ? [{ id: "dpp", label: "Direct Placement Potential", count: directPlacement.length }] : []),
     { id: "help", label: "Help requests", count: helpRequests.length },
+    { id: "dups", label: "Potential duplicates", count: duplicateGroups },
+    { id: "routing", label: "School routing", count: misrouted },
     { id: "linkedin", label: "Missing LinkedIn", count: missingLinkedin.length },
   ];
   const total = cats.reduce((s, c) => s + c.count, 0);
@@ -62,6 +68,16 @@ export default function AdminSnapshotClient({ helpRequests, missingLinkedin, dir
       <div key={filter} style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 24 }}>
         {isSuper && show("dpp") && <DirectPlacementCategory candidates={directPlacement} defaultOpen={single} />}
         {show("help") && <HelpRequestsCategory requests={helpRequests} defaultOpen={single} />}
+        {show("dups") && (
+          <LinkCategory icon={<CopyX size={18} />} title="Review potential duplicates" count={duplicateGroups} tone={C.orange} defaultOpen={single}
+            blurb={`${duplicateGroups} group${duplicateGroups === 1 ? "" : "s"} of candidates share a name or email. Keep one record per person and delete the rest.`}
+            cta="Review duplicates →" href="/console/applicants?review=duplicates" />
+        )}
+        {show("routing") && (
+          <LinkCategory icon={<Route size={18} />} title="Review school routing" count={misrouted} tone={C.navy} defaultOpen={single}
+            blurb={`${misrouted} candidate${misrouted === 1 ? "" : "s"} are filed somewhere other than where their imported school text routes (e.g. an IU campus sitting in the Bonus group).`}
+            cta="Review routing →" href="/console/applicants?review=routing" />
+        )}
         {show("linkedin") && <MissingLinkedinCategory count={missingLinkedin.length} onOpen={() => setDeckOpen(true)} defaultOpen={single} />}
       </div>
 
@@ -95,6 +111,9 @@ function DirectPlacementCategory({ candidates, defaultOpen }: { candidates: Dire
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [resolving, setResolving] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const shown = candidates.slice(page * pageSize, (page + 1) * pageSize);
 
   const resolve = (id: string) => {
     setResolving(id);
@@ -106,11 +125,12 @@ function DirectPlacementCategory({ candidates, defaultOpen }: { candidates: Dire
 
   return (
     <CategoryCard icon={<Star size={18} />} title="Direct Placement Potential" count={candidates.length} tone={C.orange} defaultOpen={defaultOpen}>
+      <PaginationControls page={page} pageSize={pageSize} total={candidates.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
       <div style={{ display: "flex", flexDirection: "column" }}>
-        {candidates.map((c) => (
+        {shown.map((c) => (
           <div key={c.id} style={{ display: "flex", gap: 12, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "flex-start" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: C.gray }}>{c.name}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: C.gray }}><ContactPopover name={c.name} email={c.email} /></div>
               <div style={{ fontSize: 12.5, color: C.grayMute, marginTop: 2 }}>
                 {[c.school, c.area_of_study, c.gpa ? `GPA ${c.gpa}` : null].filter(Boolean).join(" · ") || c.email}
               </div>
@@ -125,6 +145,7 @@ function DirectPlacementCategory({ candidates, defaultOpen }: { candidates: Dire
           </div>
         ))}
       </div>
+      <PaginationControls page={page} pageSize={pageSize} total={candidates.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
     </CategoryCard>
   );
 }
@@ -159,6 +180,25 @@ function HelpRequestsCategory({ requests, defaultOpen }: { requests: HelpRequest
             </button>
           </div>
         ))}
+      </div>
+    </CategoryCard>
+  );
+}
+
+// A category whose work happens elsewhere — the body is a one-liner plus a
+// link to the page with the actual review tooling (Candidates tab panels).
+function LinkCategory({ icon, title, count, tone, blurb, cta, href, defaultOpen }: {
+  icon: React.ReactNode; title: string; count: number; tone: string; blurb: string; cta: string; href: string; defaultOpen?: boolean;
+}) {
+  const router = useRouter();
+  return (
+    <CategoryCard icon={icon} title={title} count={count} tone={tone} defaultOpen={defaultOpen}>
+      <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13, color: C.grayMute, flex: 1, minWidth: 220 }}>{blurb}</div>
+        <button onClick={() => router.push(href)}
+          style={{ flexShrink: 0, border: "none", background: C.navy, color: "#fff", fontWeight: 700, fontSize: 13, padding: "9px 16px", borderRadius: 9, cursor: "pointer" }}>
+          {cta}
+        </button>
       </div>
     </CategoryCard>
   );

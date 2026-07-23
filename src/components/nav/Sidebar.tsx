@@ -12,8 +12,8 @@ const t = {
   navy: "#15132b", navy2: "#1c1937", navy3: "#2a2650", navy4: "#332d63",
   textHi: "#eeedf8", textMid: "#a7a3cb", textLo: "#6f6a98", line: "rgba(255,255,255,0.07)",
 };
-const FD = "'Cabin', sans-serif";
-const FM = "'JetBrains Mono', ui-monospace, monospace";
+const FD = "var(--font-head)";
+const FM = "var(--font-mono)";
 
 export default function Sidebar({
   groups, accent, brand, user, badges, thisWeek, collapsed, onToggleCollapse, onOpenPalette, onSignOut,

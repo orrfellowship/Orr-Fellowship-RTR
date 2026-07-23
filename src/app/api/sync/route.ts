@@ -2,9 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isSuper } from "@/lib/types";
-import { mostAdvancedStage, routeToSchoolName } from "@/lib/stages";
+import { mostAdvancedStage, universityMatchKey } from "@/lib/stages";
 import { fetchAllRows } from "@/lib/queries";
-import { representativeSchoolId } from "@/lib/candidateSchool";
+import { expectedSchoolIdForRaw } from "@/lib/candidateSchool";
 
 const JAZZ_BASE = "https://api.resumatorapi.com/v1";
 const TARGET_JOB = "job_20260706160454_40LBN3KPOJUA9EJW";
@@ -178,21 +178,14 @@ export async function POST(request: NextRequest) {
   const { data: schoolsData } = await db.from("schools").select("id, name, tier");
   const schools = schoolsData ?? [];
   const schoolNameById = new Map((schoolsData ?? []).map((s: any) => [s.id, s.name as string]));
-  const schoolIdByName = new Map((schoolsData ?? []).map((s: any) => [s.name as string, s.id as string]));
-  const routeSchoolForStorage = (schoolName: string | null) => {
-    if (!schoolName) return null;
-    const matched = schools.find((s: any) => String(s.name).toLowerCase() === schoolName.toLowerCase());
-    if (!matched) return null;
-    if (matched.tier === "satellite" || matched.tier === "bonus") {
-      return representativeSchoolId(schools as any[], matched.tier) ?? matched.id;
-    }
-    return schoolIdByName.get(matched.name) ?? null;
-  };
   const { data: reviewRows } = await db.from("jazz_match_review").select("jazz_applicant_id").eq("status", "pending");
   const reviewExisting = new Set((reviewRows ?? []).map((r: any) => String(r.jazz_applicant_id)));
 
   const linkedByJazz = new Map<string, string>(); // jazz_id -> candidate id
-  type U = { id: string; email: string; phone: string; canon: string; nick: string; schoolName: string };
+  // schoolKey: seeded school name for specifically-assigned candidates; the
+  // universityMatchKey (school name or normalized raw text) for group-routed
+  // ones — so a JazzHR "IU South Bend" can match a sourced "IU-South Bend".
+  type U = { id: string; email: string; phone: string; canon: string; nick: string; schoolKey: string };
   const unlinked: U[] = [];
   for (const c of allCands ?? []) {
     if (c.jazz_id) { linkedByJazz.set(String(c.jazz_id), c.id); continue; }
@@ -201,7 +194,7 @@ export async function POST(request: NextRequest) {
     unlinked.push({
       id: c.id, email: normEmail(c.email), phone: normPhone(c.phone),
       canon: canonName(c.name), nick: nickKey(c.name),
-      schoolName: storedGroup ? (routeToSchoolName(c.university_raw) ?? c.university_raw ?? "") : c.school_id ? (schoolNameById.get(c.school_id) ?? "") : "",
+      schoolKey: storedGroup ? universityMatchKey(c.university_raw) : c.school_id ? (schoolNameById.get(c.school_id) ?? "") : "",
     });
   }
   const consume = (id: string) => { const i = unlinked.findIndex((u) => u.id === id); if (i >= 0) unlinked.splice(i, 1); };
@@ -233,8 +226,8 @@ export async function POST(request: NextRequest) {
       if (!d) { failed++; continue; }
       const m = mapDetail(d);
       const jid = String(m.jazz_id);
-      const routedSchool = routeToSchoolName(m.university_raw);
-      const routedSchoolId = routeSchoolForStorage(routedSchool);
+      const jazzSchoolKey = universityMatchKey(m.university_raw);
+      const routedSchoolId = expectedSchoolIdForRaw(m.university_raw, schools as any[]);
       const factual = factualFromMapped(m, routedSchoolId);
 
       // a) already linked → refresh factual fields + stage
@@ -251,7 +244,7 @@ export async function POST(request: NextRequest) {
       const canon = canonName(m.name), nick = nickKey(m.name);
       let match = em ? unlinked.find((u) => u.email && u.email === em) : undefined;
       if (!match && ph) match = unlinked.find((u) => u.phone && u.phone === ph);
-      if (!match && canon && routedSchool) match = unlinked.find((u) => u.canon === canon && u.schoolName === routedSchool);
+      if (!match && canon && jazzSchoolKey) match = unlinked.find((u) => u.canon === canon && u.schoolKey === jazzSchoolKey);
       if (match) {
         await db.from("candidates").update(factual).eq("id", match.id);
         linkedByJazz.set(jid, match.id);
@@ -266,7 +259,7 @@ export async function POST(request: NextRequest) {
       if (canon) {
         const weak =
           unlinked.find((u) => u.canon === canon) ??
-          (routedSchool ? unlinked.find((u) => u.nick === nick && u.schoolName === routedSchool) : undefined);
+          (jazzSchoolKey ? unlinked.find((u) => u.nick === nick && u.schoolKey === jazzSchoolKey) : undefined);
         if (weak) {
           if (!reviewExisting.has(jid)) {
             const reason = weak.canon === canon ? "name_only" : "nickname";
@@ -309,17 +302,10 @@ export async function PUT(_request: NextRequest) {
 
   const { data: schools } = await db.from("schools").select("id, name, tier");
   const schoolRows = schools ?? [];
-  const schoolMap = new Map(schoolRows.map((s: any) => [s.name, s.id]));
 
   let matched = 0, still_unrouted = 0;
   for (const c of unrouted ?? []) {
-    const schoolName = routeToSchoolName(c.university_raw);
-    const matchedSchool = schoolName ? schoolRows.find((s: any) => String(s.name).toLowerCase() === schoolName.toLowerCase()) : null;
-    const school_id = matchedSchool
-      ? matchedSchool.tier === "satellite" || matchedSchool.tier === "bonus"
-        ? representativeSchoolId(schoolRows as any[], matchedSchool.tier) ?? matchedSchool.id
-        : schoolMap.get(matchedSchool.name) ?? null
-      : null;
+    const school_id = expectedSchoolIdForRaw(c.university_raw, schoolRows as any[]);
     if (school_id) {
       await db.from("candidates").update({ school_id }).eq("id", c.id);
       matched++;

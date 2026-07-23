@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 // and the legacy streamed-PDF fallback, plus needsSync / needsRefresh states.
 
 const NAVY = "#11123E";
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 export default function ResumeModal({ jazzId, name, onClose }: {
   jazzId: string; name: string; onClose: () => void;

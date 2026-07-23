@@ -16,7 +16,7 @@ async function confirm(formData: FormData) {
   const type = String(formData.get("type") ?? "invite") as EmailOtpType;
   if (!token_hash) redirect(`/auth/link-expired?type=${encodeURIComponent(type)}`);
 
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const { error } = await supabase.auth.verifyOtp({ type, token_hash });
   // Token expired or already consumed -> send to a page that explains how to get
   // a fresh link, instead of dropping them on set-password with no session.
@@ -25,13 +25,14 @@ async function confirm(formData: FormData) {
   redirect("/auth/set-password");
 }
 
-export default function ConfirmPage({
+export default async function ConfirmPage({
   searchParams,
 }: {
-  searchParams: { token_hash?: string; type?: string };
+  searchParams: Promise<{ token_hash?: string; type?: string }>;
 }) {
-  const token_hash = searchParams.token_hash ?? "";
-  const type = searchParams.type ?? "invite";
+  const query = await searchParams;
+  const token_hash = query.token_hash ?? "";
+  const type = query.type ?? "invite";
   const isInvite = type === "invite" || type === "signup";
 
   return (

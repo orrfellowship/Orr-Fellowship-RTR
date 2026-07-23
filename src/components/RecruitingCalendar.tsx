@@ -8,7 +8,7 @@ const C = {
   navy: "#11123E", navy2: "#485F92", navy3: "#8591AD", orange: "#DD5434",
   blue: "#8AB9E2", gray: "#303333", grayMute: "#6E7385", line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B", gold: "#C9A227",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

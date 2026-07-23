@@ -6,26 +6,39 @@ import type { Profile, Resource } from "@/lib/types";
 import { isSuper, isAdminPlus, canManageResources } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, getOutreach, getConnections,
-  reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase,
-  upsertGoal, upsertGroupGoal, updateUser, updateUserName, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
-  deduplicateCandidates, inviteUser, bulkInviteUsers, seedPlaybook, removeUser,
+  reassignPointPerson, reassignSchool, addConnection, addPhase, upsertTask, deleteTask, deletePhase, updatePhase, type SchoolMatchReviewRow,
+  upsertGoal, upsertGroupGoal, updateUser, updateUserName, setUserActive, addCandidate, updateCandidate, deleteCandidate, deleteOutreach, deleteConnection,
+  deduplicateCandidates, inviteUser, resendUserInvite, bulkInviteUsers, seedPlaybook,
   unlinkJazzCandidate, getUserSnapshot, listCandidates, getCandidateFacets, migratePlaybooksToDates,
 } from "./actions";
-import StandingsClient from "@/components/StandingsClient";
-import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
-import BudgetPanel, { BudgetAnalysis, type BudgetEntry, type Guidance } from "@/components/BudgetPanel";
+import dynamic from "next/dynamic";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
-import ResumeModal from "@/components/ResumeModal";
-import BulkImportModal from "@/components/BulkImportModal";
-import ImportInfoModal from "@/components/ImportInfoModal";
-import BulkDeleteCandidatesModal from "@/components/BulkDeleteCandidatesModal";
-import PlaybookBoard from "@/components/PlaybookBoard";
-import ResourcesPanel from "@/components/ResourcesPanel";
 import PersonPicker from "@/components/PersonPicker";
-import MatchReview from "@/components/MatchReview";
-import DuplicateReview, { findDuplicateGroups, nameSchoolKey } from "@/components/DuplicateReview";
+import ContactPopover from "@/components/ContactPopover";
+import PaginationControls from "@/components/PaginationControls";
+import type { CalEvent } from "@/components/RecruitingCalendar";
+import type { BudgetEntry, Guidance } from "@/components/BudgetPanel";
+import { findDuplicateGroups, nameSchoolKey } from "@/lib/duplicates";
+
+// Per-section code splitting: each /console/<section> route renders exactly one
+// of these, so they load as their own chunks instead of shipping the calendar,
+// budget, playbook and import code with every console page.
+const StandingsClient = dynamic(() => import("@/components/StandingsClient"));
+const RecruitingCalendar = dynamic(() => import("@/components/RecruitingCalendar"));
+const BudgetPanel = dynamic(() => import("@/components/BudgetPanel"));
+const BudgetAnalysis = dynamic(() => import("@/components/BudgetPanel").then((m) => m.BudgetAnalysis));
+const PlaybookBoard = dynamic(() => import("@/components/PlaybookBoard"));
+const ResourcesPanel = dynamic(() => import("@/components/ResourcesPanel"));
+const MatchReview = dynamic(() => import("@/components/MatchReview"));
+const DuplicateReview = dynamic(() => import("@/components/DuplicateReview"));
+const RoutingReview = dynamic(() => import("@/components/RoutingReview"));
+const SchoolMatchReview = dynamic(() => import("@/components/SchoolMatchReview"));
+const ResumeModal = dynamic(() => import("@/components/ResumeModal"));
+const BulkImportModal = dynamic(() => import("@/components/BulkImportModal"));
+const ImportInfoModal = dynamic(() => import("@/components/ImportInfoModal"));
+const BulkDeleteCandidatesModal = dynamic(() => import("@/components/BulkDeleteCandidatesModal"));
 import { phaseOf, routeToSchoolNameByEmail } from "@/lib/stages";
-import { candidateSchoolDisplay, candidateSchoolKey } from "@/lib/candidateSchool";
+import { candidateSchoolDisplay, candidateSchoolKey, findMisrouted } from "@/lib/candidateSchool";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -33,9 +46,26 @@ const C = {
   orange: "#DD5434", blue: "#8AB9E2", gray: "#303333", grayMute: "#6E7385",
   line: "#E4E7EE", canvas: "#F7F8FB", gold: "#C9A227", good: "#2F8F6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 // Thousands-separated integer (e.g. 1,200).
 const nf = (n: number) => Number(n || 0).toLocaleString("en-US");
+
+// Launch row for an admin review — a compact card that opens the quizlet-style
+// ReviewDeck instead of expanding a long inline list.
+function ReviewLaunchCard({ accent, title, count, blurb, onOpen }: {
+  accent: string; title: string; count: string; blurb: string; onOpen: () => void;
+}) {
+  return (
+    <button onClick={onOpen}
+      style={{ marginTop: 12, width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: `1px solid ${accent}`, borderRadius: 14, background: `${accent}0e`, cursor: "pointer", textAlign: "left" }}>
+      <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
+        {title} · <span style={{ color: C.orange }}>{count}</span>
+      </span>
+      <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>{blurb}</span>
+      <span style={{ color: accent, fontSize: 13, fontWeight: 700 }}>Review →</span>
+    </button>
+  );
+}
 
 type School = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
 type Cand = {
@@ -45,7 +75,7 @@ type Cand = {
   point_person_id: string | null; not_interested: boolean; is_favorite: boolean;
   source: string | null; created_by: string | null;
 };
-type TeamMember = { id: string; full_name: string; school_id?: string | null; role?: string | null };
+type TeamMember = { id: string; full_name: string; email?: string | null; school_id?: string | null; role?: string | null };
 // Slim full-set projection for the Candidates tab's full-dataset features
 // (duplicate detection, JazzHR match review, import dedupe warnings).
 type SlimCand = { id: string; name: string; email: string | null; school_id: string | null; jazz_id: string | null; source: string | null; stage: string | null; area_of_study: string | null; gpa: string | null; university_raw: string | null };
@@ -128,12 +158,24 @@ function overviewSchoolKey(candidate: Pick<Cand, "school_id" | "university_raw">
   return candidateSchoolKey(candidate, schools);
 }
 
+// Weighted stage-count row (school × raw university × stage, n candidates).
+type StageCount = { school_id: string | null; university_raw: string | null; stage: string | null; n: number };
+// Total candidates in `rows` whose stage is in `set`.
+function countStages(rows: StageCount[], set: Set<string>): number {
+  return rows.reduce((s, r) => s + (r.stage && set.has(r.stage) ? r.n : 0), 0);
+}
+
 export default function ConsoleClient({
-  profile, initialSection, schools, candidates, team, goals, phases, users, reviews, resources,
+  profile, initialSection, schools, candidates, stageCounts = [], schoolReviews = [], team, goals, phases, users, reviews, resources,
   events = [], people = [], budgetEntries = [], budgetGuidance = [],
   candidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], facetUnrouted = 0, slimCandidates = [],
 }: {
   profile: Profile; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
+  // Aggregate sections (overview/standings/schools) read weighted counts — one
+  // row per school × raw university × stage — instead of full candidate rows.
+  stageCounts?: StageCount[];
+  // Pending phase20 school-match reviews (applicants section).
+  schoolReviews?: SchoolMatchReviewRow[];
   goals: Goal[]; phases: Phase[]; users: UserProfile[];
   reviews: JazzReview[]; resources: Resource[];
   events?: CalEvent[]; people?: { id: string; full_name: string }[]; budgetEntries?: BudgetEntry[]; budgetGuidance?: Guidance[];
@@ -190,6 +232,7 @@ export default function ConsoleClient({
   const [appRows, setAppRows] = useState<Cand[]>(candidates);
   const [appTotal, setAppTotal] = useState<number>(candidatesTotal ?? candidates.length);
   const [appPage, setAppPage] = useState(0);
+  const [appPageSize, setAppPageSize] = useState(candidatesPageSize);
   const [appLoading, setAppLoading] = useState(false);
   const [candidateFacets, setCandidateFacets] = useState({
     majors: facetMajors,
@@ -199,8 +242,38 @@ export default function ConsoleClient({
   });
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dupOpen, setDupOpen] = useState(false);
+  const [routingOpen, setRoutingOpen] = useState(false);
+  const [smrOpen, setSmrOpen] = useState(false);
+  // Match-review decks on the JazzHR Sync tab and the dedicated Review Sync page.
+  const [syncMatchOpen, setSyncMatchOpen] = useState(false);
+  const [reviewSyncOpen, setReviewSyncOpen] = useState(false);
+
+  // Snapshot task links land on /console/applicants?review=duplicates|routing —
+  // open the matching panel so the admin isn't hunting for it.
+  useEffect(() => {
+    const want = new URLSearchParams(window.location.search).get("review");
+    if (want === "duplicates") setDupOpen(true);
+    if (want === "routing") setRoutingOpen(true);
+    if (want === "school-match") setSmrOpen(true);
+  }, []);
+
+  // The review panels read the client-side slim snapshot, which router.refresh()
+  // can't update — patch it (and the visible page) directly after a fix.
+  const handleCandidateDeleted = (id: string) => {
+    setCandidateFacets((f) => ({ ...f, slim: f.slim.filter((c) => c.id !== id) }));
+    setAppRows((rows) => rows.filter((c) => c.id !== id));
+    setAppTotal((t) => Math.max(0, t - 1));
+  };
+  const handleRoutingMoved = (moves: { id: string; school_id: string }[]) => {
+    const dest = new Map(moves.map((m) => [m.id, m.school_id]));
+    setCandidateFacets((f) => ({ ...f, slim: f.slim.map((c) => dest.has(c.id) ? { ...c, school_id: dest.get(c.id)! } : c) }));
+    setAppRows((rows) => rows.map((c) => dest.has(c.id) ? { ...c, school_id: dest.get(c.id)! } : c));
+  };
   const [inviteOpen, setInviteOpen] = useState(false);
   const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
+  const [resendingInviteId, setResendingInviteId] = useState<string | null>(null);
+  const [updatingActiveId, setUpdatingActiveId] = useState<string | null>(null);
+  const [resendInviteMessage, setResendInviteMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [dedupMsg, setDedupMsg] = useState<string | null>(null);
   const [deduping, setDeduping] = useState(false);
   const [syncingIds, setSyncingIds] = useState(false);
@@ -213,6 +286,44 @@ export default function ConsoleClient({
   const schoolPickOptions = useMemo(() => schoolSelectOptions(schools).map((o) => ({ id: o.value, name: o.label })), [schools]);
 
   const nameOf = (id: string | null) => id ? (id === profile.id ? "You" : team.find((t) => t.id === id)?.full_name ?? "—") : "Unassigned";
+
+  async function handleResendInvite(user: UserProfile) {
+    if (!confirm(`Send a new account setup link to ${user.full_name}? The link will let them choose a password.`)) return;
+    setResendingInviteId(user.id);
+    setResendInviteMessage(null);
+    try {
+      const result = await resendUserInvite(user.id);
+      if ("error" in result && result.error) {
+        setResendInviteMessage({ kind: "error", text: result.error });
+      } else {
+        setResendInviteMessage({ kind: "success", text: `Account setup email queued for ${user.full_name}.` });
+      }
+    } catch {
+      setResendInviteMessage({ kind: "error", text: "The account setup email could not be sent." });
+    } finally {
+      setResendingInviteId(null);
+    }
+  }
+
+  async function handleUserActiveChange(user: UserProfile) {
+    const nextActive = !user.is_active;
+    if (!confirm(`${nextActive ? "Reactivate" : "Deactivate"} ${user.full_name}? ${nextActive ? "They will be able to sign in again." : "They will lose access, but their assignments and history will be preserved."}`)) return;
+    setUpdatingActiveId(user.id);
+    setResendInviteMessage(null);
+    try {
+      const result = await setUserActive(user.id, nextActive);
+      if ("error" in result && result.error) {
+        setResendInviteMessage({ kind: "error", text: result.error });
+      } else {
+        setResendInviteMessage({ kind: "success", text: `${user.full_name} ${nextActive ? "reactivated" : "deactivated"}. Refreshing…` });
+        router.refresh();
+      }
+    } catch {
+      setResendInviteMessage({ kind: "error", text: `Could not ${nextActive ? "reactivate" : "deactivate"} this user.` });
+    } finally {
+      setUpdatingActiveId(null);
+    }
+  }
 
   // ---- JazzHR sync (super-admin only) ----
   const [syncing, setSyncing] = useState(false);
@@ -284,17 +395,17 @@ export default function ConsoleClient({
 
   // scoreboard totals
   const board = useMemo(() => {
-    const cands = candidates.filter((c) => matchesSchoolFilter(scope, c.school_id, schools));
+    const rows = stageCounts.filter((r) => matchesSchoolFilter(scope, r.school_id, schools));
     return [
-      { label: "Sourced", actual: cands.filter((c) => c.stage && SOURCED.has(c.stage)).length, goal: sumGoalsForScope(scope, goals, schools, "goal_sourced") },
-      { label: "Applied", actual: cands.filter((c) => c.stage && APPLIED.has(c.stage)).length, goal: sumGoalsForScope(scope, goals, schools, "goal_applied") },
+      { label: "Sourced", actual: countStages(rows, SOURCED), goal: sumGoalsForScope(scope, goals, schools, "goal_sourced") },
+      { label: "Applied", actual: countStages(rows, APPLIED), goal: sumGoalsForScope(scope, goals, schools, "goal_applied") },
     ];
-  }, [scope, candidates, goals, schools]);
+  }, [scope, stageCounts, goals, schools]);
 
   const open = appRows.find((c) => c.id === openId) ?? candidates.find((c) => c.id === openId) ?? null;
 
   // Fetch one page of candidates with the current filters/sort applied server-side.
-  const APP_PAGE_SIZE = candidatesPageSize;
+  const APP_PAGE_SIZE = appPageSize;
   const loadAppPage = async (page: number) => {
     setAppLoading(true);
     const res = await listCandidates({
@@ -319,7 +430,7 @@ export default function ConsoleClient({
     const t = setTimeout(() => { loadAppPage(0); }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appSearch, appSchool, appMajor, appStage, appMinGpa, appFavOnly, appCreator, appSort, showUnrouted]);
+  }, [appSearch, appSchool, appMajor, appStage, appMinGpa, appFavOnly, appCreator, appSort, showUnrouted, appPageSize]);
 
   const facetsLoaded = useRef(candidateFacets.slim.length > 0 || candidateFacets.majors.length > 0 || candidateFacets.stages.length > 0 || candidateFacets.unroutedCount > 0);
   useEffect(() => {
@@ -331,14 +442,15 @@ export default function ConsoleClient({
         facetsLoaded.current = false;
       });
   }, [tab]);
-  const playbookPhases = phases.filter((p) => p.school_id === playbookSchool);
   const playbookSchoolObj = schools.find((s) => s.id === playbookSchool);
   const playbookGrouped = playbookSchoolObj?.tier === "satellite" || playbookSchoolObj?.tier === "bonus";
   const playbookLabel = schoolSelectOptions(schools).find((o) => o.value === playbookSchool)?.label ?? playbookSchoolObj?.name ?? "School";
-  // Team members of the selected school (satellite/bonus share one team across the tier).
+  // Satellite/bonus share one team AND one playbook across the tier, so both
+  // are matched tier-wide (phases may live under any of the group's rows).
   const playbookTierIds = playbookGrouped
     ? new Set(schools.filter((s) => s.tier === playbookSchoolObj?.tier).map((s) => s.id))
     : new Set([playbookSchool]);
+  const playbookPhases = phases.filter((p) => playbookTierIds.has(p.school_id));
   const playbookTeam = team.filter((m) => m.school_id && playbookTierIds.has(m.school_id));
   // Flatten this school's tasks for the person-grouped board + a lookup for updates.
   const playbookTaskMap = new Map(playbookPhases.flatMap((p) => p.playbook_tasks.map((t) => [t.id, { t, phaseId: p.id }])));
@@ -427,11 +539,11 @@ export default function ConsoleClient({
               {(() => {
                 const cnt = (keys: string[]) => {
                   const keySet = new Set(keys);
-                  const sc = candidates.filter((c) => {
-                    const key = overviewSchoolKey(c, schools);
+                  const rows = stageCounts.filter((r) => {
+                    const key = overviewSchoolKey(r, schools);
                     return !!key && keySet.has(key);
                   });
-                  return { sourced: sc.filter((c) => c.stage && SOURCED.has(c.stage)).length, applied: sc.filter((c) => c.stage && APPLIED.has(c.stage)).length };
+                  return { sourced: countStages(rows, SOURCED), applied: countStages(rows, APPLIED) };
                 };
                 const row = (key: string, name: string, sub: string, ids: string[], accent: string, opts: { logo?: string | null; indent?: boolean; expandKey?: string } = {}) => {
                   const c2 = cnt(ids);
@@ -454,7 +566,7 @@ export default function ConsoleClient({
                 const bon = schools.filter((s) => s.tier === "bonus").sort(byName);
                 const rawRows = (tier: string) => {
                   const byKey = new Map<string, string>();
-                  for (const c of candidates) {
+                  for (const c of stageCounts) {
                     const key = overviewSchoolKey(c, schools);
                     if (!key?.startsWith(`raw:${tier}:`)) continue;
                     byKey.set(key, candidateSchoolDisplay(c, schools).specificLabel ?? candidateSchoolDisplay(c, schools).label);
@@ -490,8 +602,6 @@ export default function ConsoleClient({
           const unroutedCount = candidateFacets.unroutedCount;
           const slimCandidateRows = candidateFacets.slim;
           const visible = appRows;
-          const totalPages = Math.max(1, Math.ceil(appTotal / APP_PAGE_SIZE));
-
           const toggleSort = (key: typeof appSort.key) =>
             setAppSort((p) => p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
           const arrow = (key: typeof appSort.key) => appSort.key === key ? (appSort.dir === "asc" ? " ▲" : " ▼") : "";
@@ -501,17 +611,8 @@ export default function ConsoleClient({
           const filtersActive = appSearch.trim() !== "" || appMajor !== "All majors" || appStage !== "All stages" || appFavOnly || appMinGpa.trim() !== "" || appSchool !== "all" || appCreator !== "anyone";
 
           // Pagination control — rendered both above and below the table.
-          const pager = (where: "top" | "bottom") => appTotal > APP_PAGE_SIZE ? (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: where === "top" ? 16 : 16, marginBottom: where === "top" ? 0 : 0 }}>
-              <button onClick={() => loadAppPage(appPage - 1)} disabled={appPage <= 0 || appLoading}
-                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage <= 0 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage <= 0 || appLoading ? "default" : "pointer" }}>← Prev</button>
-              <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>
-                Page {(appPage + 1).toLocaleString()} of {totalPages.toLocaleString()} · {(appPage * APP_PAGE_SIZE + 1).toLocaleString()}–{Math.min((appPage + 1) * APP_PAGE_SIZE, appTotal).toLocaleString()} of {appTotal.toLocaleString()}
-              </span>
-              <button onClick={() => loadAppPage(appPage + 1)} disabled={appPage >= totalPages - 1 || appLoading}
-                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: appPage >= totalPages - 1 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: appPage >= totalPages - 1 || appLoading ? "default" : "pointer" }}>Next →</button>
-            </div>
-          ) : null;
+          const pager = (where: "top" | "bottom") => <div style={{ marginTop: where === "top" ? 8 : 0 }}><PaginationControls page={appPage} pageSize={APP_PAGE_SIZE} total={appTotal} loading={appLoading}
+            onPageChange={loadAppPage} onPageSizeChange={(size) => { setAppPage(0); setAppPageSize(size); }} /></div>;
 
           return (
           <>
@@ -533,21 +634,24 @@ export default function ConsoleClient({
 
             {/* JazzHR match review — applicants that may be an existing sourced candidate */}
             {adminPlus && reviews.length > 0 && (
-              <div style={{ marginTop: 16, border: `1px solid ${C.orange}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
-                <button onClick={() => setReviewOpen((v) => !v)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: `${C.orange}0e`, cursor: "pointer", textAlign: "left" }}>
-                  <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
-                    Match review · <span style={{ color: C.orange }}>{reviews.length} need{reviews.length === 1 ? "s" : ""} a decision</span>
-                  </span>
-                  <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>JazzHR applicants that may already be sourced</span>
-                  <span style={{ color: C.grayMute, fontSize: 15 }}>{reviewOpen ? "▲" : "▼"}</span>
-                </button>
-                {reviewOpen && (
-                  <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                    <MatchReview reviews={reviews} candidates={slimCandidateRows} schools={schools} />
-                  </div>
-                )}
-              </div>
+              <>
+                <ReviewLaunchCard accent={C.orange} title="Match review"
+                  count={`${reviews.length} need${reviews.length === 1 ? "s" : ""} a decision`}
+                  blurb="JazzHR applicants that may already be sourced"
+                  onOpen={() => setReviewOpen(true)} />
+                <MatchReview reviews={reviews} candidates={slimCandidateRows} schools={schools} open={reviewOpen} onClose={() => setReviewOpen(false)} />
+              </>
+            )}
+
+            {/* School match review — intake text the matcher couldn't place */}
+            {adminPlus && schoolReviews.length > 0 && (
+              <>
+                <ReviewLaunchCard accent={C.gold} title="School match review"
+                  count={`${schoolReviews.length} unplaced`}
+                  blurb="Typed school names that need a decision"
+                  onOpen={() => setSmrOpen(true)} />
+                <SchoolMatchReview reviews={schoolReviews} schools={schools} open={smrOpen} onClose={() => setSmrOpen(false)} />
+              </>
             )}
 
             {/* Duplicate candidates — any source (manual, import, JazzHR) */}
@@ -555,21 +659,28 @@ export default function ConsoleClient({
               const dupCount = findDuplicateGroups(slimCandidateRows).length;
               if (dupCount === 0) return null;
               return (
-                <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff", overflow: "hidden" }}>
-                  <button onClick={() => setDupOpen((v) => !v)}
-                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 18px", border: "none", background: C.canvas, cursor: "pointer", textAlign: "left" }}>
-                    <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14.5, color: C.navy, flex: 1 }}>
-                      Potential duplicates · <span style={{ color: C.orange }}>{dupCount} group{dupCount === 1 ? "" : "s"}</span>
-                    </span>
-                    <span style={{ fontSize: 12.5, color: C.grayMute, fontWeight: 600 }}>Same name or email · any source</span>
-                    <span style={{ color: C.grayMute, fontSize: 15 }}>{dupOpen ? "▲" : "▼"}</span>
-                  </button>
-                  {dupOpen && (
-                    <div style={{ padding: 18, borderTop: `1px solid ${C.line}` }}>
-                      <DuplicateReview candidates={slimCandidateRows} schools={schools} />
-                    </div>
-                  )}
-                </div>
+                <>
+                  <ReviewLaunchCard accent={C.orange} title="Potential duplicates"
+                    count={`${dupCount} group${dupCount === 1 ? "" : "s"}`}
+                    blurb="Same name or email · any source"
+                    onOpen={() => setDupOpen(true)} />
+                  <DuplicateReview candidates={slimCandidateRows} schools={schools} open={dupOpen} onClose={() => setDupOpen(false)} onDeleted={handleCandidateDeleted} />
+                </>
+              );
+            })()}
+
+            {/* School routing review — imported school text that routes elsewhere */}
+            {adminPlus && (() => {
+              const misroutedCount = findMisrouted(slimCandidateRows, schools).length;
+              if (misroutedCount === 0) return null;
+              return (
+                <>
+                  <ReviewLaunchCard accent={C.navy} title="School routing review"
+                    count={`${misroutedCount} candidate${misroutedCount === 1 ? "" : "s"}`}
+                    blurb="Imported school text routes to a different school"
+                    onOpen={() => setRoutingOpen(true)} />
+                  <RoutingReview candidates={slimCandidateRows} schools={schools} open={routingOpen} onClose={() => setRoutingOpen(false)} onMoved={handleRoutingMoved} />
+                </>
               );
             })()}
 
@@ -623,7 +734,7 @@ export default function ConsoleClient({
                       onMouseEnter={(e) => (e.currentTarget.style.background = "#F0F4FA")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}><ContactPopover name={c.name} email={c.email} /></div>
                         <div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div>
                       </div>
                       <div style={{ fontSize: 13.5 }} onClick={(e) => e.stopPropagation()}>
@@ -665,7 +776,7 @@ export default function ConsoleClient({
         {tab === "standings" && (
           <StandingsClient
             schools={schools}
-            candidates={candidates.map((c) => ({ id: c.id, school_id: c.school_id, stage: c.stage }))}
+            candidates={stageCounts.map((r) => ({ school_id: r.school_id, stage: r.stage, n: r.n }))}
             goals={goals}
             mySchoolId={null}
           />
@@ -780,12 +891,12 @@ export default function ConsoleClient({
 
           const renderSchoolCard = (s: typeof schools[0], showGoalForm = true) => {
             const accent = s.color_primary ?? C.navy2;
-            const sc = candidates.filter((c) => c.school_id === s.id);
-            const teamSize = users.filter((u) => u.school_id === s.id).length;
+            const sc = stageCounts.filter((r) => r.school_id === s.id);
+            const teamSize = users.filter((u) => u.is_active && u.school_id === s.id).length;
             const g = goals.find((g) => g.school_id === s.id);
             const draft = goalDraft(s.id);
-            const sourced = sc.filter((c) => SOURCED.has(c.stage ?? "")).length;
-            const applied = sc.filter((c) => APPLIED.has(c.stage ?? "")).length;
+            const sourced = countStages(sc, SOURCED);
+            const applied = countStages(sc, APPLIED);
             return (
               <div key={s.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}`, borderRadius: 14, padding: "18px 22px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: showGoalForm ? 14 : 0 }}>
@@ -844,9 +955,9 @@ export default function ConsoleClient({
               {schoolsByTier.map(({ tier, schools: tierSchools }) => {
                 const isGrouped = tier === "satellite" || tier === "bonus";
                 const tierSchoolIds = tierSchools.map((s) => s.id);
-                const groupCands = tierSchools.flatMap((s) => candidates.filter((c) => c.school_id === s.id));
-                const groupSourced = groupCands.filter((c) => SOURCED.has(c.stage ?? "")).length;
-                const groupApplied = groupCands.filter((c) => APPLIED.has(c.stage ?? "")).length;
+                const groupRows = stageCounts.filter((r) => r.school_id && tierSchoolIds.includes(r.school_id));
+                const groupSourced = countStages(groupRows, SOURCED);
+                const groupApplied = countStages(groupRows, APPLIED);
                 // All schools in a group share the same goal value — read from any one
                 const repGoal = goals.find((g) => tierSchoolIds.includes(g.school_id));
                 const groupGoalActual = { sourced: repGoal?.goal_sourced ?? 0, applied: repGoal?.goal_applied ?? 0 };
@@ -970,12 +1081,17 @@ export default function ConsoleClient({
               </select>
               {usrFiltersActive && <button onClick={() => { setUsrSearch(""); setUsrRole("all"); setUsrSchool("all"); setUsrStatus("all"); }} style={{ border: "none", background: "transparent", color: C.navy2, fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Clear</button>}
             </div>
+            {resendInviteMessage && (
+              <div style={{ marginTop: 12, background: resendInviteMessage.kind === "success" ? "#E8F5EE" : "#FBE7DF", border: `1px solid ${resendInviteMessage.kind === "success" ? C.good : C.orange}`, borderRadius: 10, padding: "10px 13px", fontSize: 13, color: resendInviteMessage.kind === "success" ? "#1B5E3F" : "#8A3A1E" }}>
+                {resendInviteMessage.kind === "success" ? "✓ " : ""}{resendInviteMessage.text}
+              </div>
+            )}
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", marginTop: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", background: "#FAFBFE" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 190px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", background: "#FAFBFE" }}>
                 <UH k="name" label="Name" /><UH k="email" label="Email" /><UH k="role" label="Role" /><UH k="school" label="School" /><UH k="signin" label="Last sign-in" center /><div></div><div></div>
               </div>
               {visibleUsers.map((u) => (
-                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 26px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
+                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.5fr 0.9fr 1.2fr 0.9fr 76px 190px", gap: 12, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: u.is_active ? 1 : 0.45 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <input defaultValue={u.full_name}
                       onBlur={(e) => { const n = e.target.value.trim(); if (n && n !== u.full_name) startTransition(() => { updateUserName(u.id, n); }); }}
@@ -1002,13 +1118,24 @@ export default function ConsoleClient({
                     ? <button onClick={() => setSnapshotUser(u)} title="View their Weekly Snapshot"
                         style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy2, fontWeight: 600, fontSize: 11.5, padding: "5px 8px", borderRadius: 7, cursor: "pointer" }}>Snapshot</button>
                     : <div />}
-                  <button
-                    disabled={u.id === profile.id}
-                    onClick={() => { if (confirm(`Remove ${u.full_name}? This cannot be undone.`)) startTransition(() => { removeUser(u.id); }); }}
-                    title={u.id === profile.id ? "Cannot remove yourself" : "Remove user"}
-                    style={{ border: "none", background: "transparent", color: u.id === profile.id ? C.line : "#ef4444", fontSize: 16, cursor: u.id === profile.id ? "default" : "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    ×
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 9 }}>
+                    {superUser && (!u.last_sign_in_at || u.role === "super_admin") && (
+                      <button
+                        onClick={() => handleResendInvite(u)}
+                        disabled={resendingInviteId === u.id || !u.is_active}
+                        title={!u.is_active ? "Reactivate this user before resending" : "Send a new account setup email"}
+                        style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.navy2, fontWeight: 700, fontSize: 10.5, padding: "5px 7px", borderRadius: 7, cursor: resendingInviteId === u.id || !u.is_active ? "default" : "pointer", whiteSpace: "nowrap", opacity: resendingInviteId === u.id || !u.is_active ? 0.55 : 1 }}>
+                        {resendingInviteId === u.id ? "Sending…" : "Resend invite"}
+                      </button>
+                    )}
+                    <button
+                      disabled={u.id === profile.id || updatingActiveId === u.id}
+                      onClick={() => handleUserActiveChange(u)}
+                      title={u.id === profile.id ? "Cannot deactivate yourself" : u.is_active ? "Deactivate while preserving assignments and history" : "Reactivate user"}
+                      style={{ border: `1px solid ${u.is_active ? "#F0C8BE" : C.line}`, background: "#fff", color: u.id === profile.id ? C.grayMute : u.is_active ? "#A7432B" : C.good, fontWeight: 700, fontSize: 10.5, padding: "5px 7px", borderRadius: 7, cursor: u.id === profile.id || updatingActiveId === u.id ? "default" : "pointer", whiteSpace: "nowrap", opacity: u.id === profile.id || updatingActiveId === u.id ? 0.55 : 1 }}>
+                      {updatingActiveId === u.id ? "Saving…" : u.is_active ? "Deactivate" : "Reactivate"}
+                    </button>
+                  </div>
                 </div>
               ))}
               {visibleUsers.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>{usrFiltersActive ? "No users match these filters." : "No users found."}</div>}
@@ -1062,7 +1189,14 @@ export default function ConsoleClient({
               <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 14px" }}>
                 Applicants that look like an existing sourced candidate but couldn't be auto-linked (different email, nickname). <b>Match</b> links them (keeping notes & owner); <b>Add as new candidate</b> imports them separately.
               </p>
-              <MatchReview reviews={reviews} candidates={candidates} schools={schools} />
+              {reviews.length > 0 ? (
+                <button onClick={() => setSyncMatchOpen(true)} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "10px 18px", borderRadius: 10, cursor: "pointer", fontSize: 13.5 }}>
+                  Review {reviews.length} match{reviews.length === 1 ? "" : "es"} →
+                </button>
+              ) : (
+                <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>Nothing to review — all matches were confident.</div>
+              )}
+              <MatchReview reviews={reviews} candidates={candidates} schools={schools} open={syncMatchOpen} onClose={() => setSyncMatchOpen(false)} />
             </div>
 
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 24, marginTop: 16, maxWidth: 620 }}>
@@ -1133,7 +1267,14 @@ export default function ConsoleClient({
           <>
             <h1 style={{ fontSize: 30, color: C.navy, margin: 0 }}>Review Sync</h1>
             <p style={{ color: C.grayMute, margin: "4px 0 18px" }}>JazzHR applicants that may match an existing sourced candidate. Match to link them, or add as a new candidate.</p>
-            <MatchReview reviews={reviews} candidates={candidates} schools={schools} />
+            {reviews.length > 0 ? (
+              <button onClick={() => setReviewSyncOpen(true)} style={{ border: "none", background: C.orange, color: "#fff", fontWeight: 700, padding: "12px 20px", borderRadius: 10, cursor: "pointer", fontSize: 14 }}>
+                Review {reviews.length} possible match{reviews.length === 1 ? "" : "es"} →
+              </button>
+            ) : (
+              <div style={{ fontSize: 13.5, color: C.grayMute, fontStyle: "italic" }}>Nothing to review — all matches were confident.</div>
+            )}
+            <MatchReview reviews={reviews} candidates={candidates} schools={schools} open={reviewSyncOpen} onClose={() => setReviewSyncOpen(false)} />
           </>
         )}
       </div>
@@ -1168,14 +1309,17 @@ export default function ConsoleClient({
 
 // ---- User Weekly Snapshot (read-only, for User Management) ----
 function UserSnapshotModal({ user, onClose }: { user: UserProfile; onClose: () => void }) {
-  const [data, setData] = useState<{ name: string; isAdmin: boolean; queue: { name: string; why: string }[]; tasksDone: number; tasksTotal: number } | null>(null);
+  const [data, setData] = useState<{ name: string; isAdmin: boolean; queue: { name: string; email: string | null; why: string }[]; tasksDone: number; tasksTotal: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
   useEffect(() => {
     let active = true;
     getUserSnapshot(user.id).then((r) => { if (!active) return; if ("ok" in r && r.ok) setData(r as any); else setError(("error" in r ? r.error : null) ?? "Could not load snapshot."); });
     return () => { active = false; };
   }, [user.id]);
   const taskPct = data && data.tasksTotal > 0 ? Math.round((data.tasksDone / data.tasksTotal) * 100) : 0;
+  const shownQueue = data?.queue.slice(page * pageSize, (page + 1) * pageSize) ?? [];
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(11,12,42,.45)" }} />
@@ -1202,13 +1346,15 @@ function UserSnapshotModal({ user, onClose }: { user: UserProfile; onClose: () =
             </div>
             <div style={{ fontFamily: HEAD, fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: C.grayMute, marginBottom: 8 }}>Needs their attention</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {data.queue.map((q, i) => (
+              <PaginationControls page={page} pageSize={pageSize} total={data.queue.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
+              {shownQueue.map((q, i) => (
                 <div key={i} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "10px 12px" }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: C.gray }}>{q.name}</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: C.gray }}><ContactPopover name={q.name} email={q.email} /></div>
                   <div style={{ fontSize: 12, color: C.grayMute }}>{q.why}</div>
                 </div>
               ))}
               {data.queue.length === 0 && <div style={{ fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>All clear — nothing queued.</div>}
+              <PaginationControls page={page} pageSize={pageSize} total={data.queue.length} onPageChange={setPage} onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
             </div>
           </>
         )}
@@ -1314,7 +1460,7 @@ function CandidateDrawer({ c, profile, team, schools, onClose, onSaved, startTra
           {!editing && c.created_by === profile.id && (
             <button onClick={startEdit} title="Edit candidate details" style={{ position: "absolute", top: 14, right: 54, background: C.orange, border: "none", color: "#fff", height: 32, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: "0 2px 8px rgba(221,84,52,.4)" }}>✎ Edit details</button>
           )}
-          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}>{c.name}</h2>
+          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}><ContactPopover name={c.name} email={c.email} /></h2>
           <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.72)" }}>{c.area_of_study}</div>
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>
         </div>
@@ -1538,6 +1684,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
   const [linkedin, setLinkedin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [needsReview, setNeedsReview] = useState(false);
 
   const options = schoolSelectOptions(schools);
   const selectedSchool = schools.find((s) => s.id === schoolValue) ?? null;
@@ -1567,7 +1714,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
         stage: null, gpa: null, area_of_study: null,
       }).then((r) => {
         if ("error" in r && r.error) setError(r.error);
-        else { setSaved(true); setTimeout(onClose, 800); }
+        else { setSaved(true); setNeedsReview("needsReview" in r && !!r.needsReview); setTimeout(onClose, ("needsReview" in r && r.needsReview) ? 1600 : 800); }
       });
     });
   };
@@ -1618,7 +1765,7 @@ function AddCandidateModal({ schools, team, meId, existingEmails, existingNames,
           Stage, GPA, and major are added automatically once the candidate applies through JazzHR.
         </div>
         {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E", marginBottom: 14 }}>{error}</div>}
-        {saved && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>✓ Candidate added!</div>}
+        {saved && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F", marginBottom: 14 }}>✓ Candidate added!{needsReview ? " The typed school couldn't be matched — it's queued in School Match Review." : ""}</div>}
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>Cancel</button>
           <button onClick={submit} style={{ border: "none", background: C.navy, color: "#fff", fontWeight: 700, padding: "11px 20px", borderRadius: 10, cursor: "pointer" }}>Add Candidate</button>

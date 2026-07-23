@@ -12,19 +12,27 @@ import {
 import { getCandidateFacets, listCandidates, updateCandidate } from "@/app/(app)/console/actions";
 import { phaseOf } from "@/lib/stages";
 import { evaluateCandidate } from "@/lib/triggers";
-import StandingsClient from "@/components/StandingsClient";
-import ResumeModal from "@/components/ResumeModal";
-import BulkImportModal from "@/components/BulkImportModal";
-import ImportInfoModal from "@/components/ImportInfoModal";
-import PlaybookBoard from "@/components/PlaybookBoard";
-import ResourcesPanel from "@/components/ResourcesPanel";
+import dynamic from "next/dynamic";
 import PersonPicker from "@/components/PersonPicker";
-import RecruitingCalendar, { type CalEvent } from "@/components/RecruitingCalendar";
-import RecruitingRounds from "@/components/RecruitingRounds";
-import BudgetPanel, { type BudgetEntry, type Guidance } from "@/components/BudgetPanel";
+import ContactPopover from "@/components/ContactPopover";
+import PaginationControls from "@/components/PaginationControls";
+import type { CalEvent } from "@/components/RecruitingCalendar";
+import type { BudgetEntry, Guidance } from "@/components/BudgetPanel";
 import SchoolFilter, { matchesSchoolFilter } from "@/components/SchoolFilter";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
-import { nameSchoolKey } from "@/components/DuplicateReview";
+import { nameSchoolKey } from "@/lib/duplicates";
+
+// Per-section code splitting: each /workspace/<section> route renders exactly
+// one of these, so they load as their own chunks instead of shipping the
+// calendar/budget/playbook/import code with every workspace page.
+const StandingsClient = dynamic(() => import("@/components/StandingsClient"));
+const ResumeModal = dynamic(() => import("@/components/ResumeModal"));
+const BulkImportModal = dynamic(() => import("@/components/BulkImportModal"));
+const ImportInfoModal = dynamic(() => import("@/components/ImportInfoModal"));
+const PlaybookBoard = dynamic(() => import("@/components/PlaybookBoard"));
+const ResourcesPanel = dynamic(() => import("@/components/ResourcesPanel"));
+const RecruitingCalendar = dynamic(() => import("@/components/RecruitingCalendar"));
+const BudgetPanel = dynamic(() => import("@/components/BudgetPanel"));
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const C = {
@@ -32,7 +40,7 @@ const C = {
   orange: "#DD5434", orangeSoft: "#FBE7DF", blue: "#8AB9E2", blueSoft: "#E1E9F4",
   gray: "#303333", grayMute: "#6E7385", line: "#E4E7EE", canvas: "#F7F8FB", gold: "#C9A227", good: "#2F8F6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 type Cand = {
   id: string; jazz_id: string | null; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null;
@@ -46,7 +54,7 @@ type School      = { id: string; name: string; color_primary: string | null; log
 type AllSchool   = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
 type AllCand     = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; jazz_id: string | null; linkedin: string | null; point_person_id: string | null; not_interested: boolean; resume_link: string | null; is_favorite: boolean };
 type AllGoal     = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
-type TeamMember  = { id: string; full_name: string; role?: string | null };
+type TeamMember  = { id: string; full_name: string; email?: string | null; role?: string | null };
 type Completion  = { profile_id: string; state: string; updated_at?: string };
 type Task        = {
   id: string; text: string; assignee_id: string | null; assignee_label: string | null;
@@ -94,14 +102,17 @@ const CONTACTD = new Set(["contacted", "applied", "bmi", "finalist", "fellow"]);
 const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 
 export default function WorkspaceClient({
-  profile, initialSection, school, candidates, team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
+  profile, initialSection, school, candidates, stageCounts = [], team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
   budgetEntries = [], budgetSchoolId = null, budgetGuidance = [],
   allCandidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], slimCandidates = [],
 }: {
   profile: Profile; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
+  // Org-wide weighted counts (school × stage, `n` candidates each) — feeds the
+  // snapshot's org counters and the Standings tab without shipping every row.
+  stageCounts?: { school_id: string | null; stage: string | null; n: number }[];
   allSchools: AllSchool[]; allCandidates: AllCand[]; allGoals: AllGoal[]; groupName?: string | null;
   lastContactByCand: Record<string, string>; resources: Resource[]; events: CalEvent[];
-  allProfiles: { id: string; full_name: string }[];
+  allProfiles: { id: string; full_name: string; email?: string | null }[];
   budgetEntries?: BudgetEntry[]; budgetSchoolId?: string | null; budgetGuidance?: Guidance[];
   // Candidates tab (S === "all") is server-paginated: `allCandidates` is the
   // first page; these carry the total + facet dropdowns + slim dedupe list.
@@ -123,11 +134,14 @@ export default function WorkspaceClient({
   const [boardStage, setBoardStage] = useState("All stages");
   const [boardFavOnly, setBoardFavOnly] = useState(false);
   const [boardOwner, setBoardOwner] = useState("");
+  const [boardPage, setBoardPage] = useState(0);
+  const [boardPageSize, setBoardPageSize] = useState(50);
   const [allSort, setAllSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   // Server-paginated Candidates tab (S === "all"). `allCandidates` is page 0.
   const [allRows, setAllRows] = useState<AllCand[]>(allCandidates);
   const [allTotal, setAllTotal] = useState<number>(allCandidatesTotal ?? allCandidates.length);
   const [allPageNum, setAllPageNum] = useState(0);
+  const [allPageSize, setAllPageSize] = useState(candidatesPageSize);
   const [allLoading, setAllLoading] = useState(false);
   const [candidateFacets, setCandidateFacets] = useState({
     majors: facetMajors,
@@ -142,6 +156,7 @@ export default function WorkspaceClient({
   const [infoOpen, setInfoOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [planNow] = useState(Date.now);
   const canEdit = canEditPlaybook(profile.role);
   const canAssign = canReassign(profile.role);
 
@@ -163,6 +178,7 @@ export default function WorkspaceClient({
     }
     return Array.from(byId.values());
   }, [team, candidates, allProfiles]);
+  useEffect(() => { setBoardPage(0); }, [boardSearch, boardStage, boardFavOnly, boardOwner, boardPageSize]);
   // Everyone can OPEN any candidate and read its notes/warm-intros. Editing
   // (logging outreach, flags, warm intros) is limited to the assigned point
   // person — or team leads/admins, who manage their whole school.
@@ -172,7 +188,7 @@ export default function WorkspaceClient({
   const openCanEdit = open ? (canAssign || open.point_person_id === profile.id) : false;
 
   // Fetch one page of the org-wide Candidates list with current filters applied.
-  const ALL_PAGE_SIZE = candidatesPageSize;
+  const ALL_PAGE_SIZE = allPageSize;
   const loadAllPage = async (page: number) => {
     setAllLoading(true);
     const res = await listCandidates({
@@ -193,7 +209,7 @@ export default function WorkspaceClient({
     const t = setTimeout(() => { loadAllPage(0); }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allSearch, allSchool, allMajor, allStage, allMinGpa, allFavOnly, allMineOnly, allSort]);
+  }, [allSearch, allSchool, allMajor, allStage, allMinGpa, allFavOnly, allMineOnly, allSort, allPageSize]);
 
   const facetsLoaded = useRef(candidateFacets.slim.length > 0 || candidateFacets.majors.length > 0 || candidateFacets.stages.length > 0);
   useEffect(() => {
@@ -237,29 +253,27 @@ export default function WorkspaceClient({
     ];
   }, [candidates, schoolGoal]);
 
-  // Org-wide breakdown (toggle on the Weekly Snapshot).
+  // Org-wide breakdown (toggle on the Weekly Snapshot) — weighted stage counts.
   const orgPipelineBoard = useMemo(() => {
-    const sourced   = allCandidates.filter((c) => c.stage && SOURCED.has(c.stage)).length;
-    const applied   = allCandidates.filter((c) => c.stage && APPLIED.has(c.stage)).length;
+    const count = (set: Set<string>) => stageCounts.reduce((s, r) => s + (r.stage && set.has(r.stage) ? r.n : 0), 0);
     const sum = (k: "goal_sourced" | "goal_applied") => allGoals.reduce((s, g) => s + (g[k] ?? 0), 0);
     return [
-      { label: "Sourced",   actual: sourced,   goal: sum("goal_sourced") },
-      { label: "Applied",   actual: applied,   goal: sum("goal_applied") },
+      { label: "Sourced",   actual: count(SOURCED),   goal: sum("goal_sourced") },
+      { label: "Applied",   actual: count(APPLIED),   goal: sum("goal_applied") },
     ];
-  }, [allCandidates, allGoals]);
+  }, [stageCounts, allGoals]);
 
   const activeBoard = breakdownScope === "team" ? pipelineBoard : orgPipelineBoard;
 
   // Action queue — next moves on candidates you own (or unclaimed ones to grab).
   const plan = useMemo(() => {
-    const now = Date.now();
     const out: { id: string; type: string; cand: Cand; why: string; rank: number }[] = [];
     for (const c of candidates) {
-      const t = evaluateCandidate(c, { profileId: profile.id, lastContactISO: lastContactByCand[c.id], now });
+      const t = evaluateCandidate(c, { profileId: profile.id, lastContactISO: lastContactByCand[c.id], now: planNow });
       if (t) out.push({ id: `${t.kind}-${c.id}`, type: t.type, cand: c, why: t.why, rank: t.rank });
     }
     return out.sort((a, b) => a.rank - b.rank);
-  }, [candidates, lastContactByCand, profile.id]);
+  }, [candidates, lastContactByCand, planNow, profile.id]);
 
   // Action Queue grouped by move type, so the snapshot opens as a few collapsed
   // categories instead of one long flooded list. Preserves the rank order.
@@ -476,6 +490,7 @@ export default function WorkspaceClient({
             return true;
           });
           const boardFiltersActive = boardQ || boardStage !== "All stages" || boardFavOnly || boardOwner;
+          const boardPageRows = boardVisible.slice(boardPage * boardPageSize, (boardPage + 1) * boardPageSize);
           return (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
@@ -516,15 +531,18 @@ export default function WorkspaceClient({
               </button>
             </div>
 
+            <PaginationControls page={boardPage} pageSize={boardPageSize} total={boardVisible.length}
+              onPageChange={setBoardPage} onPageSizeChange={setBoardPageSize} />
+
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 240px", gap: 18, marginTop: 16, alignItems: "start" }}>
               {/* Candidate table */}
               <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden", ...(isMobile ? { overflowX: "auto" } : {}) }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", minWidth: isMobile ? 560 : undefined, padding: "12px 18px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, background: "#ececec" }}>
                   <div>Candidate</div><div>Major</div><div>GPA</div><div>Stage</div><div>Owner</div><div></div>
                 </div>
-                {boardVisible.map((c) => (
+                {boardPageRows.map((c) => (
                   <div key={c.id} onClick={() => setOpenId(c.id)} onMouseEnter={() => setHoveredId(c.id)} onMouseLeave={() => setHoveredId(null)} style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr 0.6fr 1fr 1.2fr 40px", minWidth: isMobile ? 560 : undefined, padding: "13px 18px", borderBottom: `1px solid ${C.line}`, alignItems: "center", opacity: c.not_interested ? 0.5 : 1, cursor: "pointer", background: hoveredId === c.id ? C.canvas : "#ececec", transition: "background 0.1s" }}>
-                    <div><div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{c.name}</div><div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div></div>
+                    <div><div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}><ContactPopover name={c.name} email={c.email} /></div><div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div></div>
                     <div style={{ fontSize: 13.5 }}>{c.area_of_study}</div>
                     <div style={{ fontSize: 13.5, fontWeight: 600 }}>{c.gpa}</div>
                     <div><StagePill stage={c.stage} /></div>
@@ -591,7 +609,7 @@ export default function WorkspaceClient({
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                           <div style={{ fontWeight: 700, fontSize: 13, color: selected ? accent : C.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {t.full_name}{isMe ? " (you)" : ""}
+                            <ContactPopover name={`${t.full_name}${isMe ? " (you)" : ""}`} email={t.email} />
                           </div>
                           {t.role === "team_lead" && <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: accent, background: `${accent}18`, padding: "1px 5px", borderRadius: 4, flexShrink: 0 }}>Lead</span>}
                         </div>
@@ -603,6 +621,8 @@ export default function WorkspaceClient({
                 {team.length === 0 && <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: C.grayMute }}>No team members yet.</div>}
               </div>
             </div>
+            <PaginationControls page={boardPage} pageSize={boardPageSize} total={boardVisible.length}
+              onPageChange={setBoardPage} onPageSizeChange={setBoardPageSize} />
           </>
           );
         })()}
@@ -614,7 +634,7 @@ export default function WorkspaceClient({
 
         {/* ---- STANDINGS ---- */}
         {tab === "standings" && (
-          <StandingsClient schools={allSchools} candidates={allCandidates} goals={allGoals} mySchoolId={school?.id ?? null} />
+          <StandingsClient schools={allSchools} candidates={stageCounts} goals={allGoals} mySchoolId={school?.id ?? null} />
         )}
 
         {/* ---- APPLICANTS ---- */}
@@ -623,8 +643,6 @@ export default function WorkspaceClient({
           const distinctMajors = candidateFacets.majors;
           const distinctStages = candidateFacets.stages;
           const visible = allRows;
-          const totalPages = Math.max(1, Math.ceil(allTotal / ALL_PAGE_SIZE));
-
           const toggleSort = (key: typeof allSort.key) =>
             setAllSort((p) => p.key === key ? { key, dir: p.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
           const arrow = (key: typeof allSort.key) => allSort.key === key ? (allSort.dir === "asc" ? " ▲" : " ▼") : "";
@@ -634,17 +652,8 @@ export default function WorkspaceClient({
           const filtersActive = allSearch.trim() !== "" || allMajor !== "All majors" || allStage !== "All stages" || allFavOnly || allMineOnly || allMinGpa.trim() !== "" || allSchool !== "all";
 
           // Pagination control — rendered both above and below the table.
-          const pager = () => allTotal > ALL_PAGE_SIZE ? (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 16 }}>
-              <button onClick={() => loadAllPage(allPageNum - 1)} disabled={allPageNum <= 0 || allLoading}
-                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: allPageNum <= 0 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: allPageNum <= 0 || allLoading ? "default" : "pointer" }}>← Prev</button>
-              <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>
-                Page {(allPageNum + 1).toLocaleString()} of {totalPages.toLocaleString()} · {(allPageNum * ALL_PAGE_SIZE + 1).toLocaleString()}–{Math.min((allPageNum + 1) * ALL_PAGE_SIZE, allTotal).toLocaleString()} of {allTotal.toLocaleString()}
-              </span>
-              <button onClick={() => loadAllPage(allPageNum + 1)} disabled={allPageNum >= totalPages - 1 || allLoading}
-                style={{ padding: "8px 16px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#fff", color: allPageNum >= totalPages - 1 ? C.grayMute : C.navy, fontWeight: 700, fontSize: 13.5, cursor: allPageNum >= totalPages - 1 || allLoading ? "default" : "pointer" }}>Next →</button>
-            </div>
-          ) : null;
+          const pager = () => <PaginationControls page={allPageNum} pageSize={ALL_PAGE_SIZE} total={allTotal} loading={allLoading}
+            onPageChange={loadAllPage} onPageSizeChange={(size) => { setAllPageNum(0); setAllPageSize(size); }} />;
 
           return (
             <>
@@ -708,7 +717,7 @@ export default function WorkspaceClient({
                       onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
                       <div>
                         <div style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>
-                          {c.is_favorite && <span style={{ color: C.gold, marginRight: 5 }}>★</span>}{c.name}
+                          {c.is_favorite && <span style={{ color: C.gold, marginRight: 5 }}>★</span>}<ContactPopover name={c.name} email={c.email} />
                           {mine && <span style={{ fontSize: 10, fontWeight: 700, color: accent, background: `${accent}18`, padding: "1px 6px", borderRadius: 99, marginLeft: 6 }}>Mine</span>}
                         </div>
                         <div style={{ fontSize: 12, color: C.grayMute }}>{c.email}</div>
@@ -888,7 +897,7 @@ function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, start
 
           {/* The card */}
           <div style={{ border: `1px solid ${C.line}`, borderRadius: 14, padding: "26px 22px", textAlign: "center", marginBottom: 22, background: C.canvas }}>
-            <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 26, color: C.navy, marginBottom: 8 }}>{current.name}</div>
+            <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 26, color: C.navy, marginBottom: 8 }}><ContactPopover name={current.name} email={current.email} /></div>
             <div style={{ marginBottom: 12 }}><StagePill stage={current.stage} /></div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13.5, color: C.gray }}>
               {current.email && <div>{current.email}</div>}
@@ -1020,12 +1029,14 @@ function PlaybookTab({ phases, schoolId, profile, canEdit, team, accent, startTr
 
   const toggleRole = (id: string) => setExpandedRoles((prev) => {
     const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     return next;
   });
   const toggleNote = (id: string) => setExpandedNotes((prev) => {
     const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     return next;
   });
 
@@ -1360,6 +1371,7 @@ function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onCl
   };
   const [log, setLog] = useState<{ id: string; body: string; created_at: string; author_id: string | null }[] | null>(null);
   const [conns, setConns] = useState<Connection[] | null>(null);
+  const tempConnectionSequence = useRef(0);
   const [relDraft, setRelDraft] = useState("");
   const [tagId, setTagId] = useState<string | null>(null); // optional person to tag on a warm intro
   const profileName = (id: string | null) => (id === profile.id ? "You" : allProfiles.find((p) => p.id === id)?.full_name ?? "Someone");
@@ -1379,7 +1391,7 @@ function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onCl
   const doAddConn = (rel: string) => {
     if (!rel.trim()) return;
     const tagged = tagId;
-    const tempId = `temp-${Math.random()}`;
+    const tempId = `temp-${profile.id}-${tempConnectionSequence.current++}`;
     setConns((prev) => [{ id: tempId, fellow_id: profile.id, name: "You", relationship: rel.trim(), tagged_profile_id: tagged }, ...(prev ?? [])]);
     setRelDraft("");
     setTagId(null);
@@ -1419,7 +1431,7 @@ function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onCl
           {!editing && isCreator && (
             <button onClick={startEdit} title="Edit candidate details" style={{ position: "absolute", top: 14, right: 54, background: C.orange, border: "none", color: "#fff", height: 32, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: "0 2px 8px rgba(221,84,52,.4)" }}>✎ Edit details</button>
           )}
-          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}>{c.name}</h2>
+          <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}><ContactPopover name={c.name} email={c.email} /></h2>
           <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.72)" }}>{c.area_of_study}</div>
           <div style={{ fontSize: 11.5, color: "rgba(255,255,255,.6)", marginTop: 3 }}>Added by {c.created_by ? profileName(c.created_by) : (c.source === "jazzhr" ? "JazzHR sync" : "—")}</div>
           <div style={{ marginTop: 12 }}><StagePill stage={c.stage} /></div>

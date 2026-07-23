@@ -1,12 +1,13 @@
 // Shown when an invite/reset token can't be verified — expired, already used, or
 // consumed by an email scanner. Gives a clear next step instead of the cryptic
 // "Auth session missing" that surfaced when the failure was swallowed.
-export default function LinkExpiredPage({
+export default async function LinkExpiredPage({
   searchParams,
 }: {
-  searchParams: { type?: string };
+  searchParams: Promise<{ type?: string }>;
 }) {
-  const isInvite = searchParams.type === "invite" || searchParams.type === "signup";
+  const query = await searchParams;
+  const isInvite = query.type === "invite" || query.type === "signup";
 
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--navy)" }}>

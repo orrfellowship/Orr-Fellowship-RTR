@@ -10,7 +10,7 @@ const C = {
   navy: "#11123E", navy2: "#485F92", gray: "#303333", grayMute: "#6E7385",
   line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B", gold: "#C9A227",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 export type PBTask = { id: string; phaseId: string; phaseTitle: string; text: string; assigneeId: string | null; dueDate: string | null; done: boolean };
 export type PBMember = { id: string; full_name: string };
@@ -37,7 +37,12 @@ export default function PlaybookBoard({
   const groups = [{ id: UNASSIGNED, name: "Unassigned" }, ...members.map((m) => ({ id: m.id, name: m.full_name }))];
   // Unassigned starts open (that's where the lead drops new work); people collapsed.
   const [expanded, setExpanded] = useState<Set<string>>(new Set([UNASSIGNED]));
-  const toggle = (id: string) => setExpanded((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggle = (id: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
   const firstPhaseId = phases[0]?.id ?? null;
 
   return (

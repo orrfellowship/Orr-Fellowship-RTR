@@ -4,11 +4,10 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
 import { getCurrentProfile, isPreviewing } from "@/lib/auth";
 import { canEditPlaybook, canEditEvents, canReassign, isAdminPlus } from "@/lib/types";
-import { queueNotification, supersedePending } from "@/lib/notify";
+import { queueNotification } from "@/lib/notify";
 import { getTierSchoolIds } from "@/lib/queries";
-import { sendEmail, emailLayout } from "@/lib/email";
-
-const CLAIM_DELAY_MS = 30 * 60 * 1000;
+import { transactionalIdempotencyKey } from "@/lib/email";
+import { queueTransactionalEmail } from "@/lib/transactional/weekly-assignment-digest";
 
 function siteUrl() {
   return process.env.NEXT_PUBLIC_SITE_URL
@@ -18,8 +17,8 @@ type CalendarEventType = "attend" | "info" | "deadline";
 
 // Toggle a favorite for the current user (favorites table is per-user via RLS).
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
 
@@ -34,8 +33,8 @@ export async function toggleFavorite(candidateId: string, makeFav: boolean) {
 
 // Flag / unflag not-interested. RLS allows this only within the user's school.
 export async function setNotInterested(candidateId: string, value: boolean) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase
     .from("candidates")
     .update({ not_interested: value })
@@ -51,7 +50,7 @@ export async function setNotInterested(candidateId: string, value: boolean) {
 // on the Super Admin Weekly Snapshot action queue (see resolveDirectPlacement).
 // Super Admins clear it from the snapshot, not from here.
 export async function flagDirectPlacement(candidateId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" };
   if (profile.role !== "team_lead") return { error: "Only team leads can flag a candidate for direct placement." };
@@ -83,18 +82,13 @@ export async function flagDirectPlacement(candidateId: string) {
   const name = (cand as any).name as string;
   const title = `Direct Placement Potential: ${name}`;
   const body = `${profile.full_name} flagged ${name} as a Direct Placement Potential candidate.`;
-  const html = emailLayout({
-    heading: title,
-    bodyHtml: `<div>${escapeHtml(body)}</div>`,
-    ctaLabel: "Open snapshot",
-    ctaUrl: `${siteUrl()}/console/snapshot`,
-  });
-
   await Promise.all((supers ?? []).map(async (s: any) => {
-    let emailedAt: string | null = null;
     if (s.email) {
-      const res = await sendEmail({ to: s.email, subject: title, html });
-      if (res.ok) emailedAt = new Date().toISOString();
+      await queueTransactionalEmail({
+        recipientId: s.id, recipientEmail: s.email, subject: title, heading: title, body,
+        ctaLabel: "Open snapshot", ctaUrl: `${siteUrl()}/console/snapshot`,
+        idempotencyKey: transactionalIdempotencyKey("direct-placement", `${candidateId}:${s.id}`),
+      });
     }
     await db.from("notifications").insert({
       recipient_id: s.id,
@@ -104,7 +98,7 @@ export async function flagDirectPlacement(candidateId: string) {
       link: "/console/snapshot",
       candidate_id: candidateId,
       send_after: new Date().toISOString(),
-      emailed_at: emailedAt,
+      emailed_at: new Date().toISOString(),
       dedupe_key: `direct_placement:${candidateId}`,
     });
   }));
@@ -114,14 +108,10 @@ export async function flagDirectPlacement(candidateId: string) {
   return { ok: true };
 }
 
-function escapeHtml(s: string): string {
-  return (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 // Log an outreach note. Author must be the current user (enforced by RLS).
 export async function logOutreach(candidateId: string, body: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const { error } = await supabase
@@ -134,7 +124,7 @@ export async function logOutreach(candidateId: string, body: string) {
 
 // ---- POINT PERSON ----
 export async function reassignPointPerson(candidateId: string, ownerId: string | null) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" };
   const db = createServiceClient();
@@ -154,38 +144,18 @@ export async function reassignPointPerson(candidateId: string, ownerId: string |
     if (currentOwner && currentOwner !== profile.id) return { error: "Only a team lead can reassign a point person." };
   }
 
-  const { error } = await db
-    .from("candidates")
-    .update({ point_person_id: ownerId })
-    .eq("id", candidateId);
+  const { data: assigned, error } = await db.rpc("assign_candidate_point_person", {
+    p_candidate_id: candidateId, p_owner_id: ownerId, p_actor_id: profile.id,
+  });
   if (error) return { error: error.message };
-  await queueClaimNudge(candidateId, ownerId);
+  if (!assigned) return { error: "Candidate assignment could not be updated." };
   revalidatePath("/workspace");
   return { ok: true };
 }
 
-// Cancel any pending claim nudge for this candidate; if it's now owned by someone,
-// queue a fresh 30-minute "start outreach" nudge to the new point person.
-export async function queueClaimNudge(candidateId: string, ownerId: string | null) {
-  await supersedePending({ candidateId, type: "claim_followup" });
-  if (!ownerId) return;
-  const { data: cand } = await createServiceClient().from("candidates").select("name").eq("id", candidateId).maybeSingle();
-  const name = cand?.name ?? "a candidate";
-  await queueNotification({
-    recipientId: ownerId,
-    type: "claim_followup",
-    title: `You're the point person for ${name}`,
-    body: `You were assigned ${name}. Reach out and log your first outreach.`,
-    link: "/workspace",
-    candidateId,
-    sendAfter: new Date(Date.now() + CLAIM_DELAY_MS),
-    dedupeKey: `claim:${candidateId}:${ownerId}`,
-  });
-}
-
 // ---- DRAWER: fetch a candidate's outreach log (school-scoped via RLS) ----
 export async function getOutreach(candidateId: string) {
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const { data, error } = await supabase
     .from("outreach_log")
     .select("id, body, created_at, author_id")
@@ -200,8 +170,8 @@ export async function getOutreach(candidateId: string) {
 // the service client. Optionally TAG another person (anyone, any school); they get
 // notified + the intro shows up in their queue.
 export async function addConnection(candidateId: string, relationship: string, taggedProfileId: string | null = null) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const db = createServiceClient();
@@ -274,8 +244,8 @@ export async function getConnections(candidateId: string) {
 
 // ---- PLAYBOOK (team_lead of own school, or admin+; DB RLS enforces) ----
 export async function addPhase(schoolId: string, label: string, title: string, sortOrder: number) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase
     .from("playbook_phases")
     .insert({ school_id: schoolId, label, title, sort_order: sortOrder });
@@ -289,8 +259,8 @@ export async function upsertTask(t: {
   assignee_label: string | null; month_label: string | null; notes: string | null;
   due_date: string | null; done: boolean;
 }) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
 
@@ -319,7 +289,7 @@ export async function upsertTask(t: {
 // Replace the set of people assigned to a task. Keeps the legacy assignee_id in
 // sync (first person, or null) so older reads still resolve a primary owner.
 export async function setTaskAssignees(taskId: string, profileIds: string[]) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditPlaybook(profile.role)) return { error: "Only team leads or admins can assign tasks." };
   const db = createServiceClient();
@@ -360,8 +330,8 @@ async function recomputeTaskDone(db: ReturnType<typeof createServiceClient>, tas
 // A fellow (or anyone assigned) submits their portion of a task → pending_review.
 // value=false retracts their submission. Operates on the calling user only.
 export async function requestTaskComplete(taskId: string, value: boolean) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const db = createServiceClient();
@@ -380,7 +350,7 @@ export async function requestTaskComplete(taskId: string, value: boolean) {
 // or sends back (value=false) one assignee's submission. Without it (team /
 // unassigned tasks, or the console), it toggles the whole task done directly.
 export async function confirmTaskComplete(taskId: string, value: boolean, forProfileId?: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditPlaybook(profile.role)) return { error: "Only team leads or admins can confirm tasks." };
   const db = createServiceClient();
@@ -408,8 +378,8 @@ export async function confirmTaskComplete(taskId: string, value: boolean, forPro
 }
 
 export async function deleteTask(taskId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("playbook_tasks").delete().eq("id", taskId);
   if (error) return { error: error.message };
   revalidatePath("/workspace");
@@ -417,8 +387,8 @@ export async function deleteTask(taskId: string) {
 }
 
 export async function deleteOutreach(logId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("outreach_log").delete().eq("id", logId);
   if (error) return { error: error.message };
   revalidatePath("/workspace");
@@ -427,8 +397,8 @@ export async function deleteOutreach(logId: string) {
 
 // Remove a warm intro. You may remove your own; team leads/admins may remove any.
 export async function deleteConnection(connectionId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const db = createServiceClient();
@@ -444,8 +414,8 @@ export async function deleteConnection(connectionId: string) {
 }
 
 export async function updatePhase(phaseId: string, label: string, title: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("playbook_phases").update({ label, title }).eq("id", phaseId);
   if (error) return { error: error.message };
   revalidatePath("/workspace");
@@ -453,8 +423,8 @@ export async function updatePhase(phaseId: string, label: string, title: string)
 }
 
 export async function deletePhase(phaseId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("playbook_phases").delete().eq("id", phaseId);
   if (error) return { error: error.message };
   revalidatePath("/workspace");
@@ -463,8 +433,8 @@ export async function deletePhase(phaseId: string) {
 
 // ---- NOTIFICATIONS (in-app bell) ------------------------------------------
 export async function markNotificationsRead(ids: string[]) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const db = createServiceClient();
@@ -517,7 +487,7 @@ export async function addEvent(e: {
   title: string; description: string | null; address?: string | null; event_date: string;
   event_type: CalendarEventType; school_id: string | null;
 }) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditEvents(profile.role)) return { error: "Only team leads or admins can add events." };
   if (!e.title.trim() || !e.event_date) return { error: "Title and date are required." };
@@ -540,7 +510,7 @@ export async function updateEvent(id: string, patch: {
   title?: string; description?: string | null; address?: string | null;
   event_date?: string; event_type?: CalendarEventType;
 }) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditEvents(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -558,7 +528,7 @@ export async function updateEvent(id: string, patch: {
 }
 
 export async function deleteEvent(id: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canEditEvents(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -571,7 +541,7 @@ export async function deleteEvent(id: string) {
 
 // Admin note on an event, targeted at one school's team lead (not org-wide).
 export async function addEventNote(eventId: string, schoolId: string, body: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Only admins can add event notes." };
   if (!body.trim()) return { error: "Note can't be empty." };
@@ -585,7 +555,7 @@ export async function addEventNote(eventId: string, schoolId: string, body: stri
 }
 
 export async function deleteEventNote(id: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const { error } = await createServiceClient().from("event_notes").delete().eq("id", id);
@@ -597,8 +567,8 @@ export async function deleteEventNote(id: string) {
 
 // RSVP to an event. status null clears it.
 export async function setRsvp(eventId: string, status: "going" | "not_going" | null) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const db = createServiceClient();

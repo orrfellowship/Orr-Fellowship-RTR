@@ -1,7 +1,14 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
+  // Scheduled workers authenticate inside their route with CRON_SECRET rather
+  // than a browser Supabase session. Let the request reach that authorization
+  // check instead of redirecting it to /login.
+  if (request.nextUrl.pathname === "/api/cron" || request.nextUrl.pathname.startsWith("/api/cron/")) {
+    return NextResponse.next({ request });
+  }
+
   // Prefetch requests (Link hover / viewport) don't need the auth gate — the
   // real navigation runs it. Skipping keeps token work off the prefetch path,
   // which fires for every link the user merely scrolls past.
@@ -12,7 +19,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next({ request });
   }
 
-  let response = NextResponse.next({ request });
+  // Bare section indexes: send the browser straight to the default section
+  // from the proxy. Letting the page do it means rendering the whole layout
+  // (auth + profile + school lookups) only to throw the work away with a
+  // page-level redirect().
+  const SECTION_INDEX: Record<string, string> = {
+    "/console": "/console/overview",
+    "/workspace": "/workspace/snapshot",
+  };
+  const indexTarget = SECTION_INDEX[request.nextUrl.pathname];
+  const response = indexTarget
+    ? NextResponse.redirect(new URL(indexTarget, request.url))
+    : NextResponse.next({ request });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -32,10 +50,8 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // getSession() reads (and refreshes) the token from the cookie locally — no
-  // network round-trip to the Auth server on every navigation, unlike getUser().
-  // This gate only decides "logged in vs. login redirect"; anything sensitive is
-  // still re-verified server-side by getCurrentProfile() (getUser) + RLS.
+  // This is only a fast navigation gate. Sensitive pages and actions validate
+  // the user again on the server with getUser(), profile checks, and RLS.
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -44,7 +60,6 @@ export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const isPublic = path.startsWith("/login") || path.startsWith("/auth");
 
-  // unauthenticated and not on a public route -> send to login
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
@@ -55,7 +70,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Public auth pages do not need the auth gate; app routes still verify on
-  // the server before exposing sensitive data.
   matcher: ["/((?!_next/static|_next/image|favicon.ico|login|auth).*)"],
 };

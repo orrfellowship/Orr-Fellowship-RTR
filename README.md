@@ -6,15 +6,18 @@ The application is role-aware: fellows and team leads work in school-scoped work
 
 ## Architecture
 
-- **Next.js 14**: App Router application under `src/app`, with server components, server actions, API routes, and shared UI components.
+- **Next.js 16**: App Router application under `src/app`, with server components, server actions, API routes, and shared UI components.
 - **Vercel**: Expected hosting platform for preview and production deployments.
 - **Supabase Auth and PostgreSQL**: Authentication, profile/role data, recruiting data, storage, and server-side data access. Server-only service role usage bypasses RLS and must be handled carefully.
 - **JazzHR integration**: API routes and helper clients import applicants, synchronize JazzHR IDs, resolve resume documents, and support candidate review workflows.
-- **SMTP notifications**: Transactional email is sent through SMTP credentials, including user invites and recruiting digests.
+- **Resend notifications**: Transactional system email uses the Phase 18 leased,
+  idempotent queue. Assignment changes are combined into one weekly digest per
+  fellow; see [the containment and enablement runbook](docs/transactional-notification-safety.md).
+- **Gmail outreach campaigns**: RTR users can connect an Orr Fellowship Google account and enqueue personalized candidate or team campaigns. Supabase stores the durable queue; a protected scheduled worker drains it in rate-limited chunks.
 
 ## Prerequisites
 
-- Node 20
+- Node 22 or newer
 - npm
 - Git
 
@@ -47,6 +50,12 @@ The application is role-aware: fellows and team leads work in school-scoped work
    npm run typecheck
    ```
 
+   Run the full local quality gate before opening a pull request:
+
+   ```sh
+   npm run check
+   ```
+
 6. Start the local development server:
 
    ```sh
@@ -55,7 +64,62 @@ The application is role-aware: fellows and team leads work in school-scoped work
 
 ## Production Credential Warning
 
-Local credentials may point to production Supabase, JazzHR, SMTP, or Vercel resources. Treat every value in `.env.local` as potentially production-connected unless you have explicitly verified otherwise.
+Local credentials may point to production Supabase, JazzHR, Resend, or Vercel resources. Treat every value in `.env.local` as potentially production-connected unless you have explicitly verified otherwise.
 
-Before running scripts, API routes, sync flows, or SQL, confirm which Supabase project, JazzHR account, and SMTP account the credentials target.
+Before running scripts, API routes, sync flows, or SQL, confirm which Supabase project, JazzHR account, and Resend account the credentials target.
 
+## Gmail OAuth and outreach setup
+
+1. In the Google Cloud project used by RTR, enable the **Gmail API**.
+2. Configure the OAuth consent screen for the Orr Fellowship Google Workspace organization.
+3. Create an OAuth 2.0 Client ID with application type **Web application**.
+4. Add these authorized redirect URIs exactly (scheme, host, port, path, and trailing slash must match):
+
+   - Local: `http://localhost:3000/api/google/callback`
+   - Production: `https://YOUR_PRODUCTION_HOST/api/google/callback`
+
+5. Request `openid`, `email`, `https://www.googleapis.com/auth/gmail.send`, and `https://www.googleapis.com/auth/gmail.metadata`. The metadata scope is used for reply/bounce tracking; message bodies are not read.
+6. Configure these server-only environment variables:
+
+   - `GOOGLE_CLIENT_ID`
+   - `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_REDIRECT_URI` (one exact URI from step 4 for that environment)
+   - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY` (a base64-encoded 32-byte key; generate with `openssl rand -base64 32`)
+
+7. Apply [`db/phase15.sql`](db/phase15.sql) and [`db/phase16.sql`](db/phase16.sql) in the target Supabase project before deploying the code. Configure the protected `?job=outreach` cron shown in phase 16.
+
+The OAuth `hd` hint prefers `orrfellowship.org`, but the callback independently verifies the returned Google email. Refresh tokens are encrypted with AES-256-GCM before storage. The credential table is inaccessible to browser roles; only safe connection status fields are returned by the application.
+
+### Local mock Gmail campaign test (Phase 3)
+
+Phase 3 connects the existing four-stage Email Campaigns prototype to real Gmail delivery while retaining fictional candidate records. Eligible fictional candidates use only the controlled test addresses `samuel.brumley@orrfellowship.org` and `sam@brumley.cloud`; multiple candidates intentionally share those inboxes. One selected eligible fictional candidate always produces one separate personalized Gmail message.
+
+The endpoint is `POST /api/google/send-demo-campaign`. It resolves candidate IDs against the server-owned mock dataset, recalculates missing-email, unsubscribed, and Do Not Contact exclusions, renders merge variables separately, and sends sequentially. It accepts at most 10 selected mock candidates and never accepts browser-supplied recipient addresses. A short-lived in-memory idempotency record prevents an immediate retry of the same request identifier from sending duplicates.
+
+The route defaults to disabled in every environment. To enable the Review-stage **Send with Gmail** action locally, add this to `.env.local` and restart the development server:
+
+```sh
+ENABLE_GMAIL_TEST_SEND=true
+```
+
+For a narrowly scoped production OAuth/send smoke test, configure this separate Vercel Production variable and redeploy:
+
+```sh
+ENABLE_GMAIL_PRODUCTION_TEST_SEND=true
+```
+
+The production flag does not enable real candidate campaigns. The route still resolves candidate IDs only from the server-owned fictional dataset, sends only to the two hard-coded controlled inboxes, requires an active Admin or Super Admin session, blocks View As mode, permits exactly one selected candidate per production request, and never accepts recipient addresses from the browser. Set the flag back to `false` after the production test.
+
+Local manual test — this sends real email:
+
+1. Keep the Google OAuth project in Testing mode and ensure the intended `@orrfellowship.org` account is an allowed test user.
+2. Start the app with `npm run dev` and sign in to RTR.
+3. Open `/console/email-campaigns` and connect Gmail if needed.
+4. Use **My Candidates**, **Compose**, and **Preview** to inspect the fictional audience and personalized content.
+5. On **Review**, confirm the connected sender, eligible count, and automatic exclusion reasons.
+6. Check the explicit real-send confirmation.
+7. Click **Send with Gmail** once.
+8. Confirm the attempted, sent, failed, and excluded summary plus each fictional candidate result. Verify that each eligible candidate produced one message in the controlled inbox, including candidates sharing an address.
+9. Return `ENABLE_GMAIL_TEST_SEND=false` when testing is complete.
+
+The controlled demo route remains separate from live audiences. Live campaigns use the persistent phase-16 queue, quota and Do Not Contact checks, retry/backoff behavior, and candidate timeline logging. Gmail outreach remains separate from the Resend transactional-email integration. Access tokens, refresh tokens, MIME content, authorization headers, and raw Google responses never cross the server boundary.

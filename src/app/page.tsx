@@ -10,13 +10,15 @@ export default async function Home() {
   if (!profile) redirect("/login");
   if (!profile.is_active) redirect("/login?inactive=1");
 
+  // Straight to the default section — hopping through /console or /workspace
+  // would just bounce off another redirect.
   switch (profile.role) {
     case "super_admin":
     case "admin":
-      redirect("/console");
+      redirect("/console/overview");
     case "team_lead":
     case "fellow":
-      redirect("/workspace");
+      redirect("/workspace/snapshot");
     default:
       redirect("/login");
   }

@@ -8,7 +8,7 @@ const C = {
   navy: "#11123E", orange: "#DD5434", gray: "#303333", grayMute: "#6E7385",
   line: "#E4E7EE", canvas: "#F7F8FB", good: "#2F8F6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 // Free-form "ask an admin for help" popover. Lives in the top bar for fellows and
 // team leads (admins are hidden in AppShell). Submitting fans the question out to

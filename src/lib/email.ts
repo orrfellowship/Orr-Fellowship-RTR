@@ -1,56 +1,69 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
+import { createHash } from "node:crypto";
 
-// Transactional email over the SMTP credentials configured in Supabase.
+// RTR transactional system email for fellows and RTR users only.
 // Env (add to .env.local and Vercel):
-//   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
-// If SMTP isn't configured we no-op gracefully so the rest of the app keeps
+//   RESEND_API_KEY, RESEND_FROM_EMAIL
+// Candidate outreach, recruiting campaigns, and mass email must use a separate system.
+// If Resend isn't configured we no-op gracefully so the rest of the app keeps
 // working (notifications still queue + show in-app; they just aren't emailed).
 
-let cached: nodemailer.Transporter | null = null;
+let cached: Resend | null = null;
 
-function transporter(): nodemailer.Transporter | null {
-  const host = process.env.SMTP_HOST;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  if (!host || !user || !pass) return null;
+function client(): Resend | null {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
   if (cached) return cached;
-  const port = Number(process.env.SMTP_PORT ?? 587);
-  cached = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465, // 465 = implicit TLS; 587 = STARTTLS
-    auth: { user, pass },
-    // Pool one authenticated connection and reuse it across messages. Without
-    // this, nodemailer logs in fresh for EVERY send — a bulk invite then trips
-    // Gmail's "454 Too many login attempts". Throttle to a few msgs/sec too.
-    pool: true,
-    maxConnections: 1,
-    maxMessages: 100,
-    rateDelta: 1000,
-    rateLimit: 3,
-  });
+  cached = new Resend(apiKey);
   return cached;
 }
 
 export function emailConfigured(): boolean {
-  return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  return !!(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
 }
 
-export async function sendEmail(opts: { to: string; subject: string; html: string; text?: string }): Promise<{ ok: true } | { ok: false; error: string }> {
-  const tx = transporter();
-  if (!tx) return { ok: false, error: "SMTP not configured" };
-  const from = process.env.SMTP_FROM ?? process.env.SMTP_USER!;
+export type SendEmailFailure = { ok: false; error: string; category: string; retriable: boolean };
+export type SendEmailResult = { ok: true; providerMessageId: string } | SendEmailFailure;
+
+export function transactionalIdempotencyKey(kind: string, stableValue: string): string {
+  const digest = createHash("sha256").update(stableValue).digest("hex");
+  return `${kind}/${digest}`.slice(0, 256);
+}
+
+export async function sendEmail(opts: {
+  to: string; subject: string; html: string; text?: string; idempotencyKey: string;
+}): Promise<SendEmailResult> {
+  const resend = client();
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!resend || !from) return { ok: false, error: "Resend not configured", category: "missing_configuration", retriable: false };
+  if (!opts.idempotencyKey || opts.idempotencyKey.length > 256) {
+    return { ok: false, error: "Invalid Resend idempotency key", category: "invalid_idempotency_key", retriable: false };
+  }
   try {
-    await tx.sendMail({
+    const { data, error } = await resend.emails.send({
       from,
       to: opts.to,
       subject: opts.subject,
       html: opts.html,
       text: opts.text ?? htmlToText(opts.html),
-    });
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? "send failed" };
+    }, { idempotencyKey: opts.idempotencyKey });
+    if (error) {
+      const permanent = new Set([
+        "invalid_idempotency_key", "invalid_idempotent_request", "validation_error",
+        "invalid_from_address", "invalid_parameter", "missing_required_field",
+        "missing_api_key", "restricted_api_key", "invalid_api_key", "security_error",
+      ]).has(error.name);
+      const category = error.name === "rate_limit_exceeded" ? "rate_limit"
+        : error.name === "validation_error" ? "invalid_recipient_or_payload"
+        : `resend_${error.name}`;
+      return { ok: false, error: error.message, category, retriable: !permanent };
+    }
+    if (!data?.id) return { ok: false, error: "Resend accepted without a provider message ID", category: "provider_missing_message_id", retriable: false };
+    return { ok: true, providerMessageId: data.id };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "send failed";
+    const timedOut = /timeout|timed out|abort/i.test(message);
+    return { ok: false, error: message, category: timedOut ? "resend_timeout" : "resend_network_error", retriable: true };
   }
 }
 

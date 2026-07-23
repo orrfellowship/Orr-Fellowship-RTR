@@ -1,50 +1,130 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { resolveViewer } from "@/lib/auth";
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
-import { isAdminPlus, isSuper } from "@/lib/types";
+import { isAdminPlus, isSuper, type Profile } from "@/lib/types";
 import { canAccessConsoleSection } from "@/lib/nav/config";
 import {
   getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
-  CAND_COLS_STANDINGS, CAND_COLS_CONSOLE,
+  getCandidateStageCounts, type StageCountRow, CAND_COLS_CONSOLE,
 } from "@/lib/queries";
 import ConsoleClient from "../ConsoleClient";
 import AdminSnapshotClient from "../AdminSnapshotClient";
 import { isActive } from "@/lib/stages";
 import { listCandidates } from "../actions";
-import { candidateSchoolDisplay } from "@/lib/candidateSchool";
+import { candidateSchoolDisplay, findMisrouted } from "@/lib/candidateSchool";
+import SectionSkeleton from "@/components/nav/SectionSkeleton";
+import EmailCampaignsClient from "@/components/EmailCampaignsClient";
+import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
+import type { GmailConnectionStatus } from "@/lib/gmail/types";
+import { loadOutreachAudiences, loadRecentCampaigns } from "@/lib/gmail/candidate-outreach.server";
+import { listOutreachTemplates } from "@/lib/gmail/outreach-templates.server";
+import { listPendingSchoolReviews } from "@/lib/schoolMatch";
 
-// Each route renders one section → only fetch what that section reads.
-export default async function ConsoleSection({ params }: { params: { section: string } }) {
-  const { profile } = await resolveViewer();
+export default async function ConsoleSection({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ section: string }>;
+  searchParams: Promise<{ gmail?: string; gmail_error?: string }>;
+}) {
+  const { section } = await params;
+  const query = await searchParams;
+  const { profile, real } = await resolveViewer();
   if (!profile) redirect("/login");
   if (!isAdminPlus(profile.role)) redirect("/workspace/snapshot");
-  if (!canAccessConsoleSection(profile.role, params.section)) redirect("/console/overview");
-  const S = params.section;
+  if (!canAccessConsoleSection(profile.role, section)) redirect("/console/overview");
+
+  return (
+    <Suspense fallback={<SectionSkeleton />}>
+      <ConsoleSectionData section={section} profile={profile} authenticatedUserId={(real ?? profile).id} gmailQuery={query} />
+    </Suspense>
+  );
+}
+
+// Each route renders one section → only fetch what that section reads. Keeping
+// the expensive work below Suspense lets the authenticated shell paint first.
+async function ConsoleSectionData({
+  section,
+  profile,
+  authenticatedUserId,
+  gmailQuery,
+}: {
+  section: string;
+  profile: Profile;
+  authenticatedUserId: string;
+  gmailQuery: { gmail?: string; gmail_error?: string };
+}) {
+  const S = section;
+
+  // Live outreach composer. Loads the viewer's audiences (all candidates + team
+  // for admins) and their Gmail connection summary; no credential fields cross
+  // this boundary.
+  if (S === "email-campaigns") {
+    let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
+    let statusUnavailable = false;
+    try {
+      gmailConnection = await getGmailConnectionStatusForUser(authenticatedUserId);
+    } catch {
+      statusUnavailable = true;
+    }
+    const [audiences, recentCampaigns, templates] = await Promise.all([
+      loadOutreachAudiences(profile), loadRecentCampaigns(profile), listOutreachTemplates(),
+    ]);
+    return <EmailCampaignsClient
+      gmailConnection={gmailConnection}
+      gmailNotice={{
+        result: gmailQuery.gmail,
+        error: gmailQuery.gmail_error ?? (statusUnavailable ? "status_unavailable" : undefined),
+      }}
+      gmailCampaignSendEnabled
+      audiences={audiences}
+      recentCampaigns={recentCampaigns}
+      templates={templates.map((t) => ({ id: t.id, name: t.name, subject: t.subject, body: t.body, attachments: t.attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes })) }))}
+      canFreeCompose
+    />;
+  }
 
   // Admin Weekly Snapshot: categorized tasks (open help requests + candidates
   // missing a LinkedIn). Fetched on its own — it doesn't need the big section load.
   if (S === "snapshot") {
     const db = createServiceClient();
     const sup = isSuper(profile.role);
-    const [helpRes, candRows, schools] = await Promise.all([
+    // The snapshot only shows short task lists + counts, so nothing here loads
+    // the whole candidates table: LinkedIn/direct-placement queues are filtered
+    // in SQL, and the duplicate/misrouted counts come from the phase19
+    // aggregate RPCs.
+    const [helpRes, linkedinRes, dpRes, stageCounts, dupRes, schools] = await Promise.all([
       db.from("notifications")
         .select("id, title, body, dedupe_key, created_at")
         .eq("recipient_id", profile.id).eq("type", "help_request").eq("superseded", false)
         .order("created_at", { ascending: false }),
-      fetchAllRows<{ id: string; name: string; email: string | null; school_id: string | null; university_raw: string | null; area_of_study: string | null; gpa: string | null; linkedin: string | null; stage: string | null; not_interested: boolean; direct_placement: boolean; direct_placement_by: string | null; direct_placement_at: string | null }>(
-        (from, to) => db.from("candidates").select("id, name, email, school_id, university_raw, area_of_study, gpa, linkedin, stage, not_interested, direct_placement, direct_placement_by, direct_placement_at").order("name").range(from, to),
+      fetchAllRows<{ id: string; name: string; email: string | null; school_id: string | null; university_raw: string | null; area_of_study: string | null; gpa: string | null; stage: string | null }>(
+        (from, to) => db.from("candidates")
+          .select("id, name, email, school_id, university_raw, area_of_study, gpa, stage")
+          .eq("not_interested", false)
+          .or("linkedin.is.null,linkedin.eq.")
+          .order("name")
+          .range(from, to),
       ),
+      sup
+        ? db.from("candidates")
+            .select("id, name, email, school_id, university_raw, area_of_study, gpa, stage, direct_placement_by, direct_placement_at")
+            .eq("not_interested", false).eq("direct_placement", true)
+        : Promise.resolve({ data: [] as any[] }),
+      getCandidateStageCounts(),
+      db.rpc("candidate_dup_group_count"),
       getSchoolsCached(),
     ]);
-    const missingLinkedin = (candRows ?? [])
-      .filter((c) => isActive(c.stage) && !c.not_interested && (!c.linkedin || c.linkedin.trim() === ""))
+    const missingLinkedin = (linkedinRes ?? [])
+      .filter((c) => isActive(c.stage))
       .map((c) => ({ id: c.id, name: c.name, email: c.email, school: candidateSchoolDisplay(c, schools ?? []).label, area_of_study: c.area_of_study, gpa: c.gpa }));
     const helpRequests = (helpRes.data ?? []).map((h: any) => ({ id: h.id, title: h.title, body: h.body, dedupeKey: h.dedupe_key, created_at: h.created_at }));
 
     // Direct Placement Potential queue — Super Admin only (team-lead flagged).
     let directPlacement: { id: string; name: string; email: string | null; school: string | null; area_of_study: string | null; gpa: string | null; flaggedBy: string; flaggedAt: string | null }[] = [];
     if (sup) {
-      const flagged = (candRows ?? []).filter((c) => c.direct_placement && isActive(c.stage) && !c.not_interested);
+      const flagged = ((dpRes.data ?? []) as any[]).filter((c) => isActive(c.stage));
       const byIds = Array.from(new Set(flagged.map((c) => c.direct_placement_by).filter((v): v is string => !!v)));
       const nameById = new Map<string, string>();
       if (byIds.length) {
@@ -62,37 +142,59 @@ export default async function ConsoleSection({ params }: { params: { section: st
         .sort((a, b) => (b.flaggedAt ?? "").localeCompare(a.flaggedAt ?? ""));
     }
 
-    return <AdminSnapshotClient helpRequests={helpRequests} missingLinkedin={missingLinkedin} directPlacement={directPlacement} isSuper={sup} />;
+    // Data-quality tasks: possible duplicate records and candidates filed
+    // somewhere other than where their imported school text routes. Both link
+    // to the review panels on the Candidates tab. Duplicates are counted in
+    // SQL; misrouted runs the JS routing table over the grouped counts
+    // (school × raw text), weighting each group by its candidate count.
+    const duplicateGroups = Number(dupRes.data ?? 0);
+    const interested = (stageCounts as StageCountRow[]).filter((r) => !r.not_interested);
+    const byRaw = new Map<string, { id: string; school_id: string | null; university_raw: string | null; n: number }>();
+    for (const r of interested) {
+      const k = `${r.school_id ?? ""}|${r.university_raw ?? ""}`;
+      const cur = byRaw.get(k);
+      if (cur) cur.n += r.n;
+      else byRaw.set(k, { id: k, school_id: r.school_id, university_raw: r.university_raw, n: r.n });
+    }
+    const misrouted = findMisrouted([...byRaw.values()], schools ?? [])
+      .reduce((s, m) => s + m.candidate.n, 0);
+
+    return <AdminSnapshotClient helpRequests={helpRequests} missingLinkedin={missingLinkedin} directPlacement={directPlacement} duplicateGroups={duplicateGroups} misrouted={misrouted} isSuper={sup} />;
   }
 
   const need = {
-    candidates: ["overview", "applicants", "standings", "schools", "sync", "review"].includes(S),
+    // Aggregate views (overview/standings/schools) read grouped counts, not
+    // rows — only sync/review still need the full candidate list.
+    candidates: ["sync", "review"].includes(S),
+    stageCounts: ["overview", "standings", "schools"].includes(S),
     goals: ["overview", "standings", "schools"].includes(S),
     team: ["applicants", "playbook"].includes(S),
     phases: S === "playbook",
     resources: S === "resources",
     reviews: ["applicants", "sync", "review"].includes(S),
+    schoolReviews: S === "applicants",
     users: S === "users" || S === "schools", // schools tab needs profiles for per-school teammate counts
     favs: S === "applicants",
     calendar: S === "calendar",
     budget: S === "budget",
   };
 
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const serviceDb = createServiceClient();
 
-  // Standings only reads id/school_id/stage; every other view needs the full row.
-  const candSelect = S === "standings" ? CAND_COLS_STANDINGS : CAND_COLS_CONSOLE;
-  // The Candidates tab is server-paginated (500/page); it doesn't load the full
-  // table. Other sections (overview/standings/schools/sync/review) still need it.
+  const candSelect = CAND_COLS_CONSOLE;
+  // The Candidates tab is server-paginated; it doesn't load the full
+  // table. Sync/review still need it; aggregate views use stage counts.
   const paginatedList = S === "applicants";
 
   // Reference tables (schools/goals/resources) come from the shared Data Cache.
-  const [schools, candidates, favs, team, goals, phases, resources, reviewData, usersData, people, budgetEntries, budgetGuidance] = await Promise.all([
+  const [schools, candidates, stageCounts, schoolReviews, favs, team, goals, phases, resources, reviewData, usersData, people, budgetEntries, budgetGuidance] = await Promise.all([
     getSchoolsCached(),
     need.candidates && !paginatedList ? fetchAllRows((from, to) => supabase.from("candidates").select(candSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
+    need.stageCounts ? getCandidateStageCounts() : Promise.resolve([] as StageCountRow[]),
+    need.schoolReviews ? listPendingSchoolReviews() : Promise.resolve([]),
     need.favs ? supabase.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.team ? supabase.from("profiles").select("id, full_name, school_id, role").order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.team ? supabase.from("profiles").select("id, full_name, email, school_id, role").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.goals ? getGoalsCached() : Promise.resolve([] as any[]),
     need.phases ? supabase.from("playbook_phases").select("id, label, title, sort_order, school_id, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.resources ? getResourcesCached() : Promise.resolve([] as any[]),
@@ -105,7 +207,7 @@ export default async function ConsoleSection({ params }: { params: { section: st
 
   // Candidates tab: first page + count. Full-set facets/slim data hydrate on
   // the client after paint so the route does not block TTFB on every candidate.
-  const PAGE_SIZE = 500;
+  const PAGE_SIZE = 50;
   const candPage = paginatedList
     ? await listCandidates({ variant: "console", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" })
     : { rows: [] as any[], total: 0 };
@@ -147,12 +249,27 @@ export default async function ConsoleSection({ params }: { params: { section: st
     events = (eventRows ?? []).map((e: any) => ({ ...e, going: rsvpByEvent[e.id]?.going ?? [], not_going: rsvpByEvent[e.id]?.not_going ?? [], my_status: (myRsvp[e.id] as "going" | "not_going" | undefined) ?? null, notes: notesByEvent[e.id] ?? [] }));
   }
 
+  // Aggregate views count every candidate (interested or not) — merge the
+  // not_interested split back out before shipping to the client.
+  const countsForClient = (() => {
+    const byKey = new Map<string, { school_id: string | null; university_raw: string | null; stage: string | null; n: number }>();
+    for (const r of stageCounts as StageCountRow[]) {
+      const k = `${r.school_id ?? ""}|${r.university_raw ?? ""}|${r.stage ?? ""}`;
+      const cur = byKey.get(k);
+      if (cur) cur.n += r.n;
+      else byKey.set(k, { school_id: r.school_id, university_raw: r.university_raw, stage: r.stage, n: r.n });
+    }
+    return [...byKey.values()];
+  })();
+
   return (
     <ConsoleClient
       profile={profile}
       initialSection={S}
       schools={schools ?? []}
       candidates={enriched}
+      stageCounts={countsForClient}
+      schoolReviews={schoolReviews}
       candidatesTotal={paginatedList ? candPage.total : undefined}
       candidatesPageSize={PAGE_SIZE}
       facetMajors={facets.majors}

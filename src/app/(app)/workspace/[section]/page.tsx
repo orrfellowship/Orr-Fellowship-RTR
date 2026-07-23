@@ -1,14 +1,21 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { resolveViewer, getSchoolById, displaySchool } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
-import { isAdminPlus } from "@/lib/types";
+import { isAdminPlus, type Profile } from "@/lib/types";
 import { canAccessWorkspaceSection } from "@/lib/nav/config";
 import {
   getTierSchoolIds, getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
-  CAND_COLS_STANDINGS, CAND_COLS_WORKSPACE,
+  getCandidateStageCounts, collapseStageCounts,
 } from "@/lib/queries";
 import WorkspaceClient from "../WorkspaceClient";
 import { listCandidates } from "../../console/actions";
+import SectionSkeleton from "@/components/nav/SectionSkeleton";
+import EmailCampaignsClient from "@/components/EmailCampaignsClient";
+import { getGmailConnectionStatusForUser } from "@/lib/gmail/server";
+import type { GmailConnectionStatus } from "@/lib/gmail/types";
+import { loadOutreachAudiences, loadRecentCampaigns } from "@/lib/gmail/candidate-outreach.server";
+import { listOutreachTemplates } from "@/lib/gmail/outreach-templates.server";
 
 // slug (URL) → internal tab key used by WorkspaceClient
 const TAB: Record<string, string> = {
@@ -16,20 +23,47 @@ const TAB: Record<string, string> = {
   applicants: "all", playbook: "playbook", resources: "resources", budget: "budget",
 };
 
-// Each route renders exactly ONE section, so we only fetch what that section
-// reads. Everything else is passed empty — the other tabs' code never runs.
-export default async function WorkspaceSection({ params }: { params: { section: string } }) {
+export default async function WorkspaceSection({ params, searchParams }: { params: Promise<{ section: string }>; searchParams: Promise<{ gmail?: string; gmail_error?: string }> }) {
+  const { section } = await params;
+  const gmailQuery = await searchParams;
   const { profile } = await resolveViewer();
   if (!profile) redirect("/login");
   if (isAdminPlus(profile.role)) redirect("/console/overview");
-  if (!canAccessWorkspaceSection(profile.role, params.section)) redirect("/workspace/snapshot");
-  const S = TAB[params.section]; // internal tab key
+  if (!canAccessWorkspaceSection(profile.role, section)) redirect("/workspace/snapshot");
+
+  return (
+    <Suspense fallback={<SectionSkeleton />}>
+      <WorkspaceSectionData section={section} profile={profile} gmailQuery={gmailQuery} />
+    </Suspense>
+  );
+}
+
+// Each route renders exactly ONE section, so we only fetch what that section
+// reads. Everything else is passed empty — the other tabs' code never runs.
+async function WorkspaceSectionData({ section, profile, gmailQuery }: { section: string; profile: Profile; gmailQuery: { gmail?: string; gmail_error?: string } }) {
+  // Live outreach composer — fellows/leads email their own assigned candidates.
+  if (section === "email-campaigns") {
+    let gmailConnection: GmailConnectionStatus = { connected: false, connectedEmail: null, connectedAt: null };
+    try { gmailConnection = await getGmailConnectionStatusForUser(profile.id); } catch { /* show disconnected */ }
+    const [audiences, recentCampaigns, templates] = await Promise.all([
+      loadOutreachAudiences(profile), loadRecentCampaigns(profile), listOutreachTemplates(),
+    ]);
+    // Fellows/leads are template-locked (canFreeCompose stays false) — they pick
+    // from admin templates; the send route enforces the same rule server-side.
+    return <EmailCampaignsClient gmailConnection={gmailConnection} gmailNotice={{ result: gmailQuery.gmail, error: gmailQuery.gmail_error }} gmailCampaignSendEnabled audiences={audiences} recentCampaigns={recentCampaigns}
+      templates={templates.map((t) => ({ id: t.id, name: t.name, subject: t.subject, body: t.body, attachments: t.attachments.map((a) => ({ id: a.id, fileName: a.fileName, mimeType: a.mimeType, sizeBytes: a.sizeBytes })) }))} />;
+  }
+
+  const S = TAB[section]; // internal tab key
 
   const need = {
     candidates: S === "plan" || S === "board",
     phases: S === "plan" || S === "playbook",
     team: S === "plan" || S === "board" || S === "playbook" || S === "all",
-    allCandidates: S === "plan" || S === "standings" || S === "all",
+    // Org-wide standings + the snapshot's counters read grouped stage counts;
+    // the Candidates tab (S === "all") is server-paginated.
+    allCandidates: S === "all",
+    stageCounts: S === "plan" || S === "standings",
     allSchools: S === "standings" || S === "all",
     allGoals: S === "plan" || S === "standings",
     events: S === "plan",
@@ -52,20 +86,21 @@ export default async function WorkspaceSection({ params }: { params: { section: 
   const groupName = tier === "satellite" ? "Satellite School" : tier === "bonus" ? "Bonus School" : null;
   const playbookSchoolId = tierSchoolIds[0] ?? schoolId;
 
-  // Standings only reads id/school_id/stage; every other view needs the full row.
-  const allCandSelect = S === "standings" ? CAND_COLS_STANDINGS : CAND_COLS_WORKSPACE;
   // The Candidates tab (S === "all") is server-paginated; it doesn't load every row.
   const paginatedList = S === "all";
 
   // Parallel, section-scoped fetches. Reference tables come from the shared
   // Data Cache (getSchoolsCached / getGoalsCached / getResourcesCached).
-  const [candidates, favs, team, phases, allCandidates, allProfiles, allSchools, allGoals, resources] = await Promise.all([
+  const [candidates, favs, team, phases, stageCountRows, allProfiles, allSchools, allGoals, resources] = await Promise.all([
     need.candidates ? fetchAllRows((from, to) => serviceDb.from("candidates").select("id, jazz_id, name, email, school_id, university_raw, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, direct_placement, source, created_by").in("school_id", tierSchoolIds).order("name").range(from, to)) : Promise.resolve([] as any[]),
     wantFavs ? serviceDb.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.team ? serviceDb.from("profiles").select("id, full_name, role").in("school_id", tierSchoolIds).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.phases ? serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").eq("school_id", playbookSchoolId).order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
-    need.allCandidates && !paginatedList ? fetchAllRows((from, to) => serviceDb.from("candidates").select(allCandSelect).order("name").range(from, to)) : Promise.resolve([] as any[]),
-    need.allProfiles ? serviceDb.from("profiles").select("id, full_name").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.team ? serviceDb.from("profiles").select("id, full_name, email, role").in("school_id", tierSchoolIds).eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    // Tier-wide phase read: the tier's playbook stays visible no matter which
+    // of the group's school rows it was created under (the "representative"
+    // row can shift as schools are added).
+    need.phases ? serviceDb.from("playbook_phases").select("id, label, title, sort_order, playbook_tasks(id, text, assignee_id, assignee_label, month_label, notes, due_date, done)").in("school_id", tierSchoolIds.length ? tierSchoolIds : [playbookSchoolId]).order("sort_order").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
+    need.stageCounts ? getCandidateStageCounts() : Promise.resolve([]),
+    need.allProfiles ? serviceDb.from("profiles").select("id, full_name, email").eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.allSchools ? getSchoolsCached() : Promise.resolve([] as any[]),
     need.allGoals ? getGoalsCached() : Promise.resolve([] as any[]),
     need.resources ? getResourcesCached() : Promise.resolve([] as any[]),
@@ -145,7 +180,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
 
   // Candidates tab: first page + count. Full-set facets/slim data hydrate on
   // the client after paint so the route does not block TTFB on every candidate.
-  const PAGE_SIZE = 500;
+  const PAGE_SIZE = 50;
   const allPage = paginatedList
     ? await listCandidates({ variant: "workspace", page: 0, pageSize: PAGE_SIZE, sortKey: "name", sortDir: "asc" })
     : { rows: [] as any[], total: 0, ai: [] as any[] };
@@ -153,7 +188,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
 
   const favSet = new Set((favs ?? []).map((f: any) => f.candidate_id));
   const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
-  const allEnriched = paginatedList ? allPage.rows : (allCandidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
+  const allEnriched = paginatedList ? allPage.rows : [];
 
   return (
     <WorkspaceClient
@@ -161,6 +196,7 @@ export default async function WorkspaceSection({ params }: { params: { section: 
       initialSection={S}
       school={school ? { id: school.id, name: school.name, color_primary: school.color_primary, logo_url: school.logo_url } : null}
       candidates={enriched}
+      stageCounts={collapseStageCounts(stageCountRows)}
       team={team ?? []}
       phases={phasesWithReview}
       allSchools={allSchools ?? []}

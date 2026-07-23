@@ -1,35 +1,36 @@
 "use server";
 
 import { createServerSupabase, createServiceClient } from "@/lib/supabase/server";
-import { sendEmail, emailLayout } from "@/lib/email";
+import { transactionalIdempotencyKey } from "@/lib/email";
+import { queueTransactionalEmail } from "@/lib/transactional/weekly-assignment-digest";
 
-async function checkProfileAllowed(email: string) {
+async function allowedProfile(email: string) {
   const service = createServiceClient();
   // Case-insensitive, trimmed match — auth stores emails lowercased, so a
   // mixed-case entry on the login/reset form must still resolve to the profile.
   const { data } = await service
     .from("profiles")
-    .select("id, is_active")
+    .select("id, email, full_name, is_active")
     .ilike("email", email.trim())
     .maybeSingle();
-  if (!data) return "This email is not invited. Contact an admin to be added.";
-  if (!data.is_active) return "Your account is inactive. Contact an admin.";
-  return null;
+  if (!data) return { error: "This email is not invited. Contact an admin to be added." };
+  if (!data.is_active) return { error: "Your account is inactive. Contact an admin." };
+  return { profile: data };
 }
 
 export async function signInWithEmailPassword(email: string, password: string) {
-  const blocked = await checkProfileAllowed(email);
-  if (blocked) return { error: blocked };
-  const supabase = createServerSupabase();
+  const allowed = await allowedProfile(email);
+  if ("error" in allowed) return { error: allowed.error };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: "Invalid email or password." };
   return { ok: true };
 }
 
 export async function sendPasswordReset(email: string, redirectTo: string) {
-  const blocked = await checkProfileAllowed(email);
-  if (blocked) return { error: blocked };
-  // Generate a recovery link (admin) and deliver it via our SMTP — same as
+  const allowed = await allowedProfile(email);
+  if ("error" in allowed) return { error: allowed.error };
+  // Generate a recovery link (admin) and deliver it via our transactional email path — same as
   // invites. The link carries a hashed token the reset-callback verifies with
   // verifyOtp(); the PKCE code-exchange flow doesn't work for emailed links.
   const service = createServiceClient();
@@ -38,14 +39,13 @@ export async function sendPasswordReset(email: string, redirectTo: string) {
   const tokenHash = (data?.properties as any)?.hashed_token as string | undefined;
   if (!tokenHash) return { error: "Could not generate a reset link." };
   const link = `${redirectTo}?token_hash=${encodeURIComponent(tokenHash)}&type=recovery`;
-  const html = emailLayout({
-    heading: "Reset your password",
-    intro: "We received a request to reset your Orr Recruiting password.",
-    bodyHtml: "Click below to choose a new password. This link is single-use and will expire. If you didn't request this, you can ignore this email.",
-    ctaLabel: "Set a new password",
-    ctaUrl: link,
+  const sent = await queueTransactionalEmail({
+    recipientId: allowed.profile.id, recipientEmail: allowed.profile.email ?? email.trim(), recipientName: allowed.profile.full_name,
+    subject: "Reset your Orr Recruiting password", heading: "Reset your password",
+    body: "We received a request to reset your password. This link is single-use and will expire. If you didn't request this, you can ignore this email.",
+    ctaLabel: "Set a new password", ctaUrl: link,
+    idempotencyKey: transactionalIdempotencyKey("password-reset", tokenHash),
   });
-  const sent = await sendEmail({ to: email.trim(), subject: "Reset your Orr Recruiting password", html });
-  if (!sent.ok) return { error: `Couldn't send the reset email (${sent.error}).` };
+  if (!sent.ok) return { error: `Couldn't queue the reset email (${sent.error}).` };
   return { ok: true };
 }

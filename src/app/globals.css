@@ -5,12 +5,16 @@
   --gray: #303333;
   --canvas: #F7F8FB;
   --line: #E4E7EE;
+  /* next/font families (set on <html> by the root layout) + fallbacks. */
+  --font-head: var(--font-cabin), 'Segoe UI', sans-serif;
+  --font-body: var(--font-open-sans), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
-  font-family: 'Open Sans', system-ui, sans-serif;
+  font-family: var(--font-body);
   background: var(--canvas);
   color: var(--gray);
 }
-h1, h2, h3 { font-family: 'Cabin', 'Segoe UI', sans-serif; }
+h1, h2, h3 { font-family: var(--font-head); }

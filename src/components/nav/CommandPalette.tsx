@@ -9,9 +9,9 @@ const c = {
   card: "#ffffff", cardLine: "#eceaf2", bg: "#f4f4f9",
   ink: "#211d44", inkMid: "#5c5878", inkLo: "#938fad",
 };
-const FD = "'Cabin', sans-serif";
-const FB = "'Open Sans', sans-serif";
-const FM = "'JetBrains Mono', ui-monospace, monospace";
+const FD = "var(--font-head)";
+const FB = "var(--font-body)";
+const FM = "var(--font-mono)";
 
 type FlatItem = NavItem & { group: string };
 

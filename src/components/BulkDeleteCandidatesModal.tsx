@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { listCandidates, bulkDeleteCandidates, deleteDuplicateCandidates } from "@/app/(app)/console/actions";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
+import ContactPopover from "@/components/ContactPopover";
+import PaginationControls from "@/components/PaginationControls";
 
 // Admin tool to clean up after a bad import: search candidates by name, select
 // the ones to remove, and delete them in bulk. Matches by name/email/major.
@@ -12,7 +14,7 @@ const C = {
   navy: "#11123E", navy2: "#485F92", gray: "#33384D", grayMute: "#6E7385",
   line: "#E1E5EE", canvas: "#F4F6FB", orange: "#E8743B", orangeBg: "#FBE7DF", good: "#2E9E6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 
 type Row = { id: string; name: string; email: string | null; school_id: string | null; university_raw?: string | null; stage: string | null };
 
@@ -24,6 +26,9 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
   const [q, setQ] = useState("");
   const [school, setSchool] = useState("all"); // "all" | <school_id> | "__unrouted__"
   const [rows, setRows] = useState<Row[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
   const sortedSchools = [...schools].sort((a, b) => a.name.localeCompare(b.name));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -32,26 +37,32 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
   const [result, setResult] = useState<string | null>(null);
   const schoolName = (row: Row) => candidateSchoolDisplay(row, schools).label;
 
-  // Load matches (debounced). Empty query lists the first batch alphabetically.
+  // Load one page of matches (debounced). Selection is retained across pages.
   const mounted = useRef(false);
   useEffect(() => {
     const run = () => {
       setLoading(true);
       listCandidates({
-        variant: "console", page: 0, pageSize: 1000, q, sortKey: "name", sortDir: "asc",
+        variant: "console", page, pageSize, q, sortKey: "name", sortDir: "asc",
         scope: school === "__unrouted__" ? "all" : school,
         unroutedOnly: school === "__unrouted__",
       }).then((res) => {
         setRows((res.rows as Row[]) ?? []);
+        setTotal(res.total);
         setLoading(false);
       });
     };
     if (!mounted.current) { mounted.current = true; run(); return; }
     const t = setTimeout(run, 250);
     return () => clearTimeout(t);
-  }, [q, school]);
+  }, [q, school, page, pageSize]);
 
-  const toggle = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggle = (id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
   const allShownSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const toggleAll = () => setSelected((prev) => {
     const n = new Set(prev);
@@ -95,10 +106,12 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
     // Refresh the visible list with the current filters.
     setLoading(true);
     const refreshed = await listCandidates({
-      variant: "console", page: 0, pageSize: 1000, q, sortKey: "name", sortDir: "asc",
+      variant: "console", page: 0, pageSize, q, sortKey: "name", sortDir: "asc",
       scope: school === "__unrouted__" ? "all" : school, unroutedOnly: school === "__unrouted__",
     });
     setRows((refreshed.rows as Row[]) ?? []);
+    setTotal(refreshed.total);
+    setPage(0);
     setLoading(false);
     router.refresh();
   };
@@ -116,9 +129,9 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, email, or major…"
+          <input autoFocus value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder="Search by name, email, or major…"
             style={{ flex: "1 1 240px", minWidth: 180, padding: "11px 14px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 14, boxSizing: "border-box" }} />
-          <select value={school} onChange={(e) => setSchool(e.target.value)}
+          <select value={school} onChange={(e) => { setSchool(e.target.value); setPage(0); }}
             style={{ padding: "11px 12px", borderRadius: 10, border: `1px solid ${school !== "all" ? C.orange : C.line}`, fontSize: 14, background: "#fff", color: C.gray, fontWeight: 600, maxWidth: 220 }}>
             <option value="all">All schools</option>
             {sortedSchools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -130,7 +143,7 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
           <button onClick={toggleAll} disabled={rows.length === 0} style={{ border: "none", background: "none", color: C.navy2, fontWeight: 700, cursor: rows.length ? "pointer" : "default", padding: 0 }}>
             {allShownSelected ? "Clear all shown" : "Select all shown"}
           </button>
-          <span>{loading ? "Searching…" : `${rows.length} shown · ${selected.size} selected`}</span>
+          <span>{loading ? "Searching…" : `${total.toLocaleString()} matching · ${selected.size} selected`}</span>
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", border: `1px solid ${C.line}`, borderRadius: 10, minHeight: 200 }}>
@@ -140,7 +153,7 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
               <label key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: `1px solid ${C.line}`, background: sel ? C.orangeBg : i % 2 ? "#FAFBFE" : "#fff", cursor: "pointer" }}>
                 <input type="checkbox" checked={sel} onChange={() => toggle(r.id)} style={{ accentColor: C.orange, width: 16, height: 16, flexShrink: 0 }} />
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ fontWeight: 700, fontSize: 14, color: C.gray }}>{r.name}</span>
+                  <span style={{ fontWeight: 700, fontSize: 14, color: C.gray }}><ContactPopover name={r.name} email={r.email} /></span>
                   <span style={{ fontSize: 12, color: C.grayMute, marginLeft: 8 }}>{[r.email, schoolName(r), r.stage].filter(Boolean).join(" · ")}</span>
                 </span>
               </label>
@@ -148,6 +161,9 @@ export default function BulkDeleteCandidatesModal({ schools, onClose }: {
           })}
           {!loading && rows.length === 0 && <div style={{ padding: 30, textAlign: "center", color: C.grayMute, fontSize: 13 }}>No candidates match.</div>}
         </div>
+
+        <PaginationControls page={page} pageSize={pageSize} total={total} loading={loading} onPageChange={setPage}
+          onPageSizeChange={(size) => { setPage(0); setPageSize(size); }} />
 
         {result && <div style={{ background: result.startsWith("Error") ? C.orangeBg : "#E8F5EE", border: `1px solid ${result.startsWith("Error") ? C.orange : C.good}`, borderRadius: 9, padding: "9px 13px", fontSize: 13, color: result.startsWith("Error") ? "#8A3A1E" : "#1B5E3F" }}>{result}</div>}
 

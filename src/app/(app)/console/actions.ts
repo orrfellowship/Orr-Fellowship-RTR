@@ -7,7 +7,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 // it — the data is already saved and tagged caches also expire on their own TTL.
 function bustCache(tags: string[], paths: string[]) {
   try {
-    for (const t of tags) revalidateTag(t);
+    for (const t of tags) revalidateTag(t, "max");
     for (const p of paths) revalidatePath(p);
   } catch { /* revalidation is best-effort */ }
 }
@@ -16,16 +16,17 @@ import { createServerSupabase, createServiceClient } from "@/lib/supabase/server
 import { getCurrentProfile, isPreviewing, VIEW_AS_COOKIE } from "@/lib/auth";
 import { isSuper, isAdminPlus, canManageResources, canReassign } from "@/lib/types";
 import { PLAYBOOK_DEFAULTS } from "@/lib/playbookDefaults";
-import { routeToSchoolName, routeToSchoolNameByEmail } from "@/lib/stages";
-import { sendEmail, emailLayout, emailConfigured } from "@/lib/email";
-import { queueClaimNudge } from "@/app/(app)/workspace/actions";
+import { routeToSchoolNameByEmail } from "@/lib/stages";
+import { emailConfigured, transactionalIdempotencyKey } from "@/lib/email";
+import { queueTransactionalEmail } from "@/lib/transactional/weekly-assignment-digest";
 import { evaluateCandidate } from "@/lib/triggers";
 import { getTierSchoolIds, fetchAllRows, getSchoolsCached, CAND_COLS_CONSOLE, CAND_COLS_WORKSPACE } from "@/lib/queries";
-import { representativeSchoolId } from "@/lib/candidateSchool";
+import { findMisrouted, expectedSchoolIdForRaw, representativeSchoolId } from "@/lib/candidateSchool";
 import { planDuplicateDeletions } from "@/lib/duplicates";
+import { entrantTierFor, groupPhraseTier, matchSchool, reviewFieldsFor, type SchoolMatch } from "@/lib/schoolMatch";
 
 export async function toggleFavorite(candidateId: string, makeFav: boolean) {
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   if (makeFav) {
@@ -38,7 +39,7 @@ export async function toggleFavorite(candidateId: string, makeFav: boolean) {
 }
 
 export async function setNotInterested(candidateId: string, value: boolean) {
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("candidates").update({ not_interested: value }).eq("id", candidateId);
   if (error) return { error: error.message };
   revalidatePath("/console");
@@ -46,7 +47,7 @@ export async function setNotInterested(candidateId: string, value: boolean) {
 }
 
 export async function reassignSchool(candidateId: string, schoolId: string | null) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -57,19 +58,18 @@ export async function reassignSchool(candidateId: string, schoolId: string | nul
 }
 
 export async function reassignPointPerson(candidateId: string, ownerId: string | null) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("candidates").update({ point_person_id: ownerId }).eq("id", candidateId);
   if (error) return { error: error.message };
-  await queueClaimNudge(candidateId, ownerId);
   revalidatePath("/console");
   revalidatePath("/workspace");
   return { ok: true };
 }
 
 export async function logOutreach(candidateId: string, body: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const { error } = await supabase.from("outreach_log").insert({ candidate_id: candidateId, author_id: user.id, body });
@@ -79,7 +79,7 @@ export async function logOutreach(candidateId: string, body: string) {
 }
 
 export async function getOutreach(candidateId: string) {
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const { data, error } = await supabase
     .from("outreach_log")
     .select("id, body, created_at, author_id")
@@ -90,8 +90,8 @@ export async function getOutreach(candidateId: string) {
 }
 
 export async function addPhase(schoolId: string, label: string, title: string, sortOrder: number) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase
     .from("playbook_phases")
     .insert({ school_id: schoolId, label, title, sort_order: sortOrder });
@@ -105,8 +105,8 @@ export async function upsertTask(t: {
   assignee_label: string | null; month_label: string | null; notes: string | null;
   due_date: string | null; done: boolean;
 }) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("playbook_tasks").upsert(t.id ? t : { ...t, id: undefined });
   if (error) return { error: error.message };
   revalidatePath("/console");
@@ -114,8 +114,8 @@ export async function upsertTask(t: {
 }
 
 export async function deleteTask(taskId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("playbook_tasks").delete().eq("id", taskId);
   if (error) return { error: error.message };
   revalidatePath("/console");
@@ -133,13 +133,13 @@ async function routeSchoolByEmail(
   const name = routeToSchoolNameByEmail(email);
   if (!name) return { school_id: null, university_raw: null };
   const { data: rows } = await db.from("schools").select("id, name, tier");
-  const schools = rows ?? [];
-  const matched = schools.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
-  if (!matched) return { school_id: null, university_raw: null };
-  if (matched.tier === "satellite" || matched.tier === "bonus") {
-    return { school_id: representativeSchoolId(schools as any[], matched.tier) ?? matched.id, university_raw: matched.name };
-  }
-  return { school_id: matched.id, university_raw: null };
+  const schools = (rows ?? []) as { id: string; name: string; tier: string | null }[];
+  // The domain table returns campus names ("Purdue Fort Wayne") as well as
+  // seeded rows — expectedSchoolIdForRaw resolves both (campus → satellite rep).
+  const resolved = expectedSchoolIdForRaw(name, schools);
+  if (!resolved) return { school_id: null, university_raw: null };
+  const target = schools.find((s) => s.id === resolved);
+  return { school_id: resolved, university_raw: target?.tier === "core" ? null : name };
 }
 
 export async function addCandidate(data: {
@@ -147,23 +147,50 @@ export async function addCandidate(data: {
   stage: string | null; gpa: string | null; area_of_study: string | null;
   university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null;
 }) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may add
   const db = createServiceClient();
-  // No school selected? Route off a school email address if we recognize it.
-  const routed = await routeSchoolByEmail(db, data.school_id, data.email);
-  const school_id = data.school_id || routed.school_id;
-  const university_raw = data.university_raw ?? routed.university_raw;
+
+  let school_id = data.school_id || null;
+  let university_raw = data.university_raw ?? null;
+  let review: { raw: string; tier: string | null; match: SchoolMatch } | null = null;
+
+  const rawText = (data.university_raw ?? "").trim();
+  if (school_id && rawText) {
+    // Group pick ("Satellite School"/"Bonus School") + a typed specific school:
+    // resolve the text to the precise campus row within that group. If it
+    // can't be matched, keep the group placement but flag it for review —
+    // never silently leave "IU Kokomo" as free text on a representative row.
+    const { data: picked } = await db.from("schools").select("tier").eq("id", school_id).maybeSingle();
+    const tier = ((picked as any)?.tier ?? null) as string | null;
+    if (tier === "satellite" || tier === "bonus") {
+      const m = await matchSchool(rawText, tier);
+      if (m.matched_school_id) school_id = m.matched_school_id;
+      else review = { raw: rawText, tier, match: m };
+    }
+  } else if (!school_id) {
+    // No school selected? Route off a school email address if we recognize it.
+    const routed = await routeSchoolByEmail(db, null, data.email);
+    school_id = routed.school_id;
+    university_raw = university_raw ?? routed.university_raw;
+  }
+
   // Only team leads / admins may assign a point person; ignore it from anyone else.
   const point_person_id = canReassign(profile.role) ? (data.point_person_id ?? null) : null;
   // Manually-entered candidates start in the "sourced" phase (stage key "new");
   // JazzHR advances them from there. Respect an explicit stage if one is given.
-  const { error } = await db.from("candidates").insert({ ...data, school_id, university_raw, point_person_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id });
+  const { data: inserted, error } = await db.from("candidates")
+    .insert({ ...data, school_id, university_raw, point_person_id, stage: data.stage || "new", source: "user_created", not_interested: false, created_by: profile.id })
+    .select("id")
+    .single();
   if (error) return { error: error.message };
+  if (review && inserted) {
+    await db.from("school_match_review").insert({ candidate_id: (inserted as any).id, ...reviewFieldsFor(review.raw, review.tier, review.match) });
+  }
   revalidatePath("/console");
   revalidatePath("/workspace");
-  return { ok: true };
+  return { ok: true, needsReview: !!review };
 }
 
 export async function updateCandidate(id: string, fields: {
@@ -171,7 +198,7 @@ export async function updateCandidate(id: string, fields: {
   university_raw?: string | null; gpa?: string | null; area_of_study?: string | null;
   linkedin?: string | null; grad_date?: string | null;
 }) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" };
   if (fields.name !== undefined && !fields.name.trim()) return { error: "Name can't be empty." };
@@ -209,46 +236,65 @@ export async function updateCandidate(id: string, fields: {
 // only when that field is currently blank (never overwrites), and rows whose
 // email isn't found are skipped. Currently fills in LinkedIn URLs.
 export async function importCandidateInfo(
-  rows: { email: string; linkedin?: string | null }[],
-): Promise<{ ok?: true; updated: number; skipped: number; error?: string }> {
-  if (isPreviewing()) return { error: "Exit preview to make changes.", updated: 0, skipped: 0 };
+  rows: { email: string; linkedin?: string | null; school?: string | null }[],
+): Promise<{ ok?: true; updated: number; schoolsUpdated: number; skipped: number; error?: string }> {
+  if (await isPreviewing()) return { error: "Exit preview to make changes.", updated: 0, schoolsUpdated: 0, skipped: 0 };
   const profile = await getCurrentProfile();
-  if (!profile) return { error: "Not authenticated", updated: 0, skipped: 0 };
+  if (!profile) return { error: "Not authenticated", updated: 0, schoolsUpdated: 0, skipped: 0 };
 
-  const byEmail = new Map<string, { linkedin: string }>();
+  const byEmail = new Map<string, { linkedin: string; school: string }>();
   for (const r of rows) {
     const email = (r.email ?? "").trim().toLowerCase();
     const linkedin = (r.linkedin ?? "").trim();
-    if (email) byEmail.set(email, { linkedin });
+    const school = (r.school ?? "").trim();
+    if (email) byEmail.set(email, { linkedin, school });
   }
-  if (byEmail.size === 0) return { ok: true, updated: 0, skipped: rows.length };
+  if (byEmail.size === 0) return { ok: true, updated: 0, schoolsUpdated: 0, skipped: rows.length };
 
   const db = createServiceClient();
+  const { data: schoolRows } = await db.from("schools").select("id, name, tier");
+  const schools = (schoolRows ?? []) as { id: string; name: string; tier: string | null }[];
   // Match in memory (case-insensitive email), paging past the 1000-row cap.
-  const all = await fetchAllRows<{ id: string; email: string | null; linkedin: string | null }>(
-    (from, to) => db.from("candidates").select("id, email, linkedin").not("email", "is", null).range(from, to),
+  const all = await fetchAllRows<{ id: string; email: string | null; linkedin: string | null; school_id: string | null; university_raw: string | null }>(
+    (from, to) => db.from("candidates").select("id, email, linkedin, school_id, university_raw").not("email", "is", null).range(from, to),
   );
   const matched = new Set<string>();
-  let updated = 0;
+  let updated = 0, schoolsUpdated = 0;
   for (const c of all) {
     const email = (c.email ?? "").trim().toLowerCase();
     const inp = byEmail.get(email);
     if (!inp) continue;
     matched.add(email);
-    // Fill blanks only — never overwrite an existing LinkedIn.
-    if (inp.linkedin && !(c.linkedin ?? "").trim()) {
-      const { error } = await db.from("candidates").update({ linkedin: inp.linkedin }).eq("id", c.id);
-      if (!error) updated++;
+    const patch: Record<string, any> = {};
+    // LinkedIn fills blanks only — never overwrites.
+    if (inp.linkedin && !(c.linkedin ?? "").trim()) patch.linkedin = inp.linkedin;
+    // School RE-ROUTES the candidate: the sourcing sheet is authoritative for
+    // where its people belong, so a routable school value moves the candidate
+    // even off a core row (this is the repair path for records whose original
+    // school text was lost). Unroutable text is left alone — a repair pass
+    // should never dump anyone into the Bonus catch-all.
+    if (inp.school) {
+      const expected = expectedSchoolIdForRaw(inp.school, schools);
+      if (expected && (expected !== c.school_id || (c.university_raw ?? "").trim() !== inp.school)) {
+        patch.school_id = expected;
+        patch.university_raw = inp.school;
+      }
+    }
+    if (Object.keys(patch).length === 0) continue;
+    const { error } = await db.from("candidates").update(patch).eq("id", c.id);
+    if (!error) {
+      if (patch.linkedin) updated++;
+      if (patch.school_id) schoolsUpdated++;
     }
   }
   const skipped = byEmail.size - matched.size; // input emails with no candidate match
   revalidatePath("/console");
   revalidatePath("/workspace");
-  return { ok: true, updated, skipped };
+  return { ok: true, updated, schoolsUpdated, skipped };
 }
 
 export async function deleteCandidate(id: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -261,7 +307,7 @@ export async function deleteCandidate(id: string) {
 
 // Delete many candidates at once (admin+). Used to clean up a bad import.
 export async function bulkDeleteCandidates(ids: string[]): Promise<{ ok?: true; deleted: number; error?: string }> {
-  if (isPreviewing()) return { error: "Exit preview to make changes.", deleted: 0 };
+  if (await isPreviewing()) return { error: "Exit preview to make changes.", deleted: 0 };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden", deleted: 0 };
   if (!ids.length) return { ok: true, deleted: 0 };
@@ -280,43 +326,67 @@ export async function bulkDeleteCandidates(ids: string[]): Promise<{ ok?: true; 
 }
 
 export async function bulkImportCandidates(
-  rows: { name: string; email: string | null; school_id: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null }[]
+  rows: { name: string; email: string | null; school_id: string | null; school_raw?: string | null; stage: string | null; gpa: string | null; area_of_study: string | null; university_raw?: string | null; point_person_id?: string | null; linkedin?: string | null }[]
 ) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" }; // any signed-in user may import
-  if (rows.length === 0) return { ok: true, count: 0 };
+  if (rows.length === 0) return { ok: true, count: 0, reviewCount: 0 };
   const db = createServiceClient();
 
   // Build a name→id map ONCE so email-based routing needs no per-row query. The
   // previous version issued one DB lookup per emailed row, which made big imports
   // crawl (and could time out) — the real cap on import size.
   const { data: schoolRows } = await db.from("schools").select("id, name, tier");
-  const schools = schoolRows ?? [];
-  const idByName = new Map<string, string>(schools.map((s: any) => [s.name, s.id]));
+  const schools = (schoolRows ?? []) as { id: string; name: string; tier: string | null }[];
   const routeByEmail = (email: string | null) => {
     const name = routeToSchoolNameByEmail(email);
     if (!name) return { school_id: null as string | null, university_raw: null as string | null };
-    const matched = schools.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
-    if (!matched) return { school_id: null as string | null, university_raw: null as string | null };
-    if (matched.tier === "satellite" || matched.tier === "bonus") {
-      return {
-        school_id: representativeSchoolId(schools as any[], matched.tier) ?? matched.id,
-        university_raw: matched.name as string,
-      };
-    }
-    return { school_id: idByName.get(name) ?? null, university_raw: null as string | null };
+    // The domain table returns campus names ("Purdue Fort Wayne") as well as
+    // seeded rows — expectedSchoolIdForRaw resolves both (campus → satellite rep).
+    const resolved = expectedSchoolIdForRaw(name, schools);
+    if (!resolved) return { school_id: null as string | null, university_raw: null as string | null };
+    const target = schools.find((s) => s.id === resolved);
+    return { school_id: resolved, university_raw: target?.tier === "core" ? null : name };
   };
+
+  // Free-text school columns run through the phase20 matcher, scoped to the
+  // entrant's group. Each distinct string is matched once. Records the matcher
+  // can't place are inserted WITHOUT a school (never a silent Bonus default)
+  // and queued in school_match_review.
+  const entrantTier = await entrantTierFor(profile);
+  const rawValues = [...new Set(rows.map((r) => (r.school_raw ?? "").trim()).filter((v) => v && !groupPhraseTier(v)))];
+  const matchByRaw = new Map<string, SchoolMatch>();
+  await Promise.all(rawValues.map(async (raw) => { matchByRaw.set(raw, await matchSchool(raw, entrantTier)); }));
 
   // Only team leads / admins may assign point people on import.
   const allowPP = canReassign(profile.role);
-  const prepared = rows.map((r) => {
-    const routed = r.school_id ? { school_id: r.school_id, university_raw: null } : routeByEmail(r.email);
+  const reviewByIndex = new Map<number, { raw: string; match: SchoolMatch }>();
+  const prepared = rows.map((r, i) => {
+    const { school_raw, ...rest } = r;
+    const rawText = (school_raw ?? "").trim();
+    let school_id = r.school_id || null;
+    let university_raw = r.university_raw ?? null;
+    if (!school_id && rawText) {
+      const groupTier = groupPhraseTier(rawText);
+      if (groupTier) {
+        // A deliberate group pick ("Satellite School") → the tier's representative row.
+        school_id = representativeSchoolId(schools as any, groupTier);
+      } else {
+        const m = matchByRaw.get(rawText)!;
+        school_id = m.matched_school_id;
+        university_raw = rawText;
+        if (!m.matched_school_id) reviewByIndex.set(i, { raw: rawText, match: m });
+      }
+    } else if (!school_id) {
+      const routed = routeByEmail(r.email);
+      school_id = routed.school_id;
+      university_raw = university_raw ?? routed.university_raw;
+    }
     return {
-      ...r,
-      // No school chosen for this row? Route off a recognized school email.
-      school_id: r.school_id || routed.school_id,
-      university_raw: r.university_raw ?? routed.university_raw,
+      ...rest,
+      school_id,
+      university_raw,
       point_person_id: allowPP ? (r.point_person_id ?? null) : null,
       stage: r.stage || "new", source: "user_created", not_interested: false, created_by: profile.id,
     };
@@ -327,8 +397,10 @@ export async function bulkImportCandidates(
   // report how many rows already landed rather than silently losing the rest.
   const CHUNK = 500;
   let inserted = 0;
+  const reviewRows: any[] = [];
   for (let i = 0; i < prepared.length; i += CHUNK) {
-    const { error } = await db.from("candidates").insert(prepared.slice(i, i + CHUNK));
+    const chunk = prepared.slice(i, i + CHUNK);
+    const { data: ins, error } = await db.from("candidates").insert(chunk).select("id");
     if (error) {
       revalidatePath("/console");
       revalidatePath("/workspace");
@@ -336,18 +408,96 @@ export async function bulkImportCandidates(
         ? { error: `Imported ${inserted} of ${prepared.length} before an error: ${error.message}` }
         : { error: error.message };
     }
-    inserted += Math.min(CHUNK, prepared.length - i);
+    // Returned rows come back in insertion order — map them to flagged inputs.
+    (ins ?? []).forEach((row: any, j: number) => {
+      const need = reviewByIndex.get(i + j);
+      if (need) reviewRows.push({ candidate_id: row.id, ...reviewFieldsFor(need.raw, entrantTier, need.match) });
+    });
+    inserted += chunk.length;
   }
+  if (reviewRows.length) await db.from("school_match_review").insert(reviewRows);
   revalidatePath("/console");
   revalidatePath("/workspace");
-  return { ok: true, count: inserted };
+  return { ok: true, count: inserted, reviewCount: reviewRows.length };
+}
+
+// ---- School match review queue (phase20) -----------------------------------
+export type SchoolMatchReviewRow = import("@/lib/schoolMatch").PendingSchoolReview;
+
+// Assign the chosen school and remember the raw input as an alias so the same
+// text exact-matches forever after. Cross-group picks are allowed — that's the
+// override for tripwire cases.
+export async function resolveSchoolMatch(reviewId: string, schoolId: string) {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const db = createServiceClient();
+  const { data: review } = await db.from("school_match_review")
+    .select("id, candidate_id, raw_input, status").eq("id", reviewId).maybeSingle();
+  if (!review || (review as any).status !== "pending") return { error: "Review not found or already handled." };
+
+  const { error: candErr } = await db.from("candidates").update({ school_id: schoolId }).eq("id", (review as any).candidate_id);
+  if (candErr) return { error: candErr.message };
+  // First claim on a normalized alias wins; a conflict just means the text
+  // already exact-matches something, so there's nothing to learn.
+  await db.from("school_aliases").upsert(
+    { school_id: schoolId, alias: (review as any).raw_input, alias_norm: "" }, // alias_norm is set by trigger
+    { onConflict: "alias_norm", ignoreDuplicates: true },
+  );
+  const { error: revErr } = await db.from("school_match_review")
+    .update({ status: "resolved", resolved_school_id: schoolId, resolved_by: profile.id, resolved_at: new Date().toISOString() })
+    .eq("id", reviewId);
+  if (revErr) return { error: revErr.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// Leave the candidate unassigned (e.g. junk input) — no alias is learned.
+export async function dismissSchoolMatch(reviewId: string) {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const { error } = await createServiceClient().from("school_match_review")
+    .update({ status: "dismissed", resolved_by: profile.id, resolved_at: new Date().toISOString() })
+    .eq("id", reviewId).eq("status", "pending");
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  return { ok: true };
+}
+
+// Re-route candidates whose stored school no longer matches where their raw
+// university text routes (e.g. "IU Indianapolis" stuck in the Bonus group).
+// Recomputes server-side with the shared findMisrouted rule — only unrouted or
+// group-routed assignments move; explicit admin placements are left alone.
+// Pass ids to fix specific candidates, or omit to fix everything flagged.
+export async function fixMisroutedCandidates(ids?: string[]): Promise<{ ok?: true; moved: number; error?: string }> {
+  if (await isPreviewing()) return { error: "Exit preview to make changes.", moved: 0 };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden", moved: 0 };
+  const db = createServiceClient();
+  const { data: schoolRows } = await db.from("schools").select("id, name, tier");
+  const schools = (schoolRows ?? []) as { id: string; name: string; tier: string | null }[];
+  let rows = await fetchAllRows<{ id: string; school_id: string | null; university_raw: string | null }>(
+    (from, to) => db.from("candidates").select("id, school_id, university_raw").not("university_raw", "is", null).range(from, to),
+  );
+  if (ids?.length) { const want = new Set(ids); rows = rows.filter((r) => want.has(r.id)); }
+
+  let moved = 0;
+  for (const { candidate, expectedSchoolId } of findMisrouted(rows, schools)) {
+    const { error } = await db.from("candidates").update({ school_id: expectedSchoolId }).eq("id", candidate.id);
+    if (error) { bustCache([], ["/console", "/workspace"]); return { error: error.message, moved }; }
+    moved++;
+  }
+  bustCache([], ["/console", "/workspace"]);
+  return { ok: true, moved };
 }
 
 // ---- Server-side candidate pagination --------------------------------------
 // One page of candidates, filtered/sorted/counted in the database so the client
 // never holds the whole table. Used by the console + workspace candidate lists.
-// Limitations (acceptable at 500/page): GPA is a text column so Min-GPA and the
-// GPA sort compare lexically; the stage sort is alphabetical (not phase order).
+// Limitations (acceptable for page-sized reads): GPA is a text column so Min-GPA
+// and the GPA sort compare lexically; the stage sort is alphabetical (not phase order).
 const UUID_NONE = "00000000-0000-0000-0000-000000000000";
 export type CandidatePageParams = {
   variant: "console" | "workspace"; // which column set to return
@@ -438,7 +588,7 @@ export async function getCandidateFacets(includeSlim: boolean): Promise<Candidat
 }
 
 export async function upsertGoal(school_id: string, goal_sourced: number, goal_contacted: number, goal_applied: number) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -450,7 +600,7 @@ export async function upsertGoal(school_id: string, goal_sourced: number, goal_c
 }
 
 export async function upsertGroupGoal(schoolIds: string[], goal_sourced: number, goal_contacted: number, goal_applied: number) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   if (!schoolIds.length) return { ok: true };
@@ -479,7 +629,7 @@ async function guardSuperTarget(
 }
 
 export async function updateUser(user_id: string, role: string, school_id: string | null) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -502,7 +652,7 @@ export async function updateUser(user_id: string, role: string, school_id: strin
 }
 
 export async function updateUserName(user_id: string, full_name: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -514,8 +664,24 @@ export async function updateUserName(user_id: string, full_name: string) {
   return { ok: true };
 }
 
+export async function setUserActive(userId: string, isActive: boolean) {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const actor = await getCurrentProfile();
+  if (!actor || !isAdminPlus(actor.role)) return { error: "Forbidden" };
+  if (userId === actor.id && !isActive) return { error: "Cannot deactivate yourself." };
+
+  const db = createServiceClient();
+  const guard = await guardSuperTarget(db, actor.role, userId);
+  if (guard) return { error: guard };
+  const { error } = await db.from("profiles").update({ is_active: isActive }).eq("id", userId);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
 export async function removeUser(userId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   if (userId === profile.id) return { error: "Cannot remove yourself" };
@@ -529,8 +695,8 @@ export async function removeUser(userId: string) {
 }
 
 export async function addConnection(candidateId: string, relationship: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
   const { error } = await supabase.from("connections").upsert({ fellow_id: user.id, candidate_id: candidateId, relationship });
@@ -540,7 +706,7 @@ export async function addConnection(candidateId: string, relationship: string) {
 }
 
 export async function getConnections(candidateId: string) {
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const { data, error } = await supabase
     .from("connections")
     .select("id, fellow_id, relationship, profiles!fellow_id(full_name)")
@@ -558,8 +724,8 @@ export async function getConnections(candidateId: string) {
 }
 
 export async function deleteOutreach(logId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("outreach_log").delete().eq("id", logId);
   if (error) return { error: error.message };
   revalidatePath("/console");
@@ -567,8 +733,8 @@ export async function deleteOutreach(logId: string) {
 }
 
 export async function deleteConnection(connectionId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
-  const supabase = createServerSupabase();
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("connections").delete().eq("id", connectionId);
   if (error) return { error: error.message };
   revalidatePath("/console");
@@ -576,7 +742,7 @@ export async function deleteConnection(connectionId: string) {
 }
 
 export async function updatePhase(phaseId: string, label: string, title: string) {
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("playbook_phases").update({ label, title }).eq("id", phaseId);
   if (error) return { error: error.message };
   revalidatePath("/console");
@@ -584,7 +750,7 @@ export async function updatePhase(phaseId: string, label: string, title: string)
 }
 
 export async function deletePhase(phaseId: string) {
-  const supabase = createServerSupabase();
+  const supabase = await createServerSupabase();
   const { error } = await supabase.from("playbook_phases").delete().eq("id", phaseId);
   if (error) return { error: error.message };
   revalidatePath("/console");
@@ -592,7 +758,7 @@ export async function deletePhase(phaseId: string) {
 }
 
 export async function deduplicateCandidates() {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const serviceDb = createServiceClient();
@@ -635,7 +801,7 @@ export async function deduplicateCandidates() {
 // cluster (see planDuplicateDeletions — matches the Duplicate Review's matching).
 // Pass dryRun to just count what would be removed (used to confirm before delete).
 export async function deleteDuplicateCandidates(dryRun = false): Promise<{ ok?: true; count: number; error?: string }> {
-  if (isPreviewing()) return { error: "Exit preview to make changes.", count: 0 };
+  if (await isPreviewing()) return { error: "Exit preview to make changes.", count: 0 };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden", count: 0 };
   const db = createServiceClient();
@@ -716,20 +882,19 @@ async function sendInvite(
     { onConflict: "id" },
   );
 
-  const html = emailLayout({
-    heading: "You're invited to Orr Recruiting",
-    intro: `${full_name ? full_name + ", you've" : "You've"} been added as ${ROLE_LABEL[role] ?? "a team member"}.`,
-    bodyHtml: "Click below to set your password and get started. This link is single-use and will expire.",
-    ctaLabel: "Set your password",
-    ctaUrl: link,
+  const sent = await queueTransactionalEmail({
+    recipientId: user.id, recipientEmail: email, recipientName: full_name,
+    subject: "Your Orr Recruiting invite", heading: "You're invited to Orr Recruiting",
+    body: `${full_name ? full_name + ", you've" : "You've"} been added as ${ROLE_LABEL[role] ?? "a team member"}. Click below to set your password and get started. This link is single-use and will expire.`,
+    ctaLabel: "Set your password", ctaUrl: link,
+    idempotencyKey: transactionalIdempotencyKey("user-invite", `${user.id}:${tokenHash}`),
   });
-  const sent = await sendEmail({ to: email, subject: "Your Orr Recruiting invite", html });
-  if (!sent.ok) return { error: `User created, but the invite email failed to send (${sent.error}).` };
+  if (!sent.ok) return { error: `User created, but the invite email failed to queue (${sent.error}).` };
   return { ok: true };
 }
 
 export async function inviteUser(email: string, full_name: string, role: string, school_id: string | null) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   if (!isSuper(profile.role) && role === "super_admin") return { error: "Only a super admin can invite a super admin." };
@@ -740,9 +905,63 @@ export async function inviteUser(email: string, full_name: string, role: string,
   return { ok: true };
 }
 
+export async function resendUserInvite(userId: string) {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const actor = await getCurrentProfile();
+  if (!actor || !isSuper(actor.role)) return { error: "Only a super admin can resend account setup emails." };
+
+  const db = createServiceClient();
+  const guard = await guardSuperTarget(db, actor.role, userId);
+  if (guard) return { error: guard };
+
+  const { data: target, error: targetError } = await db
+    .from("profiles")
+    .select("id, full_name, email, role, is_active")
+    .eq("id", userId)
+    .maybeSingle();
+  if (targetError) return { error: targetError.message };
+  if (!target?.email) return { error: "This user does not have an email address." };
+  if (!target.is_active) return { error: "Reactivate this user before resending their invite." };
+
+  const { data: authData, error: authError } = await db.auth.admin.getUserById(userId);
+  if (authError) return { error: authError.message };
+  if (target.role !== "super_admin" && authData.user.last_sign_in_at) {
+    return { error: "Resend invite is only available for users who have never signed in." };
+  }
+
+  // Existing Auth users cannot receive another `invite` link. A recovery link
+  // establishes the same secure, single-use session and lets an invited user
+  // choose their initial password without deleting or recreating their account.
+  const { data, error } = await db.auth.admin.generateLink({
+    type: "recovery",
+    email: target.email,
+    options: { redirectTo: `${siteUrlForInvite()}/auth/reset-callback` },
+  });
+  if (error) return { error: error.message };
+
+  const tokenHash = (data?.properties as any)?.hashed_token as string | undefined;
+  if (!tokenHash) return { error: "Could not generate an account setup link." };
+  const link = `${siteUrlForInvite()}/auth/confirm?token_hash=${encodeURIComponent(tokenHash)}&type=recovery`;
+  const greeting = target.full_name ? `${target.full_name}, your` : "Your";
+
+  const sent = await queueTransactionalEmail({
+    recipientId: target.id,
+    recipientEmail: target.email,
+    recipientName: target.full_name,
+    subject: "Finish setting up your Orr Recruiting account",
+    heading: "Your RTR workspace is ready",
+    body: `${greeting} Orr Recruiting workspace and candidate assignments are ready. Use the secure link below to choose your password and get back into RTR. This link is single-use and will expire.`,
+    ctaLabel: "Finish account setup",
+    ctaUrl: link,
+    idempotencyKey: transactionalIdempotencyKey("user-invite-resend", `${target.id}:${tokenHash}`),
+  });
+  if (!sent.ok) return { error: `Couldn't queue the invite email (${sent.error}).` };
+  return { ok: true };
+}
+
 // Self-service notification test. Inserts a real in-app notification for the
 // caller (so it shows in their own bell) and immediately emails it through the
-// same SMTP path the cron flush uses — so one click exercises both channels
+// same transactional email path the cron flush uses — so one click exercises both channels
 // end-to-end without waiting for the scheduled job. Only notifies the caller.
 export async function sendTestNotification() {
   const profile = await getCurrentProfile();
@@ -768,15 +987,12 @@ export async function sendTestNotification() {
   // next cron flush won't send a duplicate.
   let email: { ok: boolean; configured: boolean; error?: string } = { ok: false, configured: emailConfigured() };
   if (profile.email) {
-    const res = await sendEmail({
-      to: profile.email,
-      subject: "Orr Recruiting — test notification",
-      html: emailLayout({
-        heading: "Test notification",
-        bodyHtml: "<div>You triggered this from the app. If you're reading it, the in-app bell and email path are both wired up.</div>",
-        ctaLabel: "Open workspace",
-        ctaUrl: `${siteUrlForInvite()}/workspace`,
-      }),
+    const res = await queueTransactionalEmail({
+      recipientId: profile.id, recipientEmail: profile.email, recipientName: profile.full_name,
+      subject: "Orr Recruiting — test notification", heading: "Test notification",
+      body: "You triggered this from the app. If you're reading it, the in-app bell and email path are both wired up.",
+      ctaLabel: "Open workspace", ctaUrl: `${siteUrlForInvite()}/workspace`,
+      idempotencyKey: transactionalIdempotencyKey("notification-test", inserted.id),
     });
     email = { ok: res.ok, configured: emailConfigured(), error: res.ok ? undefined : res.error };
     if (res.ok) await db.from("notifications").update({ emailed_at: new Date().toISOString() }).eq("id", inserted.id);
@@ -790,7 +1006,7 @@ export async function sendTestNotification() {
 // updateCandidate (which restricts edits to the candidate's creator), this is
 // gated to admins and writes via the service client to any candidate.
 export async function setCandidateLinkedin(id: string, url: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const linkedin = (url ?? "").trim();
@@ -805,7 +1021,7 @@ export async function setCandidateLinkedin(id: string, url: string) {
 // Admin marks a help request handled. Supersedes every admin's copy of the
 // request (matched by its shared dedupe_key) so it clears for the whole team.
 export async function resolveHelpRequest(dedupeKey: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   if (!dedupeKey?.startsWith("help:")) return { error: "Invalid request." };
@@ -824,7 +1040,7 @@ export async function resolveHelpRequest(dedupeKey: string) {
 // unflag the candidate and supersede the related notifications so they drop off
 // every Super Admin's bell + queue. Super-admin only — it's their queue.
 export async function resolveDirectPlacement(candidateId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -845,7 +1061,7 @@ export async function resolveDirectPlacement(candidateId: string) {
 export async function bulkInviteUsers(
   rows: { email: string; full_name: string; role: string; school_id: string | null }[]
 ) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const canSuper = isSuper(profile.role);
@@ -879,21 +1095,13 @@ function factualFromSnapshot(m: any, school_id: string | null) {
 }
 
 async function routeSchoolId(db: ReturnType<typeof createServiceClient>, universityRaw: string | null) {
-  const name = routeToSchoolName(universityRaw);
-  if (!name) return null;
   const { data: rows } = await db.from("schools").select("id, name, tier");
-  const schools = rows ?? [];
-  const matched = schools.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
-  if (!matched) return null;
-  if (matched.tier === "satellite" || matched.tier === "bonus") {
-    return representativeSchoolId(schools as any[], matched.tier) ?? matched.id;
-  }
-  return matched.id;
+  return expectedSchoolIdForRaw(universityRaw, (rows ?? []) as any[]);
 }
 
 // Approve a name-only match: link the JazzHR applicant to the suspected candidate.
 export async function approveJazzMatch(reviewId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -910,7 +1118,7 @@ export async function approveJazzMatch(reviewId: string) {
 
 // Reject a name-only match: import the JazzHR applicant as a separate candidate.
 export async function rejectJazzMatch(reviewId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -927,7 +1135,7 @@ export async function rejectJazzMatch(reviewId: string) {
 
 // Unlink a candidate from JazzHR (clears jazz_id so it's no longer auto-refreshed).
 export async function unlinkJazzCandidate(candidateId: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -939,7 +1147,7 @@ export async function unlinkJazzCandidate(candidateId: string) {
 
 // ---- RESOURCES (read: everyone; write: admin+) -----------------------------
 export async function addResource(name: string, description: string | null, link: string | null) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canManageResources(profile.role)) return { error: "Forbidden" };
   if (!name.trim()) return { error: "Name is required" };
@@ -953,7 +1161,7 @@ export async function addResource(name: string, description: string | null, link
 }
 
 export async function updateResource(id: string, name: string, description: string | null, link: string | null) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canManageResources(profile.role)) return { error: "Forbidden" };
   if (!name.trim()) return { error: "Name is required" };
@@ -967,7 +1175,7 @@ export async function updateResource(id: string, name: string, description: stri
 }
 
 export async function deleteResource(id: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !canManageResources(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -978,7 +1186,7 @@ export async function deleteResource(id: string) {
 }
 
 export async function seedPlaybook(schoolId: string, force = false) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -1151,7 +1359,7 @@ async function migrateSchoolPlaybook(
 }
 
 export async function migratePlaybooksToDates() {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isSuper(profile.role)) return { error: "Only a super admin can run this." };
   const db = createServiceClient();
@@ -1171,7 +1379,7 @@ export async function migratePlaybooksToDates() {
 export async function setViewAs(userId: string | null) {
   const me = await getCurrentProfile();
   if (!me || !isAdminPlus(me.role)) return { error: "Forbidden" };
-  const jar = cookies();
+  const jar = await cookies();
   if (userId && userId !== me.id) jar.set(VIEW_AS_COOKIE, userId, { httpOnly: true, sameSite: "lax", path: "/" });
   else jar.delete(VIEW_AS_COOKIE);
   return { ok: true };
@@ -1182,7 +1390,7 @@ export async function addBudgetEntry(e: {
   school_id: string | null; kind: "allocation" | "expense"; label: string;
   amount: number; notes: string | null; receipt_url?: string | null;
 }) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" };
   const leadPlus = profile.role === "team_lead" || isAdminPlus(profile.role);
@@ -1232,7 +1440,7 @@ export async function signedReceiptUrl(path: string): Promise<{ ok: true; url: s
 }
 
 export async function deleteBudgetEntry(id: string) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile) return { error: "Not authenticated" };
   const db = createServiceClient();
@@ -1259,9 +1467,9 @@ export async function getUserSnapshot(userId: string) {
   if (t.role === "admin" || t.role === "super_admin") return { ok: true as const, name: t.full_name, isAdmin: true, queue: [], tasksDone: 0, tasksTotal: 0 };
 
   const { ids: schoolIds } = await getTierSchoolIds(t.school_id);
-  const queue: { name: string; why: string }[] = [];
+  const queue: { name: string; email: string | null; why: string }[] = [];
   if (schoolIds.length) {
-    const cands = await fetchAllRows((from, to) => db.from("candidates").select("id, name, stage, point_person_id, not_interested").in("school_id", schoolIds).range(from, to));
+    const cands = await fetchAllRows((from, to) => db.from("candidates").select("id, name, email, stage, point_person_id, not_interested").in("school_id", schoolIds).range(from, to));
     const list = cands as any[];
     const ids = list.map((c) => c.id);
     const lastContact: Record<string, string> = {};
@@ -1274,7 +1482,7 @@ export async function getUserSnapshot(userId: string) {
     for (const c of list) {
       const ctxId = lead ? c.point_person_id : t.id;
       const tr = evaluateCandidate(c as any, { profileId: ctxId, lastContactISO: lastContact[c.id], now });
-      if (tr) queue.push({ name: c.name, why: tr.why });
+      if (tr) queue.push({ name: c.name, email: c.email, why: tr.why });
     }
   }
 
@@ -1297,7 +1505,7 @@ export async function getUserSnapshot(userId: string) {
 
 // Admin's recommended spending split by category for one budget scope.
 export async function setBudgetGuidance(school_id: string | null, items: { category: string; pct: number }[]) {
-  if (isPreviewing()) return { error: "Exit preview to make changes." };
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
   const profile = await getCurrentProfile();
   if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
   const db = createServiceClient();
@@ -1313,5 +1521,130 @@ export async function setBudgetGuidance(school_id: string | null, items: { categ
   }));
   if (rows.length) { const { error } = await db.from("budget_guidance").insert(rows); if (error) return { error: error.message }; }
   bustCache([], ["/console", "/workspace"]);
+  return { ok: true };
+}
+
+// ============================================================================
+// Outreach templates (phase 23) — ADMIN-CURATED. Fellows/leads can only send
+// from these; management is admin/super-admin only. Attachments live on the
+// template (uploaded here, stored in the private outreach-attachments bucket)
+// and are snapshotted onto campaigns at enqueue.
+// ============================================================================
+
+async function requireAdmin(): Promise<{ profile: NonNullable<Awaited<ReturnType<typeof getCurrentProfile>>> } | { error: string }> {
+  if (await isPreviewing()) return { error: "Exit preview to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  return { profile };
+}
+
+export async function saveOutreachTemplate(input: { id?: string | null; name: string; subject: string; body: string }) {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const { OUTREACH_LIMITS } = await import("@/lib/gmail/candidate-outreach.server");
+  const { findUnsupportedOutreachVariables } = await import("@/lib/gmail/candidate-tokens");
+  const name = (input.name ?? "").trim();
+  const subject = (input.subject ?? "").trim();
+  const body = input.body ?? "";
+  if (!name || !subject || !body.trim()) return { error: "Name, subject, and message are required." };
+  if (name.length > 120) return { error: "Template name is too long." };
+  if (subject.length > OUTREACH_LIMITS.subject) return { error: "Subject is too long." };
+  if (/[\r\n]/.test(subject)) return { error: "Subject cannot contain line breaks." };
+  if (body.length > OUTREACH_LIMITS.body) return { error: "Message is too long." };
+  const unsupported = [...findUnsupportedOutreachVariables(subject), ...findUnsupportedOutreachVariables(body)];
+  if (unsupported.length) return { error: `Unknown merge field(s): ${unsupported.join(", ")}.` };
+
+  const db = createServiceClient();
+  if (input.id) {
+    const { error } = await db.from("outreach_templates")
+      .update({ name, subject, body, updated_at: new Date().toISOString() })
+      .eq("id", input.id);
+    if (error) return { error: error.message };
+    revalidatePath("/console");
+    revalidatePath("/workspace");
+    return { ok: true, id: input.id };
+  }
+  const { data, error } = await db.from("outreach_templates")
+    .insert({ name, subject, body, created_by: gate.profile.id })
+    .select("id").single();
+  if (error || !data) return { error: error?.message ?? "Template could not be saved." };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true, id: (data as any).id as string };
+}
+
+export async function setOutreachTemplateArchived(id: string, archived: boolean) {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const { error } = await createServiceClient().from("outreach_templates")
+    .update({ is_archived: archived, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// Attachment upload: called with FormData { templateId, file }. Type, size,
+// and per-template count/total limits are enforced here — fellows have no
+// upload surface at all.
+export async function uploadOutreachTemplateAttachment(formData: FormData) {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const { ATTACHMENT_LIMITS, ATTACHMENT_MIME_ALLOWLIST, ATTACHMENTS_BUCKET } = await import("@/lib/gmail/outreach-templates.server");
+
+  const templateId = formData.get("templateId");
+  const file = formData.get("file");
+  if (typeof templateId !== "string" || !templateId) return { error: "Missing template." };
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose a file to attach." };
+  if (!ATTACHMENT_MIME_ALLOWLIST.has(file.type)) return { error: "Allowed types: PDF, PNG, JPG, DOCX, PPTX." };
+  if (file.size > ATTACHMENT_LIMITS.maxFileBytes) return { error: `Files must be ${Math.round(ATTACHMENT_LIMITS.maxFileBytes / 1024 / 1024)} MB or smaller.` };
+
+  const db = createServiceClient();
+  const { data: tpl } = await db.from("outreach_templates").select("id").eq("id", templateId).maybeSingle();
+  if (!tpl) return { error: "Template not found." };
+  const { data: existing } = await db.from("outreach_template_attachments")
+    .select("id, size_bytes").eq("template_id", templateId);
+  const current = existing ?? [];
+  if (current.length >= ATTACHMENT_LIMITS.maxFiles) return { error: `A template can have at most ${ATTACHMENT_LIMITS.maxFiles} attachments.` };
+  const total = current.reduce((s, a: any) => s + Number(a.size_bytes), 0) + file.size;
+  if (total > ATTACHMENT_LIMITS.maxTotalBytes) return { error: `A template's attachments can total at most ${Math.round(ATTACHMENT_LIMITS.maxTotalBytes / 1024 / 1024)} MB.` };
+
+  const safeName = file.name.replace(/[^\w.\- ]+/g, "_").slice(0, 100) || "attachment";
+  const path = `${templateId}/${crypto.randomUUID()}-${safeName}`;
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const { error: upErr } = await db.storage.from(ATTACHMENTS_BUCKET).upload(path, bytes, { contentType: file.type });
+  if (upErr) return { error: `Upload failed: ${upErr.message}` };
+  const { error: insErr } = await db.from("outreach_template_attachments")
+    .insert({ template_id: templateId, file_name: file.name.slice(0, 200), mime_type: file.type, size_bytes: file.size, storage_path: path });
+  if (insErr) {
+    await db.storage.from(ATTACHMENTS_BUCKET).remove([path]); // don't leave an orphan object
+    return { error: insErr.message };
+  }
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+export async function deleteOutreachTemplateAttachment(attachmentId: string) {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const { ATTACHMENTS_BUCKET } = await import("@/lib/gmail/outreach-templates.server");
+  const db = createServiceClient();
+  const { data: att } = await db.from("outreach_template_attachments")
+    .select("id, storage_path").eq("id", attachmentId).maybeSingle();
+  if (!att) return { error: "Attachment not found." };
+  const path = (att as any).storage_path as string;
+  const { error: delErr } = await db.from("outreach_template_attachments").delete().eq("id", attachmentId);
+  if (delErr) return { error: delErr.message };
+  // The drain downloads by storage path from each campaign's snapshot, so only
+  // remove the object when no still-draining campaign references it (an
+  // orphaned object is harmless; a missing one fails in-flight sends).
+  const { count } = await db.from("outreach_campaigns")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "queued")
+    .contains("attachments", JSON.stringify([{ storage_path: path }]));
+  if (!count) await db.storage.from(ATTACHMENTS_BUCKET).remove([path]).catch(() => {});
+  revalidatePath("/console");
+  revalidatePath("/workspace");
   return { ok: true };
 }

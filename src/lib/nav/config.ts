@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard, UserSearch, Trophy, GraduationCap, Users, RefreshCw,
-  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck, Wallet,
+  BookMarked, Library, LifeBuoy, CalendarCheck, School, ClipboardCheck, Wallet, Mails,
 } from "lucide-react";
 import type { AppRole } from "@/lib/types";
 import { isAdminPlus, isSuper } from "@/lib/types";
@@ -35,8 +35,8 @@ export function accentFor(role: Role, school?: string): string {
 }
 
 // ---- access (single source of truth for sidebar + route guards) ------------
-export const WORKSPACE_SECTIONS = ["snapshot", "my-school", "standings", "applicants", "playbook", "resources", "budget"] as const;
-export const CONSOLE_SECTIONS = ["snapshot", "overview", "applicants", "standings", "schools", "calendar", "budget", "users", "sync", "review", "playbook", "resources"] as const;
+export const WORKSPACE_SECTIONS = ["snapshot", "my-school", "standings", "applicants", "email-campaigns", "playbook", "resources", "budget"] as const;
+export const CONSOLE_SECTIONS = ["snapshot", "overview", "applicants", "email-campaigns", "standings", "schools", "calendar", "budget", "users", "sync", "review", "playbook", "resources"] as const;
 
 export function canAccessWorkspaceSection(role: Role, section: string): boolean {
   if (isAdminPlus(role)) return false; // admins/super use the console
@@ -70,6 +70,7 @@ function consoleNav(role: Role): NavGroup[] {
     ] },
     { group: "Recruiting", items: [
       { id: "applicants", label: "Candidates", href: "/console/applicants", icon: UserSearch, hint: "Candidate pipeline", badgeKey: "applicants" },
+      { id: "email-campaigns", label: "Email Campaigns", href: "/console/email-campaigns", icon: Mails, hint: "Personalized candidate outreach" },
       { id: "standings", label: "Standings", href: "/console/standings", icon: Trophy, hint: "School leaderboard" },
       { id: "schools", label: "Schools", href: "/console/schools", icon: GraduationCap, hint: "Programs & targets" },
       { id: "calendar", label: "Calendar", href: "/console/calendar", icon: CalendarCheck, hint: "Org-wide & school events" },
@@ -98,6 +99,7 @@ function workspaceNav(role: Role): NavGroup[] {
       { id: "my-school", label: "My School", href: "/workspace/my-school", icon: School, hint: "Your school dashboard" },
       { id: "standings", label: "Standings", href: "/workspace/standings", icon: Trophy, hint: "How schools rank" },
       { id: "applicants", label: "Candidates", href: "/workspace/applicants", icon: UserSearch, hint: "Your candidate pipeline", badgeKey: "applicants" },
+      { id: "email-campaigns", label: "Email Campaigns", href: "/workspace/email-campaigns", icon: Mails, hint: "Outreach to your candidates" },
     ] },
     { group: "Playbook", items: playbookItems },
   ];

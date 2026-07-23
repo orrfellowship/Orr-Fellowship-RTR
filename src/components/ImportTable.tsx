@@ -15,7 +15,7 @@ const C = {
   line: "#E1E5EE", gray: "#33384D", grayMute: "#6E7385",
   orange: "#E8743B", good: "#2E9E6B",
 };
-const HEAD = "'Cabin', sans-serif";
+const HEAD = "var(--font-head)";
 const BONUS_SCHOOL_SUGGESTIONS = [
   "University of Indianapolis", "University of Cincinnati", "Xavier", "Trine",
   "Dayton", "Valpo", "Hanover", "Franklin College", "Anderson", "Denison",
@@ -107,17 +107,18 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
     setResult(null);
   };
 
-  // Read an uploaded CSV/Excel file into the grid. Excel is parsed with SheetJS
-  // (loaded on demand) by converting the first sheet to CSV, then reusing parseRows.
+  // Read an uploaded CSV/Excel file into the grid. Excel parsing is loaded on
+  // demand, then converted to tab-delimited text so we can reuse parseRows.
   const onFile = async (file: File) => {
     setError(null); setResult(null);
     try {
       let csv: string;
-      if (/\.(xlsx|xls)$/i.test(file.name)) {
-        const XLSX = await import("xlsx");
-        const buf = await file.arrayBuffer();
-        const wb = XLSX.read(buf, { type: "array" });
-        csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);
+      if (/\.xlsx$/i.test(file.name)) {
+        const { readSheet } = await import("read-excel-file/browser");
+        const rows = await readSheet(file);
+        csv = rows
+          .map((row) => row.map((cell) => cell == null ? "" : String(cell)).join("\t"))
+          .join("\n");
       } else {
         csv = await file.text();
       }
@@ -158,20 +159,20 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
   };
   const dupeCount = validRows.filter(isDupeRow).length;
   const unmatchedPeople = showPP ? validRows.filter((r) => r.point_person.trim() && !resolvePerson(r.point_person)).length : 0;
-  const resolved = validRows.map((r) => {
-    const { school_id, university_raw } = resolveCandidateSchool(r.school, schools);
-    return {
-      name: r.name.trim(),
-      email: r.email.trim() || null,
-      school_id,
-      university_raw,
-      stage: null,
-      gpa: null,
-      area_of_study: null,
-      linkedin: r.linkedin.trim() || null,
-      point_person_id: showPP ? resolvePerson(r.point_person) || null : null,
-    };
-  });
+  // School text goes to the server RAW — the phase20 matcher resolves it there
+  // (alias/fuzzy within the entrant's group). Anything it can't place lands in
+  // the School Match Review queue instead of silently defaulting to Bonus.
+  const resolved = validRows.map((r) => ({
+    name: r.name.trim(),
+    email: r.email.trim() || null,
+    school_id: null,
+    school_raw: r.school.trim() || null,
+    stage: null,
+    gpa: null,
+    area_of_study: null,
+    linkedin: r.linkedin.trim() || null,
+    point_person_id: showPP ? resolvePerson(r.point_person) || null : null,
+  }));
 
   const doImport = () => {
     if (resolved.length === 0) { setError("No valid rows to import."); return; }
@@ -180,7 +181,9 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
       bulkImportCandidates(resolved).then((r) => {
         if ("error" in r && r.error) setError(r.error);
         else {
-          setResult(`✓ Imported ${"count" in r ? r.count : resolved.length} candidate${resolved.length !== 1 ? "s" : ""}.`);
+          const count = "count" in r ? r.count : resolved.length;
+          const review = "reviewCount" in r ? (r.reviewCount ?? 0) : 0;
+          setResult(`✓ Imported ${count} candidate${count !== 1 ? "s" : ""}.${review > 0 ? ` ${review} school name${review !== 1 ? "s" : ""} couldn't be matched — an admin will place them from School Match Review.` : ""}`);
           router.refresh();
         }
       });
@@ -205,7 +208,7 @@ export default function ImportTable({ schools, team = [], canAssignPointPerson =
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 7, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13, padding: "8px 14px", borderRadius: 9, cursor: "pointer" }}>
           ⬆ Upload CSV / Excel
-          <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} style={{ display: "none" }} />
+          <input type="file" accept=".csv,.xlsx" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} style={{ display: "none" }} />
         </label>
         {showPP && (
           <label style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: C.grayMute }}>

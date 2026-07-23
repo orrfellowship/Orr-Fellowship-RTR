@@ -8,13 +8,15 @@ const C = {
   orange: "#DD5434", blue: "#8AB9E2", gray: "#303333", grayMute: "#6E7385",
   line: "#E4E7EE", canvas: "#F7F8FB", gold: "#C9A227", good: "#2F8F6B",
 };
-const HEAD = "'Cabin', sans-serif";
-const BODY = "'Open Sans', sans-serif";
+const HEAD = "var(--font-head)";
+const BODY = "var(--font-body)";
 // Thousands-separated integer (e.g. 1,200).
 const nf = (n: number) => Number(n || 0).toLocaleString("en-US");
 
 type SchoolRow = { id: string; name: string; tier: string; color_primary: string | null; logo_url: string | null };
-type CandRow   = { id: string; school_id: string | null; stage: string | null };
+// Weighted stage-count rows (school × stage, `n` candidates each) — the page
+// ships aggregate counts, not one row per candidate.
+type CandRow   = { school_id: string | null; stage: string | null; n: number };
 type GoalRow   = { school_id: string; goal_sourced: number; goal_contacted: number; goal_applied: number };
 
 // ---- Tooltip ----
