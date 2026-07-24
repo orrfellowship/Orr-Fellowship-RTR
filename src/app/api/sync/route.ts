@@ -66,6 +66,9 @@ function mapDetail(d: any) {
     gpa: q(d, "Grade Point Average (GPA)", "GPA", "Grade Point Average"),
     grad_date: q(d, "Expected Graduation Date", "Graduation Date", "Expected Graduation"),
     area_of_study: q(d, "Area of Study", "Major", "Field of Study", "Degree"),
+    // Sensitive — surfaced only to Team Leads / Admins, and rolled up into the
+    // Standings DEI check. Stored raw as JazzHR reports it.
+    race: q(d, "Race", "Race/Ethnicity", "Race / Ethnicity", "Ethnicity", "What is your race?", "Race (select all that apply)"),
     source: "jazzhr" as const,
     // NB: point_person, notes, AI fields, favorites, not_interested are
     // NEVER written by sync — they're local-only. Upsert only touches the
@@ -125,7 +128,7 @@ function factualFromMapped(m: ReturnType<typeof mapDetail>, school_id: string | 
     jazz_id: m.jazz_id, name: m.name, email: m.email, phone: m.phone,
     apply_date: m.apply_date, linkedin: m.linkedin, resume_link: m.resume_link,
     stage: m.stage, job_title: m.job_title, university_raw: m.university_raw,
-    gpa: m.gpa, grad_date: m.grad_date, area_of_study: m.area_of_study,
+    gpa: m.gpa, grad_date: m.grad_date, area_of_study: m.area_of_study, race: m.race,
   };
   if (school_id) f.school_id = school_id; // only set when JazzHR routes confidently
   return f;

@@ -235,10 +235,16 @@ function DrillModal({ m, mySchoolId, onClose }: { m: SchoolMetric; mySchoolId: s
 }
 
 // ---- Main component ----
-export default function StandingsClient({ schools, candidates, goals, mySchoolId }: {
+// Diversity benchmark: a school's DEI rating should be at least this share.
+const DEI_BENCHMARK = 28;
+
+export default function StandingsClient({ schools, candidates, goals, mySchoolId, dei }: {
   schools: SchoolRow[]; candidates: CandRow[]; goals: GoalRow[]; mySchoolId: string | null;
+  // Per-school {total, diverse} counts — provided only for non-fellow viewers.
+  // Its presence gates the sensitive DEI tab.
+  dei?: { school_id: string; total: number; diverse: number }[];
 }) {
-  const [subTab, setSubTab] = useState<"goal" | "funnel" | "matrix" | "h2h">("goal");
+  const [subTab, setSubTab] = useState<"goal" | "funnel" | "matrix" | "h2h" | "dei">("goal");
   const [drillId, setDrillId] = useState<string | null>(null);
   const [hoveredBar, setHoveredBar] = useState<string | null>(null);
 
@@ -254,6 +260,22 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
 
   const stats    = useMemo(() => computeSchoolMetrics(merged.candidates, merged.schools, merged.goals), [merged]);
   const statsMap = useMemo(() => new Map(stats.map((m) => [m.key, m])), [stats]);
+
+  // DEI counts collapsed onto merged (grouped) school ids, matching the rest of
+  // the board. Only present for non-fellow viewers.
+  const deiByMerged = useMemo(() => {
+    if (!dei) return null;
+    const tierOf = new Map(schools.map((s) => [s.id, s.tier]));
+    const map = new Map<string, { total: number; diverse: number }>();
+    for (const d of dei) {
+      const tier = tierOf.get(d.school_id);
+      const key = tier === "satellite" || tier === "bonus" ? `group-${tier}` : d.school_id;
+      const cur = map.get(key) ?? { total: 0, diverse: 0 };
+      cur.total += d.total; cur.diverse += d.diverse;
+      map.set(key, cur);
+    }
+    return map;
+  }, [dei, schools]);
 
   const tierLabel = (t: string) =>
     t === "core" ? "Core Schools" : t === "satellite" ? "Satellite School" : t === "bonus" ? "Bonus School" : t;
@@ -321,6 +343,7 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
         <button style={subBtnStyle("funnel")} onClick={() => setSubTab("funnel")}>Funnel Comparison</button>
         <button style={subBtnStyle("matrix")} onClick={() => setSubTab("matrix")}>Volume × Yield</button>
         <button style={subBtnStyle("h2h")}    onClick={() => setSubTab("h2h")}>Head-to-Head</button>
+        {deiByMerged && <button style={subBtnStyle("dei")} onClick={() => setSubTab("dei")}>DEI Rating</button>}
       </div>
 
       {/* ─── GOAL ATTAINMENT ─── */}
@@ -686,6 +709,54 @@ export default function StandingsClient({ schools, candidates, goals, mySchoolId
             {(!mA || !mB) && (
               <div style={{ padding: 40, textAlign: "center", color: C.grayMute }}>Select two schools above to compare.</div>
             )}
+          </div>
+        );
+      })()}
+
+      {subTab === "dei" && deiByMerged && (() => {
+        const rows = merged.schools.map((s) => {
+          const d = deiByMerged.get(s.id) ?? { total: 0, diverse: 0 };
+          const rating = d.total > 0 ? Math.round((d.diverse / d.total) * 100) : null;
+          return { id: s.id, name: s.name, tier: s.tier, total: d.total, diverse: d.diverse, rating };
+        }).sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1));
+        const withData = rows.filter((r) => r.total > 0);
+        const meeting = withData.filter((r) => (r.rating ?? 0) >= DEI_BENCHMARK).length;
+        return (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 16px", marginBottom: 18, border: `1px solid ${C.line}`, borderRadius: 12, background: "#FCFBF8" }}>
+              <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: C.grayMute, lineHeight: 1.5 }}>
+                <b style={{ color: C.navy }}>DEI Rating</b> = share of a school&apos;s candidates who are non-white (any race other than &ldquo;White&rdquo;; declines &amp; no-answers count in the total but not as diverse). Benchmark: <b style={{ color: C.navy }}>{DEI_BENCHMARK}%</b>.
+              </div>
+              <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 14, color: meeting === withData.length && withData.length > 0 ? C.good : C.navy }}>
+                {meeting}/{withData.length} school{withData.length === 1 ? "" : "s"} meet the benchmark
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {rows.map((r) => {
+                const meets = r.rating != null && r.rating >= DEI_BENCHMARK;
+                const tone = r.rating == null ? C.grayMute : meets ? C.good : C.orange;
+                return (
+                  <div key={r.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: C.navy }}>{r.name}</span>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.grayMute }}>{tierLabel(r.tier)}</span>
+                      <span style={{ marginLeft: "auto", fontFamily: HEAD, fontWeight: 800, fontSize: 20, color: tone }}>{r.rating == null ? "—" : `${r.rating}%`}</span>
+                      {r.rating != null && (
+                        <span style={{ fontSize: 11, fontWeight: 700, color: tone, background: `${tone}14`, borderRadius: 999, padding: "2px 9px" }}>{meets ? "Meets" : "Below"}</span>
+                      )}
+                    </div>
+                    {/* rating bar with the 28% benchmark marker */}
+                    <div style={{ position: "relative", height: 8, borderRadius: 99, background: C.line, overflow: "visible" }}>
+                      <div style={{ height: "100%", width: `${Math.min(r.rating ?? 0, 100)}%`, background: tone, borderRadius: 99, transition: "width .5s" }} />
+                      <div title={`${DEI_BENCHMARK}% benchmark`} style={{ position: "absolute", top: -3, left: `${DEI_BENCHMARK}%`, width: 2, height: 14, background: C.navy, transform: "translateX(-1px)" }} />
+                    </div>
+                    <div style={{ fontSize: 11.5, color: C.grayMute, marginTop: 7 }}>
+                      {r.total > 0 ? <>{nf(r.diverse)} of {nf(r.total)} candidates diverse · benchmark {DEI_BENCHMARK}%</> : "No candidate data yet"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         );
       })()}

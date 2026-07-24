@@ -64,6 +64,16 @@ export const getCandidateStageCounts = cache(async (): Promise<StageCountRow[]> 
   return ((data as any[]) ?? []).map((r) => ({ ...r, n: Number(r.n) }));
 });
 
+// Per-school DEI counts (total + diverse) for the Standings DEI check. Diverse =
+// any candidate whose race is present and not "White" (declines/blanks excluded
+// from the numerator but still counted in the total). Sensitive — only loaded
+// for non-fellow viewers.
+export type SchoolDeiCount = { school_id: string; total: number; diverse: number };
+export const getSchoolDeiCounts = cache(async (): Promise<SchoolDeiCount[]> => {
+  const { data } = await createServiceClient().rpc("school_dei_counts");
+  return ((data as any[]) ?? []).map((r) => ({ school_id: r.school_id, total: Number(r.total), diverse: Number(r.diverse) }));
+});
+
 // Collapse to (school_id, stage) for consumers that don't split by raw
 // university text (standings, workspace snapshot counters).
 export function collapseStageCounts(
@@ -88,8 +98,9 @@ export const CAND_COLS_PIPELINE = "id, school_id, university_raw, stage";
 // Full set the applicants/board views render.
 export const CAND_COLS_WORKSPACE =
   "id, name, email, school_id, stage, gpa, area_of_study, university_raw, jazz_id, linkedin, point_person_id, not_interested, resume_link, source, created_by";
+// Console is admin-only (non-fellow), so it may carry the sensitive race field.
 export const CAND_COLS_CONSOLE =
-  "id, jazz_id, name, email, school_id, stage, gpa, area_of_study, university_raw, linkedin, resume_link, point_person_id, not_interested, grad_date, source, created_by";
+  "id, jazz_id, name, email, school_id, stage, gpa, area_of_study, university_raw, linkedin, resume_link, point_person_id, not_interested, grad_date, race, source, created_by";
 
 // ---- cached reference data -------------------------------------------------
 export const getSchoolsCached = unstable_cache(

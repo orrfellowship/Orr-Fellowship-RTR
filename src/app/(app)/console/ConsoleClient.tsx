@@ -75,6 +75,7 @@ type Cand = {
   stage: string | null; gpa: string | null; area_of_study: string | null; university_raw: string | null;
   linkedin: string | null; resume_link: string | null; grad_date: string | null;
   point_person_id: string | null; not_interested: boolean; is_favorite: boolean;
+  race?: string | null; // admin-only; from JazzHR
   source: string | null; created_by: string | null;
 };
 type TeamMember = { id: string; full_name: string; email?: string | null; school_id?: string | null; role?: string | null };
@@ -170,12 +171,14 @@ function countStages(rows: StageCount[], set: Set<string>): number {
 export default function ConsoleClient({
   profile, previewMode = false, initialSection, schools, candidates, stageCounts = [], schoolReviews = [], team, goals, phases, users, reviews, resources,
   events = [], people = [], budgetEntries = [], budgetGuidance = [],
-  candidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], facetUnrouted = 0, slimCandidates = [],
+  candidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], facetUnrouted = 0, slimCandidates = [], dei,
 }: {
   profile: Profile; previewMode?: boolean; initialSection: string; schools: School[]; candidates: Cand[]; team: TeamMember[];
   // Aggregate sections (overview/standings/schools) read weighted counts — one
   // row per school × raw university × stage — instead of full candidate rows.
   stageCounts?: StageCount[];
+  // Per-school DEI counts for the Standings tab (admins are non-fellow).
+  dei?: { school_id: string; total: number; diverse: number }[];
   // Pending phase20 school-match reviews (applicants section).
   schoolReviews?: SchoolMatchReviewRow[];
   goals: Goal[]; phases: Phase[]; users: UserProfile[];
@@ -802,6 +805,7 @@ export default function ConsoleClient({
             candidates={stageCounts.map((r) => ({ school_id: r.school_id, stage: r.stage, n: r.n }))}
             goals={goals}
             mySchoolId={null}
+            dei={dei}
           />
         )}
 
@@ -1508,7 +1512,7 @@ function CandidateDrawer({ c, profile, team, schools, previewMode, onAssignPoint
           {editing ? (
             <EditCandidateForm edit={edit} setEf={setEf} schools={schools} saving={saving} onSave={saveEdit} onCancel={() => setEditing(false)} />
           ) : (
-            ([["Email", c.email], ["GPA", c.gpa], ["Grad Date", c.grad_date], ["School", schoolDisplay.label], ["University", schoolDisplay.isGrouped ? null : c.university_raw], ["Added by", c.created_by ? (team.find((t) => t.id === c.created_by)?.full_name ?? "Team member") : (c.source === "jazzhr" ? "JazzHR sync" : "—")]] as [string, string | null][]).map(([k, v]) => (
+            ([["Email", c.email], ["GPA", c.gpa], ["Grad Date", c.grad_date], ["Race", c.race ?? "Not provided"], ["School", schoolDisplay.label], ["University", schoolDisplay.isGrouped ? null : c.university_raw], ["Added by", c.created_by ? (team.find((t) => t.id === c.created_by)?.full_name ?? "Team member") : (c.source === "jazzhr" ? "JazzHR sync" : "—")]] as [string, string | null][]).map(([k, v]) => (
               <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
                 <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span>
                 <span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>

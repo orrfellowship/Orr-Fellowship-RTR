@@ -51,6 +51,7 @@ type Cand = {
   resume_link: string | null; point_person_id: string | null;
   not_interested: boolean; is_favorite: boolean;
   direct_placement?: boolean;
+  race?: string | null; // present only for non-fellow viewers
   source: string | null; created_by: string | null;
 };
 type School      = { id: string; name: string; color_primary: string | null; logo_url: string | null };
@@ -107,7 +108,7 @@ const APPLIED  = new Set(["applied", "bmi", "finalist", "fellow"]);
 export default function WorkspaceClient({
   profile, previewMode = false, initialSection, school, candidates, stageCounts = [], team, phases, allSchools, allCandidates, allGoals, groupName, lastContactByCand, resources, events, allProfiles,
   budgetEntries = [], budgetSchoolId = null, budgetGuidance = [],
-  allCandidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], slimCandidates = [],
+  allCandidatesTotal, candidatesPageSize = 500, facetMajors = [], facetStages = [], slimCandidates = [], dei,
 }: {
   profile: Profile; previewMode?: boolean; initialSection: string; school: School | null; candidates: Cand[]; team: TeamMember[]; phases: Phase[];
   // Org-wide weighted counts (school × stage, `n` candidates each) — feeds the
@@ -122,6 +123,8 @@ export default function WorkspaceClient({
   allCandidatesTotal?: number; candidatesPageSize?: number;
   facetMajors?: string[]; facetStages?: string[];
   slimCandidates?: { id: string; name: string; email: string | null; school_id: string | null }[];
+  // Per-school DEI counts for the Standings tab — non-fellow viewers only.
+  dei?: { school_id: string; total: number; diverse: number }[];
 }) {
   const isMobile = useIsMobile();
   const [tab] = useState<"plan" | "board" | "playbook" | "standings" | "all" | "resources" | "budget">(initialSection as any);
@@ -688,7 +691,7 @@ export default function WorkspaceClient({
 
         {/* ---- STANDINGS ---- */}
         {tab === "standings" && (
-          <StandingsClient schools={allSchools} candidates={stageCounts} goals={allGoals} mySchoolId={school?.id ?? null} />
+          <StandingsClient schools={allSchools} candidates={stageCounts} goals={allGoals} mySchoolId={school?.id ?? null} dei={dei} />
         )}
 
         {/* ---- APPLICANTS ---- */}
@@ -1627,7 +1630,13 @@ function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onCl
             </div>
           ) : (
             <>
-              {[["Email", c.email], ...(schoolDisplay ? [["School", schoolDisplay.label] as [string, string]] : []), ["GPA", c.gpa]].map(([k, v]) => (
+              {[
+                ["Email", c.email] as [string, string | null],
+                ...(schoolDisplay ? [["School", schoolDisplay.label] as [string, string]] : []),
+                ["GPA", c.gpa] as [string, string | null],
+                // Race is only in the data for non-fellow viewers; gate again here.
+                ...(profile.role !== "fellow" ? [["Race", c.race ?? "Not provided"] as [string, string]] : []),
+              ].map(([k, v]) => (
                 <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
                   <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{k}</span><span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>{v ?? "—"}</span>
                 </div>

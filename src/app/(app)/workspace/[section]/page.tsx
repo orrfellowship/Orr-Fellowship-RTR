@@ -6,7 +6,7 @@ import { isAdminPlus, type Profile } from "@/lib/types";
 import { canAccessWorkspaceSection } from "@/lib/nav/config";
 import {
   getTierSchoolIds, getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
-  getCandidateStageCounts, collapseStageCounts,
+  getCandidateStageCounts, collapseStageCounts, getSchoolDeiCounts,
 } from "@/lib/queries";
 import WorkspaceClient from "../WorkspaceClient";
 import { listCandidates } from "../../console/actions";
@@ -93,8 +93,10 @@ async function WorkspaceSectionData({ section, profile, previewMode, gmailQuery 
 
   // Parallel, section-scoped fetches. Reference tables come from the shared
   // Data Cache (getSchoolsCached / getGoalsCached / getResourcesCached).
+  // Race is sensitive: fetch it only for non-fellow viewers (Team Leads +).
+  const wsCandCols = "id, jazz_id, name, email, school_id, university_raw, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, direct_placement, source, created_by" + (profile.role !== "fellow" ? ", race" : "");
   const [candidates, favs, team, phases, stageCountRows, allProfiles, allSchools, allGoals, resources] = await Promise.all([
-    need.candidates ? fetchAllRows((from, to) => serviceDb.from("candidates").select("id, jazz_id, name, email, school_id, university_raw, stage, gpa, area_of_study, linkedin, resume_link, point_person_id, not_interested, direct_placement, source, created_by").in("school_id", tierSchoolIds).order("name").range(from, to)) : Promise.resolve([] as any[]),
+    need.candidates ? fetchAllRows((from, to) => serviceDb.from("candidates").select(wsCandCols).in("school_id", tierSchoolIds).order("name").range(from, to)) : Promise.resolve([] as any[]),
     wantFavs ? serviceDb.from("favorites").select("candidate_id").eq("user_id", profile.id).then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     need.team ? serviceDb.from("profiles").select("id, full_name, email, role").in("school_id", tierSchoolIds).eq("is_active", true).order("full_name").then((r) => r.data ?? []) : Promise.resolve([] as any[]),
     // Tier-wide phase read: the tier's playbook stays visible no matter which
@@ -192,6 +194,9 @@ async function WorkspaceSectionData({ section, profile, previewMode, gmailQuery 
   const enriched = (candidates ?? []).map((c: any) => ({ ...c, is_favorite: favSet.has(c.id) }));
   const allEnriched = paginatedList ? allPage.rows : [];
 
+  // Sensitive DEI rollup — only for the Standings tab and never for fellows.
+  const dei = (need.stageCounts && profile.role !== "fellow") ? await getSchoolDeiCounts() : undefined;
+
   return (
     <WorkspaceClient
       profile={profile}
@@ -200,6 +205,7 @@ async function WorkspaceSectionData({ section, profile, previewMode, gmailQuery 
       school={school ? { id: school.id, name: school.name, color_primary: school.color_primary, logo_url: school.logo_url } : null}
       candidates={enriched}
       stageCounts={collapseStageCounts(stageCountRows)}
+      dei={dei}
       team={team ?? []}
       phases={phasesWithReview}
       allSchools={allSchools ?? []}

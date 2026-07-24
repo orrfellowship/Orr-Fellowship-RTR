@@ -6,7 +6,7 @@ import { isAdminPlus, isSuper, type Profile } from "@/lib/types";
 import { canAccessConsoleSection } from "@/lib/nav/config";
 import {
   getSchoolsCached, getGoalsCached, getResourcesCached, fetchAllRows,
-  getCandidateStageCounts, type StageCountRow, CAND_COLS_CONSOLE,
+  getCandidateStageCounts, getSchoolDeiCounts, type StageCountRow, CAND_COLS_CONSOLE,
 } from "@/lib/queries";
 import ConsoleClient from "../ConsoleClient";
 import AdminSnapshotClient from "../AdminSnapshotClient";
@@ -300,6 +300,9 @@ async function ConsoleSectionData({
     return [...byKey.values()];
   })();
 
+  // Per-school DEI counts for the Standings tab (console is admin-only = non-fellow).
+  const dei = need.stageCounts ? await getSchoolDeiCounts() : undefined;
+
   return (
     <ConsoleClient
       profile={profile}
@@ -308,6 +311,7 @@ async function ConsoleSectionData({
       schools={schools ?? []}
       candidates={enriched}
       stageCounts={countsForClient}
+      dei={dei}
       schoolReviews={schoolReviews}
       candidatesTotal={paginatedList ? candPage.total : undefined}
       candidatesPageSize={PAGE_SIZE}
