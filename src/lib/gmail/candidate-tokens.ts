@@ -136,6 +136,9 @@ export type OutreachAudience = {
 export type CampaignHistoryItem = {
   id: string; name: string; status: string; createdAt: string; total: number;
   sent: number; failed: number; pending: number; skipped: number; replied: number; bounced: number;
+  // Set only when a team lead is viewing their whole team's campaigns, so each
+  // row can show who sent it. Null for a viewer's own campaigns.
+  senderName?: string | null;
 };
 
 export function renderOutreachTemplate(template: string, tokens: OutreachTokens): string {

@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/server";
-import { getSchoolsCached, fetchAllRows } from "@/lib/queries";
+import { getSchoolsCached, fetchAllRows, getTierSchoolIds } from "@/lib/queries";
 import { candidateSchoolDisplay } from "@/lib/candidateSchool";
 import { isAdminPlus, type AppRole, type Profile } from "@/lib/types";
 import { candidateOutreachTokens, renderOutreachTemplate, findUnsupportedOutreachVariables, type ComposerRecipient, type OutreachAudience, type CampaignHistoryItem } from "./candidate-tokens";
@@ -384,9 +384,24 @@ export async function loadOutreachAudiences(profile: Profile): Promise<OutreachA
 // and come back to check how a send went (sent / failed / replied / bounced).
 export async function loadRecentCampaigns(profile: Profile, limit = 25): Promise<CampaignHistoryItem[]> {
   const db = createServiceClient();
+  // Team leads oversee their whole team's outreach — expand from just their own
+  // campaigns to every active member of their tier. Everyone else sees theirs.
+  let creatorIds = [profile.id];
+  const nameById = new Map<string, string>([[profile.id, profile.full_name]]);
+  const teamView = profile.role === "team_lead";
+  if (teamView) {
+    const { ids: schoolIds } = await getTierSchoolIds(profile.school_id);
+    if (schoolIds.length) {
+      const { data: members } = await db.from("profiles").select("id, full_name").in("school_id", schoolIds).eq("is_active", true);
+      if (members?.length) {
+        creatorIds = members.map((m: any) => m.id);
+        for (const m of members as any[]) nameById.set(m.id, m.full_name);
+      }
+    }
+  }
   const { data: camps } = await db.from("outreach_campaigns")
-    .select("id, name, status, created_at, total_count")
-    .eq("created_by", profile.id).order("created_at", { ascending: false }).limit(limit);
+    .select("id, name, status, created_at, total_count, created_by")
+    .in("created_by", creatorIds).order("created_at", { ascending: false }).limit(limit);
   if (!camps?.length) return [];
   const ids = camps.map((c: any) => c.id);
   const sends = await fetchAllRows<any>((from, to) => db.from("outreach_sends").select("campaign_id, status, replied_at, bounced_at").in("campaign_id", ids).range(from, to));
@@ -401,5 +416,8 @@ export async function loadRecentCampaigns(profile: Profile, limit = 25): Promise
     if (s.replied_at) a.replied++;
     if (s.bounced_at) a.bounced++;
   }
-  return camps.map((c: any) => ({ id: c.id, name: c.name, status: c.status, createdAt: c.created_at, total: c.total_count, ...agg.get(c.id)! }));
+  return camps.map((c: any) => ({
+    id: c.id, name: c.name, status: c.status, createdAt: c.created_at, total: c.total_count, ...agg.get(c.id)!,
+    senderName: teamView && c.created_by !== profile.id ? (nameById.get(c.created_by) ?? "A teammate") : null,
+  }));
 }

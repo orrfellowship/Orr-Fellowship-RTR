@@ -654,7 +654,7 @@ export default function EmailCampaignsClient({
 
       {step === 0 && recentCampaigns.length > 0 && (
         <section className="history-card">
-          <div className="history-head"><History size={16} /> Your recent campaigns <small>click one to check on it</small></div>
+          <div className="history-head"><History size={16} /> {recentCampaigns.some((c) => c.senderName) ? "Your team's recent campaigns" : "Your recent campaigns"} <small>click one to check on it</small></div>
           <div className="history-list">
             {recentCampaigns.map((c) => {
               const inProgress = c.status === "queued" || c.status === "sending" || c.pending > 0;
@@ -662,7 +662,7 @@ export default function EmailCampaignsClient({
                 <button type="button" key={c.id} className="history-row" onClick={() => viewCampaign(c)}>
                   <div className="history-main">
                     <strong>{c.name}</strong>
-                    <small>{new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · {c.total} recipient{c.total === 1 ? "" : "s"}</small>
+                    <small>{c.senderName ? `${c.senderName} · ` : ""}{new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · {c.total} recipient{c.total === 1 ? "" : "s"}</small>
                   </div>
                   <div className="history-stats">
                     {inProgress
