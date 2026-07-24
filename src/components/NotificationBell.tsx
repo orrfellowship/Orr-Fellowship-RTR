@@ -32,12 +32,31 @@ export default function NotificationBell({ notifications, canTest = false }: { n
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  // Optimistically cleared ids: the moment the panel opens we mark everything
-  // read locally so the badge drops to 0 immediately, without waiting on the
-  // server round-trip / route refetch (which is what left the count "stuck").
-  const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
-  const isRead = (n: AppNotification) => n.read || clearedIds.has(n.id);
-  const unread = notifications.filter((n) => !isRead(n)).length;
+  const unread = notifications.filter((n) => !n.read).length;
+  // The badge NUMBER hides as soon as you open the bell (so it doesn't nag), but
+  // the notifications themselves stay — read ones remain as browsable history,
+  // and their unread dots persist while the panel is open so you can see what's
+  // new. They're only marked read (persisted) when the panel closes. The number
+  // comes back if a new notification arrives later.
+  const [badgeDismissed, setBadgeDismissed] = useState(false);
+  const badgeCount = badgeDismissed ? 0 : unread;
+  const prevUnread = useRef(unread);
+  useEffect(() => {
+    if (unread > prevUnread.current) setBadgeDismissed(false);
+    prevUnread.current = unread;
+  }, [unread]);
+
+  // Persist "read" only when the panel closes (not the instant it opens), so
+  // history is never lost and the unread state is visible while you read.
+  const unreadRef = useRef(unread);
+  unreadRef.current = unread;
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (wasOpen.current && !open && unreadRef.current > 0) {
+      startTransition(() => { markNotificationsRead([]).then(() => router.refresh()); });
+    }
+    wasOpen.current = open;
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendTest = async () => {
     setTesting(true);
@@ -67,11 +86,7 @@ export default function NotificationBell({ notifications, canTest = false }: { n
   const openPanel = () => {
     setOpen((v) => {
       const next = !v;
-      if (next && unread > 0) {
-        // Clear the badge instantly, then persist server-side.
-        setClearedIds((prev) => { const s = new Set(prev); for (const n of notifications) if (!n.read) s.add(n.id); return s; });
-        startTransition(() => { markNotificationsRead([]).then(() => router.refresh()); });
-      }
+      if (next && unread > 0) setBadgeDismissed(true); // hide the number; keep the items + dots
       return next;
     });
   };
@@ -88,21 +103,21 @@ export default function NotificationBell({ notifications, canTest = false }: { n
       <button onClick={openPanel} aria-label="Notifications" className="orr-bell"
         style={{ position: "relative", border: "1px solid #eceaf2", background: "#ffffff", color: "#211d44", width: 34, height: 30, borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Bell size={15} />
-        {unread > 0 && (
-          <span style={{ position: "absolute", top: -6, right: -6, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 999, background: C.orange, color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{unread > 9 ? "9+" : unread}</span>
+        {badgeCount > 0 && (
+          <span style={{ position: "absolute", top: -6, right: -6, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 999, background: C.orange, color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{badgeCount > 9 ? "9+" : badgeCount}</span>
         )}
       </button>
 
       {open && (
         <div style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 90, width: 340, maxWidth: "90vw", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: "0 10px 30px rgba(11,12,42,.18)", overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontWeight: 700, fontSize: 14, color: C.navy }}>Notifications</div>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.line}`, fontFamily: HEAD, fontWeight: 700, fontSize: 14, color: C.navy }}>Notifications {unread > 0 && <span style={{ fontWeight: 600, fontSize: 12, color: C.orange }}>· {unread} new</span>}</div>
           <div style={{ maxHeight: 380, overflowY: "auto" }}>
             {notifications.length === 0 ? (
               <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: C.grayMute }}>You're all caught up.</div>
             ) : notifications.map((n) => (
               <div key={n.id} onClick={() => go(n.link)}
-                style={{ padding: "11px 16px", borderBottom: `1px solid ${C.line}`, cursor: n.link ? "pointer" : "default", background: isRead(n) ? "#fff" : C.canvas, display: "flex", gap: 10 }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: isRead(n) ? "transparent" : C.orange, marginTop: 6, flexShrink: 0 }} />
+                style={{ padding: "11px 16px", borderBottom: `1px solid ${C.line}`, cursor: n.link ? "pointer" : "default", background: n.read ? "#fff" : C.canvas, display: "flex", gap: 10 }}>
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: n.read ? "transparent" : C.orange, marginTop: 6, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.gray }}>{n.title}</div>
                   {n.body && <div style={{ fontSize: 12.5, color: C.grayMute, marginTop: 1 }}>{n.body}</div>}
