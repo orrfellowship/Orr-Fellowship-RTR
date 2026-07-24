@@ -119,7 +119,7 @@ export type OutreachTokens = {
 export type ComposerRecipient = {
   id: string; name: string; email: string | null;
   school: string; stage: string; classYear: string; area: string | null;
-  doNotContact: boolean; tokens: OutreachTokens;
+  doNotContact: boolean; isFavorite: boolean; tokens: OutreachTokens;
 };
 
 // A selectable group. endpoint routes the send: "candidates" (assignment-scoped)

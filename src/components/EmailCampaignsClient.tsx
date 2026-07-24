@@ -195,6 +195,7 @@ export default function EmailCampaignsClient({
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState("");
   const [pointPersonFilter, setPointPersonFilter] = useState("");
+  const [favOnly, setFavOnly] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [step, setStep] = useState(0);
   const [maxReached, setMaxReached] = useState(0);
@@ -232,7 +233,7 @@ export default function EmailCampaignsClient({
   const submission = useRef<{ fingerprint: string; key: string } | null>(null);
   const isSearchOnlyAudience = audience?.key === "all";
   const hasRecipientSearch = search.trim().length > 0;
-  const hasRecipientCriteria = hasRecipientSearch || pointPersonFilter.length > 0;
+  const hasRecipientCriteria = hasRecipientSearch || pointPersonFilter.length > 0 || favOnly;
 
   // Distinct stages present in this audience, for the stage filter dropdown.
   const stageOptions = useMemo(
@@ -247,17 +248,18 @@ export default function EmailCampaignsClient({
   // the "select all filtered" action).
   const matchingRecipients = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (audience?.key === "all" && !q && !pointPersonFilter) return [];
+    if (audience?.key === "all" && !q && !pointPersonFilter && !favOnly) return [];
     return allRecipients.filter((r) => {
+      if (favOnly && !r.isFavorite) return false;
       if (stageFilter && r.stage !== stageFilter) return false;
       if (pointPersonFilter && r.tokens.fellow_point_person !== pointPersonFilter) return false;
       if (!q) return true;
       return `${r.name} ${r.email ?? ""} ${r.school} ${r.tokens.fellow_point_person}`.toLowerCase().includes(q);
     });
-  }, [allRecipients, audience?.key, search, stageFilter, pointPersonFilter]);
+  }, [allRecipients, audience?.key, search, stageFilter, pointPersonFilter, favOnly]);
   const filteredRecipients = matchingRecipients;
   const shownRecipients = filteredRecipients.slice(recipientPage * recipientPageSize, (recipientPage + 1) * recipientPageSize);
-  useEffect(() => { setRecipientPage(0); }, [audienceKey, search, stageFilter, pointPersonFilter, recipientPageSize]);
+  useEffect(() => { setRecipientPage(0); }, [audienceKey, search, stageFilter, pointPersonFilter, favOnly, recipientPageSize]);
 
   const selectedRecipients = useMemo(
     () => allRecipients.filter((r) => selectedIds.has(r.id) && recipientEligible(r)),
@@ -333,7 +335,7 @@ export default function EmailCampaignsClient({
   function switchAudience(key: string) {
     setAudienceKey(key);
     setSelectedIds(new Set());
-    setSearch(""); setStageFilter(""); setPointPersonFilter(""); setPreviewIndex(0);
+    setSearch(""); setStageFilter(""); setPointPersonFilter(""); setFavOnly(false); setPreviewIndex(0);
     setConfirmationFingerprint(null);
   }
 
@@ -654,6 +656,12 @@ export default function EmailCampaignsClient({
                   <option value="">All stages</option>
                   {stageOptions.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
+              )}
+              {audience?.endpoint === "candidates" && (
+                <button type="button" className={favOnly ? "aud-action" : "aud-action ghost"} onClick={() => setFavOnly((v) => !v)} title="Only candidates you've favorited"
+                  style={favOnly ? { borderColor: "#C9A227", background: "#FBF3D6", color: "#8A6D0E" } : undefined}>
+                  {favOnly ? "★ Favorites" : "☆ Favorites"}
+                </button>
               )}
               {(!isSearchOnlyAudience || hasRecipientCriteria) && filteredRecipients.length > 0 && (
                 <button type="button" className="aud-action" onClick={selectAllFiltered}>Select {isSearchOnlyAudience ? "matches" : search || stageFilter ? "filtered" : "all"} ({filteredRecipients.filter(recipientEligible).length})</button>

@@ -289,7 +289,7 @@ async function defaultLoadUsers(ids: string[] | null): Promise<OutreachUser[]> {
 // preview matches the server's send.
 // ---------------------------------------------------------------------------
 
-function candidateToComposer(row: any, schools: any[], ownerNames: Map<string, string>): ComposerRecipient {
+function candidateToComposer(row: any, schools: any[], ownerNames: Map<string, string>, favoriteIds: Set<string>): ComposerRecipient {
   const d = candidateSchoolDisplay(row, schools);
   const school = d.specificLabel ?? d.label;
   const pointPerson = (row.point_person_id && ownerNames.get(row.point_person_id)) || "your Orr contact";
@@ -297,14 +297,21 @@ function candidateToComposer(row: any, schools: any[], ownerNames: Map<string, s
   return {
     id: row.id, name: (row.name ?? "").trim(), email: row.email, school,
     stage: row.stage ?? "", classYear: tokens.class_year, area: row.area_of_study ?? null,
-    doNotContact: !!row.do_not_contact, tokens,
+    doNotContact: !!row.do_not_contact, isFavorite: favoriteIds.has(row.id), tokens,
   };
 }
 
 function userToComposer(u: OutreachUser): ComposerRecipient {
   const tokens = candidateOutreachTokens({ name: u.fullName, stage: "", gradDate: "", school: "", pointPerson: "" });
   const yearLabel = u.fellowshipYear === 1 ? "First-year fellow" : "Second-year fellow";
-  return { id: u.id, name: (u.fullName ?? "").trim(), email: u.email, school: "", stage: yearLabel, classYear: "", area: u.role ?? null, doNotContact: false, tokens };
+  return { id: u.id, name: (u.fullName ?? "").trim(), email: u.email, school: "", stage: yearLabel, classYear: "", area: u.role ?? null, doNotContact: false, isFavorite: false, tokens };
+}
+
+// The current user's favorited candidate ids — drives the "★ Favorites" filter
+// in the composer (favorites are per-user).
+async function loadFavoriteCandidateIds(userId: string): Promise<Set<string>> {
+  const { data } = await createServiceClient().from("favorites").select("candidate_id").eq("user_id", userId);
+  return new Set((data ?? []).map((r: any) => r.candidate_id));
 }
 
 const CAND_FIELDS = "id, name, email, stage, grad_date, school_id, university_raw, point_person_id, do_not_contact, area_of_study";
@@ -312,6 +319,8 @@ const CAND_FIELDS = "id, name, email, stage, grad_date, school_id, university_ra
 export async function loadOutreachAudiences(profile: Profile): Promise<OutreachAudience[]> {
   const db = createServiceClient();
   const schools = (await getSchoolsCached()) as any[];
+
+  const favoriteIds = await loadFavoriteCandidateIds(profile.id);
 
   if (isAdminPlus(profile.role)) {
     const cands = await fetchAllRows<any>((from, to) => db.from("candidates").select(CAND_FIELDS).order("name").range(from, to));
@@ -333,7 +342,7 @@ export async function loadOutreachAudiences(profile: Profile): Promise<OutreachA
       fellowshipYear: p.fellowship_year,
     })));
     return [
-      { key: "all", label: "All candidates", description: "Every candidate in the pipeline", endpoint: "candidates", recipients: cands.map((c) => candidateToComposer(c, schools, ownerNames)) },
+      { key: "all", label: "All candidates", description: "Every candidate in the pipeline", endpoint: "candidates", recipients: cands.map((c) => candidateToComposer(c, schools, ownerNames, favoriteIds)) },
       { key: "first_year_fellows", label: "First-year fellows", description: "Active first-year fellows and team leads", endpoint: "team", recipients: firstYears.map(userToComposer) },
       { key: "second_year_fellows", label: "Second-year fellows", description: "Active second-year fellows and team leads", endpoint: "team", recipients: secondYears.map(userToComposer) },
     ];
@@ -343,7 +352,7 @@ export async function loadOutreachAudiences(profile: Profile): Promise<OutreachA
   const cands = await fetchAllRows<any>((from, to) => db.from("candidates").select(CAND_FIELDS).eq("point_person_id", profile.id).order("name").range(from, to));
   const ownerNames = new Map<string, string>([[profile.id, profile.full_name]]);
   return [
-    { key: "mine", label: "My candidates", description: "Candidates you're the point person for", endpoint: "candidates", recipients: cands.map((c) => candidateToComposer(c, schools, ownerNames)) },
+    { key: "mine", label: "My candidates", description: "Candidates you're the point person for", endpoint: "candidates", recipients: cands.map((c) => candidateToComposer(c, schools, ownerNames, favoriteIds)) },
   ];
 }
 
