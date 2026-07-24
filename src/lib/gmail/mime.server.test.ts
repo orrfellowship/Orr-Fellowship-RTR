@@ -69,6 +69,30 @@ check("multipart message is closed with the final boundary", withAtt.mime.trimEn
 check("plain body part still present in multipart", withAtt.mime.includes("Content-Type: text/plain; charset=UTF-8"));
 check("no-attachment message stays single-part", !buildGmailMimeMessage({ sender: "fellow@orrfellowship.org", recipient: "r@example.com", subject: "s", body: "b", attachments: [] }).mime.includes("multipart"));
 
+// ---- HTML + inline emblem (multipart/related) -------------------------------
+const emblemBytes = Buffer.from("fakePNG").toString("base64");
+const htmlMsg = buildGmailMimeMessage({
+  sender: "fellow@orrfellowship.org",
+  recipient: "recipient@example.com",
+  subject: "Branded",
+  body: "Hello — [Learn More](https://orrfellowship.org/apply)",
+  inlineEmblem: { contentId: "orr-emblem", mimeType: "image/png", contentBase64: emblemBytes },
+});
+check("emblem message is multipart/related", /Content-Type: multipart\/related; boundary="[^"]+"/.test(htmlMsg.mime));
+check("emblem message carries an alternative part", htmlMsg.mime.includes("Content-Type: multipart/alternative;"));
+check("emblem message includes plain and html parts", htmlMsg.mime.includes("Content-Type: text/plain; charset=UTF-8") && htmlMsg.mime.includes("Content-Type: text/html; charset=UTF-8"));
+check("emblem part is inline with the expected Content-ID", htmlMsg.mime.includes("Content-ID: <orr-emblem>") && htmlMsg.mime.includes("Content-Disposition: inline"));
+check("emblem bytes survive into the message", htmlMsg.mime.replace(/\r\n/g, "").includes(emblemBytes));
+const htmlPart = Buffer.from(htmlMsg.mime.match(/text\/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+?)\r\n--/)?.[1].replace(/\r\n/g, "") ?? "", "base64").toString("utf8");
+check("decoded html links to the apply page and references the emblem cid", htmlPart.includes('href="https://orrfellowship.org/apply"') && htmlPart.includes("cid:orr-emblem"));
+
+const htmlWithAtt = buildGmailMimeMessage({
+  sender: "fellow@orrfellowship.org", recipient: "r@example.com", subject: "s", body: "b",
+  inlineEmblem: { contentId: "orr-emblem", mimeType: "image/png", contentBase64: emblemBytes },
+  attachments: [{ fileName: "one.pdf", mimeType: "application/pdf", contentBase64: pdfBytes }],
+});
+check("emblem + file attachment is wrapped in multipart/mixed", htmlWithAtt.mime.includes("multipart/mixed") && htmlWithAtt.mime.includes("multipart/related") && htmlWithAtt.mime.includes('filename="one.pdf"'));
+
 import { sanitizeAttachmentFileName } from "./test-send.server";
 check("filename CRLF/quote injection is stripped", !/[\r\n"\\]/.test(sanitizeAttachmentFileName('evil\r\nContent-Type: text/html"name.pdf')));
 check("empty filename falls back", sanitizeAttachmentFileName("  ") === "attachment");

@@ -43,12 +43,13 @@ export function findUnsupportedOutreachVariables(template: string): string[] {
 // highlights them red and blocks sending until they're gone; the send path
 // re-checks server-side so a modified client can't slip one through. Matches
 // "[text]" on a single line (no nested brackets); {{merge}} tokens use braces
-// and never match here.
+// and never match here. A "[label](url)" markdown link is NOT a placeholder —
+// the trailing "(" is excluded so links don't block sends or get filled in.
 export function findManualPlaceholders(template: string): string[] {
-  return [...new Set(template.match(/\[[^[\]\n]+\]/g) ?? [])];
+  return [...new Set(template.match(/\[[^[\]\n]+\](?!\()/g) ?? [])];
 }
 
-const MANUAL_PLACEHOLDER_RE = /\[[^[\]\n]+\]/g;
+const MANUAL_PLACEHOLDER_RE = /\[[^[\]\n]+\](?!\()/g;
 export type TemplateReplacements = Record<string, string>;
 export type TemplateBundleMaterialization =
   | { ok: true; values: string[] }

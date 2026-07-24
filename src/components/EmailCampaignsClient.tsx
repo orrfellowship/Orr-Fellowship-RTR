@@ -92,19 +92,22 @@ const exclusionReasonFor = (r: ComposerRecipient) =>
 
 function renderHighlightedOutreachTemplate(template: string, tokens: ComposerRecipient["tokens"]): ReactNode[] {
   const parts: ReactNode[] = [];
-  // Matches a {{merge_field}} (auto-filled, highlighted amber) OR a
-  // [single-bracket] manual placeholder — something the team must replace on
-  // their own before sending, highlighted red so it can't be missed.
-  const pattern = /\{\{\s*([a-z_]+)\s*\}\}|\[[^[\]\n]+\]/gi;
+  // Matches, in priority order: a [label](url) link (rendered clickable), a
+  // {{merge_field}} (auto-filled, amber), or a [single-bracket] manual
+  // placeholder (red — must be replaced before sending).
+  const pattern = /\[([^[\]\n]+)\]\((https?:\/\/[^\s)]+)\)|\{\{\s*([a-z_]+)\s*\}\}|\[[^[\]\n]+\]/gi;
   let cursor = 0;
 
   for (const match of template.matchAll(pattern)) {
     const index = match.index ?? 0;
     parts.push(template.slice(cursor, index));
 
-    if (match[1] !== undefined) {
+    if (match[1] !== undefined && match[2] !== undefined) {
+      // [label](url) — a real hyperlink; show it as one.
+      parts.push(<a href={match[2]} target="_blank" rel="noreferrer" style={{ color: C.orange, textDecoration: "underline" }} key={`l-${index}`}>{match[1]}</a>);
+    } else if (match[3] !== undefined) {
       // {{merge_field}} — swap in the recipient's value (or leave as-is if unknown).
-      const key = match[1].toLowerCase();
+      const key = match[3].toLowerCase();
       const value = (tokens as Record<string, string>)[key];
       parts.push(value === undefined
         ? match[0]

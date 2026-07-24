@@ -42,6 +42,8 @@ check("finds a single-bracket placeholder", findManualPlaceholders("Hi {{first_n
 check("finds multiple, de-duplicated", (() => { const p = findManualPlaceholders("[X] and [Y] and [X]"); return p.length === 2 && p.includes("[X]") && p.includes("[Y]"); })());
 check("ignores {{merge_fields}}", findManualPlaceholders("Hi {{first_name}} at {{school}}").length === 0);
 check("clean template has none", findManualPlaceholders("Hi there, thanks for your time.").length === 0);
+check("a [label](url) link is not a placeholder", findManualPlaceholders("See [Learn More](https://orrfellowship.org/apply)").length === 0);
+check("a link and a real placeholder are distinguished", (() => { const p = findManualPlaceholders("[Your Name] — [Learn More](https://a.co)"); return p.length === 1 && p[0] === "[Your Name]"; })());
 
 // Template materialization — only explicit prompt values enter fixed templates.
 const materializationTemplate = "Hi {{first_name}}, I'm [Your Name] at [Your Company].";

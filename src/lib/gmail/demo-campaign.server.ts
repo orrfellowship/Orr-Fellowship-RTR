@@ -12,6 +12,7 @@ import {
 } from "./demo-campaign";
 import {
   buildGmailMimeMessage,
+  loadOrrEmblem,
   createGmailSendSessionForUser,
   GmailTestSendError,
   sendRawGmailMessage,
@@ -158,6 +159,7 @@ async function runCampaignSend(
       recipient: message.candidate.email!,
       subject: message.subject,
       body: message.body,
+      inlineEmblem: loadOrrEmblem(),
     });
     try {
       const result = await sendMessage(session.accessToken, raw, session.fetchImpl);

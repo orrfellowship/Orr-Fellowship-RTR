@@ -53,7 +53,11 @@ const session: GmailSendSession = {
 
 function decodeMime(raw: string): { headers: string; body: string } {
   const mime = Buffer.from(raw, "base64url").toString("utf8");
-  const [headers, encodedBody] = mime.split("\r\n\r\n");
+  const [headers] = mime.split("\r\n\r\n");
+  // Branded sends are multipart HTML — read the text/plain part; fall back to
+  // the whole body for a legacy single-part message.
+  const plain = mime.match(/text\/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+?)\r\n--/);
+  const encodedBody = plain ? plain[1] : mime.split("\r\n\r\n")[1];
   return { headers, body: Buffer.from(encodedBody.replace(/\r\n/g, ""), "base64").toString("utf8") };
 }
 

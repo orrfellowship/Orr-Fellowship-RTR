@@ -2,6 +2,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { queueNotification } from "@/lib/notify";
 import {
   buildGmailMimeMessage,
+  loadOrrEmblem,
   createGmailSendSessionForUser,
   sendRawGmailMessage,
   GmailTestSendError,
@@ -350,7 +351,7 @@ export async function drainOutreachQueue(deps: DrainDeps = {}): Promise<DrainSum
       continue;
     }
 
-    const { raw } = buildGmailMimeMessage({ sender: session.sender, recipient: row.toEmail, subject: row.renderedSubject, body: row.renderedBody, attachments: files });
+    const { raw } = buildGmailMimeMessage({ sender: session.sender, recipient: row.toEmail, subject: row.renderedSubject, body: row.renderedBody, attachments: files, inlineEmblem: loadOrrEmblem() });
     let result: GmailSendResult;
     try {
       result = await sendMessage(session.accessToken, raw, session.fetchImpl);

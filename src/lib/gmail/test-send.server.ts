@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createServiceClient } from "@/lib/supabase/server";
 import { decryptRefreshToken, normalizeOrrEmail, type EncryptedRefreshToken } from "./security.server";
 import { getGoogleOAuthConfig, type GoogleOAuthConfig } from "./server";
 import { GMAIL_TEST_SEND_LIMITS } from "./types";
+import { renderOutreachHtml, renderOutreachPlainText, ORR_EMBLEM_CID } from "./email-render";
 
 export type GmailTestSendInput = {
   recipient: string;
@@ -170,8 +173,57 @@ export function sanitizeAttachmentFileName(name: string): string {
 
 const wrap76 = (b64: string) => b64.match(/.{1,76}/g)?.join("\r\n") ?? "";
 
+// An inline image referenced from the HTML body by Content-ID (cid:).
+export type InlineImage = { contentId: string; mimeType: string; contentBase64: string };
+
+// The Orr emblem, embedded inline in every real send (read once from /public).
+let cachedEmblem: InlineImage | null | undefined;
+export function loadOrrEmblem(): InlineImage | null {
+  if (cachedEmblem !== undefined) return cachedEmblem;
+  try {
+    const bytes = readFileSync(join(process.cwd(), "public", "orr-emblem.png"));
+    cachedEmblem = { contentId: ORR_EMBLEM_CID, mimeType: "image/png", contentBase64: bytes.toString("base64") };
+  } catch {
+    cachedEmblem = null; // never block a send on a missing asset
+  }
+  return cachedEmblem;
+}
+
+type MimePart = { headers: string[]; body: string };
+
+let boundarySeq = 0;
+function makeBoundary(subtype: string): string {
+  boundarySeq = (boundarySeq + 1) % 1_000_000;
+  return `orr_${subtype}_${Date.now().toString(36)}_${boundarySeq}_${Math.random().toString(36).slice(2, 8)}`;
+}
+function renderMultipart(subtype: string, parts: MimePart[]): MimePart {
+  const boundary = makeBoundary(subtype);
+  const body =
+    parts.map((p) => `--${boundary}\r\n${p.headers.join("\r\n")}\r\n\r\n${p.body}`).join("\r\n")
+    + `\r\n--${boundary}--`;
+  return { headers: [`Content-Type: multipart/${subtype}; boundary="${boundary}"`], body };
+}
+function base64TextPart(contentType: string, text: string): MimePart {
+  return {
+    headers: [contentType, "Content-Transfer-Encoding: base64"],
+    body: wrap76(Buffer.from(text, "utf8").toString("base64")),
+  };
+}
+function attachmentPart(a: MimeAttachment): MimePart {
+  const fileName = sanitizeAttachmentFileName(a.fileName);
+  const mimeType = /^[\w.+-]+\/[\w.+-]+$/.test(a.mimeType) ? a.mimeType : "application/octet-stream";
+  return {
+    headers: [
+      `Content-Type: ${mimeType}; name="${fileName}"`,
+      `Content-Disposition: attachment; filename="${fileName}"`,
+      "Content-Transfer-Encoding: base64",
+    ],
+    body: wrap76(a.contentBase64.replace(/\s+/g, "")),
+  };
+}
+
 export function buildGmailMimeMessage(
-  input: GmailTestSendInput & { sender: string; attachments?: MimeAttachment[] },
+  input: GmailTestSendInput & { sender: string; attachments?: MimeAttachment[]; inlineEmblem?: InlineImage | null },
 ): {
   mime: string;
   raw: string;
@@ -179,8 +231,8 @@ export function buildGmailMimeMessage(
   const sender = normalizeOrrEmail(input.sender);
   rejectHeaderInjection(sender, "Sender");
   const validated = validateGmailTestInput(input);
-  const normalizedBody = validated.body.replace(/\r?\n/g, "\r\n");
-  const encodedBody = wrap76(Buffer.from(normalizedBody, "utf8").toString("base64"));
+  const attachments = input.attachments ?? [];
+  const emblem = input.inlineEmblem ?? null;
 
   const headers = [
     `From: ${formatFromHeader(sender)}`,
@@ -189,43 +241,42 @@ export function buildGmailMimeMessage(
     "MIME-Version: 1.0",
   ];
 
-  const attachments = input.attachments ?? [];
   let mime: string;
-  if (attachments.length === 0) {
-    mime = [
-      ...headers,
-      "Content-Type: text/plain; charset=UTF-8",
-      "Content-Transfer-Encoding: base64",
-      "",
-      encodedBody,
-    ].join("\r\n");
-  } else {
-    // multipart/mixed: the plain-text body part first, then one part per file.
-    const boundary = `orr_${Buffer.from(`${validated.recipient}:${attachments.length}`).toString("hex").slice(0, 16)}_${Date.now().toString(36)}`;
-    const parts: string[] = [
-      ...headers,
-      `Content-Type: multipart/mixed; boundary="${boundary}"`,
-      "",
-      `--${boundary}`,
-      "Content-Type: text/plain; charset=UTF-8",
-      "Content-Transfer-Encoding: base64",
-      "",
-      encodedBody,
-    ];
-    for (const a of attachments) {
-      const fileName = sanitizeAttachmentFileName(a.fileName);
-      const mimeType = /^[\w.+-]+\/[\w.+-]+$/.test(a.mimeType) ? a.mimeType : "application/octet-stream";
-      parts.push(
-        `--${boundary}`,
-        `Content-Type: ${mimeType}; name="${fileName}"`,
-        `Content-Disposition: attachment; filename="${fileName}"`,
-        "Content-Transfer-Encoding: base64",
+  if (!emblem) {
+    // Legacy plain-text path (used by unit tests / any caller without an emblem).
+    const encodedBody = wrap76(Buffer.from(validated.body.replace(/\r?\n/g, "\r\n"), "utf8").toString("base64"));
+    if (attachments.length === 0) {
+      mime = [...headers, "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", "", encodedBody].join("\r\n");
+    } else {
+      const boundary = `orr_${Buffer.from(`${validated.recipient}:${attachments.length}`).toString("hex").slice(0, 16)}_${Date.now().toString(36)}`;
+      const parts: string[] = [
+        ...headers,
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
         "",
-        wrap76(a.contentBase64.replace(/\s+/g, "")),
-      );
+        `--${boundary}`, "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", "", encodedBody,
+      ];
+      for (const a of attachments) {
+        const p = attachmentPart(a);
+        parts.push(`--${boundary}`, ...p.headers, "", p.body);
+      }
+      parts.push(`--${boundary}--`);
+      mime = parts.join("\r\n");
     }
-    parts.push(`--${boundary}--`);
-    mime = parts.join("\r\n");
+  } else {
+    // HTML path: multipart/alternative (plain + branded HTML) inside
+    // multipart/related (so the emblem CID resolves), optionally wrapped in
+    // multipart/mixed when file attachments ride along.
+    const plain = base64TextPart("Content-Type: text/plain; charset=UTF-8", renderOutreachPlainText(validated.body).replace(/\r?\n/g, "\r\n"));
+    const html = base64TextPart("Content-Type: text/html; charset=UTF-8", renderOutreachHtml(validated.body, { emblemCid: emblem.contentId }));
+    const alternative = renderMultipart("alternative", [plain, html]);
+    const emblemMime = /^[\w.+-]+\/[\w.+-]+$/.test(emblem.mimeType) ? emblem.mimeType : "application/octet-stream";
+    const emblemPart: MimePart = {
+      headers: [`Content-Type: ${emblemMime}`, "Content-Transfer-Encoding: base64", `Content-ID: <${emblem.contentId}>`, `Content-Disposition: inline; filename="orr-emblem.png"`],
+      body: wrap76(emblem.contentBase64.replace(/\s+/g, "")),
+    };
+    const related = renderMultipart("related", [alternative, emblemPart]);
+    const top = attachments.length ? renderMultipart("mixed", [related, ...attachments.map(attachmentPart)]) : related;
+    mime = [...headers, ...top.headers, "", top.body].join("\r\n");
   }
   return { mime, raw: Buffer.from(mime, "utf8").toString("base64url") };
 }
@@ -338,7 +389,7 @@ export async function sendOneGmailTestForUser(
 ): Promise<GmailSendResult> {
   const input = validateGmailTestInput(value);
   const session = await createGmailSendSessionForUser(userId, dependencies);
-  const { raw } = buildGmailMimeMessage({ ...input, sender: session.sender });
+  const { raw } = buildGmailMimeMessage({ ...input, sender: session.sender, inlineEmblem: loadOrrEmblem() });
   return sendRawGmailMessage(session.accessToken, raw, session.fetchImpl);
 }
 
