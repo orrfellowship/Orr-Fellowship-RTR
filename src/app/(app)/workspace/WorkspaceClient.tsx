@@ -139,6 +139,8 @@ export default function WorkspaceClient({
   const [boardStage, setBoardStage] = useState("All stages");
   const [boardFavOnly, setBoardFavOnly] = useState(false);
   const [boardOwner, setBoardOwner] = useState("");
+  // Satellite/Bonus boards span several schools — let them narrow to one.
+  const [boardSchool, setBoardSchool] = useState("all");
   const [boardPage, setBoardPage] = useState(0);
   const [boardPageSize, setBoardPageSize] = useState(50);
   const [allSort, setAllSort] = useState<{ key: "name" | "school" | "major" | "gpa" | "stage"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
@@ -198,7 +200,14 @@ export default function WorkspaceClient({
     }
     return Array.from(byId.values());
   }, [team, candidates, allProfiles]);
-  useEffect(() => { setBoardPage(0); }, [boardSearch, boardStage, boardFavOnly, boardOwner, boardPageSize]);
+  // The distinct schools represented on this board (only meaningful for the
+  // multi-school Satellite/Bonus tiers). Drives the per-school filter.
+  const boardSchoolOptions = useMemo(() => {
+    const ids = new Set(candidates.map((c) => c.school_id).filter(Boolean) as string[]);
+    return allSchools.filter((s) => ids.has(s.id)).sort((a, b) => a.name.localeCompare(b.name));
+  }, [candidates, allSchools]);
+  const multiSchoolBoard = boardSchoolOptions.length > 1;
+  useEffect(() => { setBoardPage(0); }, [boardSearch, boardStage, boardFavOnly, boardOwner, boardSchool, boardPageSize]);
   // Everyone can OPEN any candidate and read its notes/warm-intros. Editing
   // (logging outreach, flags, warm intros) is limited to the assigned point
   // person — or team leads/admins, who manage their whole school.
@@ -508,11 +517,12 @@ export default function WorkspaceClient({
             if (boardQ && !(`${c.name} ${c.email ?? ""} ${c.area_of_study ?? ""}`.toLowerCase().includes(boardQ))) return false;
             if (boardStage !== "All stages" && c.stage !== boardStage) return false;
             if (boardFavOnly && !c.is_favorite) return false;
+            if (boardSchool !== "all" && c.school_id !== boardSchool) return false;
             if (boardOwner === "__unassigned__" && c.point_person_id) return false;
             if (boardOwner && boardOwner !== "__unassigned__" && c.point_person_id !== (boardOwner === "__me__" ? profile.id : boardOwner)) return false;
             return true;
           });
-          const boardFiltersActive = boardQ || boardStage !== "All stages" || boardFavOnly || boardOwner;
+          const boardFiltersActive = boardQ || boardStage !== "All stages" || boardFavOnly || boardOwner || boardSchool !== "all";
           const boardPageRows = boardVisible.slice(boardPage * boardPageSize, (boardPage + 1) * boardPageSize);
           return (
           <>
@@ -538,6 +548,13 @@ export default function WorkspaceClient({
                 <option>All stages</option>
                 {boardDistinctStages.map((s) => <option key={s}>{s}</option>)}
               </select>
+              {multiSchoolBoard && (
+                <select value={boardSchool} onChange={(e) => setBoardSchool(e.target.value)} title="Filter by school"
+                  style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${boardSchool !== "all" ? accent : C.line}`, fontSize: 13.5, background: boardSchool !== "all" ? `${accent}10` : "#fff", color: boardSchool !== "all" ? accent : C.gray, fontWeight: 600, maxWidth: 200 }}>
+                  <option value="all">All schools</option>
+                  {boardSchoolOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              )}
               <select value={boardOwner} onChange={(e) => setBoardOwner(e.target.value)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${boardOwner ? accent : C.line}`, fontSize: 13.5, background: boardOwner ? `${accent}10` : "#fff", color: boardOwner ? accent : C.gray, fontWeight: 600 }}>
                 <option value="">All owners</option>
                 <option value="__unassigned__">Unassigned</option>
@@ -548,7 +565,7 @@ export default function WorkspaceClient({
                 style={{ padding: "9px 14px", borderRadius: 9, border: `1px solid ${boardFavOnly ? C.gold : C.line}`, fontSize: 13.5, background: boardFavOnly ? "#FBF3D6" : "#fff", color: boardFavOnly ? "#8A6D0E" : C.grayMute, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                 {boardFavOnly ? "★ Favorites" : "☆ Favorites"}
               </button>
-              <button onClick={() => { setBoardSearch(""); setBoardStage("All stages"); setBoardFavOnly(false); setBoardOwner(""); }}
+              <button onClick={() => { setBoardSearch(""); setBoardStage("All stages"); setBoardFavOnly(false); setBoardOwner(""); setBoardSchool("all"); }}
                 disabled={!boardFiltersActive}
                 style={{ padding: "9px 12px", borderRadius: 9, border: "none", background: "transparent", color: boardFiltersActive ? C.navy2 : C.grayMute, fontSize: 13, fontWeight: 700, cursor: boardFiltersActive ? "pointer" : "default", textDecoration: boardFiltersActive ? "underline" : "none", opacity: boardFiltersActive ? 1 : 0.45 }}>
                 Clear
@@ -606,7 +623,7 @@ export default function WorkspaceClient({
               {/* Team panel — click a member to see only their applicants */}
               <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
                 <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.line}`, background: "#FAFBFE", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Owners · {pointPersonOptions.length}</div>
+                  <div style={{ fontFamily: HEAD, fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: C.grayMute, letterSpacing: 0.5 }}>Owners · {team.length}</div>
                   {boardOwner && <button onClick={() => setBoardOwner("")} style={{ border: "none", background: "none", color: C.navy2, fontSize: 11, fontWeight: 700, cursor: "pointer", textDecoration: "underline", padding: 0 }}>Show all</button>}
                 </div>
                 {(() => {
@@ -629,7 +646,7 @@ export default function WorkspaceClient({
                     </div>
                   );
                 })()}
-                {pointPersonOptions.map((t) => {
+                {team.map((t) => {
                   const owned = candidates.filter((c) => c.point_person_id === t.id && !c.not_interested).length;
                   const isMe = t.id === profile.id;
                   const ownerVal = isMe ? "__me__" : t.id;
@@ -839,23 +856,62 @@ function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, start
   onClose: () => void; startTransition: (cb: () => void) => void;
   onAssign: (candidateId: string, ownerId: string) => Promise<boolean>;
 }) {
-  const [phase, setPhase] = useState<"pick" | "deck" | "done">("pick");
+  const [phase, setPhase] = useState<"pick" | "deck" | "list" | "done">("pick");
   const [personId, setPersonId] = useState<string | null>(null);
   const [unassignedOnly, setUnassignedOnly] = useState(true);
   const [deck, setDeck] = useState<Cand[]>([]);
   const [idx, setIdx] = useState(0);
   const [assigned, setAssigned] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [doneKind, setDoneKind] = useState<"person" | "auto">("person");
 
+  // Only current team members receive auto/bulk assignments (never a former
+  // owner who just happens to still hold a candidate).
+  const realTeam = useMemo(() => team.filter((t) => t.role !== "former_team"), [team]);
   const personName = team.find((t) => t.id === personId)?.full_name ?? "this person";
   const nameOf = (id: string | null) => (id === meId ? "You" : team.find((t) => t.id === id)?.full_name ?? "Unassigned");
   const poolFor = (pid: string) =>
     candidates.filter((c) => !c.not_interested && (unassignedOnly ? !c.point_person_id : c.point_person_id !== pid));
+  const unassignedPool = useMemo(() => candidates.filter((c) => !c.not_interested && !c.point_person_id), [candidates]);
+
+  // Assign a batch of {candidate → owner} pairs sequentially, then land on the
+  // done screen with a count of what actually saved.
+  const runAssignments = async (pairs: { candidateId: string; ownerId: string }[], kind: "person" | "auto") => {
+    if (busy || pairs.length === 0) return;
+    setBusy(true);
+    let ok = 0;
+    for (const p of pairs) { if (await onAssign(p.candidateId, p.ownerId)) ok++; }
+    setBusy(false);
+    setAssigned(ok);
+    setDoneKind(kind);
+    setPhase("done");
+  };
+
+  // Spread all unassigned candidates across the team as evenly as possible,
+  // seeding each member's load with what they already own (greedy least-loaded).
+  const autoAssign = () => {
+    if (!realTeam.length || !unassignedPool.length) return;
+    const load = new Map(realTeam.map((t) => [t.id, candidates.filter((c) => c.point_person_id === t.id && !c.not_interested).length]));
+    const pairs = unassignedPool.map((c) => {
+      let best = realTeam[0].id;
+      for (const t of realTeam) if ((load.get(t.id) ?? 0) < (load.get(best) ?? 0)) best = t.id;
+      load.set(best, (load.get(best) ?? 0) + 1);
+      return { candidateId: c.id, ownerId: best };
+    });
+    void runAssignments(pairs, "auto");
+  };
 
   const start = () => {
     if (!personId) return;
     const pool = poolFor(personId);
     setDeck(pool); setIdx(0); setAssigned(0);
     setPhase(pool.length ? "deck" : "done");
+  };
+  const startList = () => {
+    if (!personId) return;
+    setSelected(new Set()); setAssigned(0);
+    setPhase("list");
   };
 
   const current = deck[idx] ?? null;
@@ -897,11 +953,25 @@ function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, start
           <h2 style={{ fontFamily: HEAD, fontSize: 24, color: C.navy, margin: "0 0 4px" }}>Assign Point People</h2>
           <p style={{ fontSize: 13.5, color: C.grayMute, margin: "0 0 18px" }}>Pick a team member, then go through candidates one at a time.</p>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 16, cursor: "pointer", fontSize: 13.5, color: C.gray, fontWeight: 600 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 14, cursor: "pointer", fontSize: 13.5, color: C.gray, fontWeight: 600 }}>
             <input type="checkbox" checked={unassignedOnly} onChange={(e) => setUnassignedOnly(e.target.checked)} style={{ width: 16, height: 16, accentColor: accent }} />
             Only show unassigned candidates
           </label>
 
+          {/* Auto-assign: spread every unassigned candidate across the team evenly */}
+          {realTeam.length > 0 && unassignedPool.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", marginBottom: 18, border: `1px solid ${accent}`, background: `${accent}0c`, borderRadius: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Auto-assign everyone</div>
+                <div style={{ fontSize: 12, color: C.grayMute }}>Split {unassignedPool.length} unassigned candidate{unassignedPool.length !== 1 ? "s" : ""} across {realTeam.length} member{realTeam.length !== 1 ? "s" : ""} as evenly as possible.</div>
+              </div>
+              <button onClick={autoAssign} disabled={busy} style={{ ...btn(accent), padding: "10px 16px", whiteSpace: "nowrap", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Assigning…" : `⚖ Auto-assign ${unassignedPool.length}`}
+              </button>
+            </div>
+          )}
+
+          <div style={{ fontSize: 12, color: C.grayMute, fontWeight: 700, marginBottom: 8 }}>…or pick one member and assign candidates to them:</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
             {team.map((t) => {
               const count = poolFor(t.id).length;
@@ -922,12 +992,47 @@ function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, start
             })}
           </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
             <button onClick={onClose} style={{ ...btn(C.line, C.gray), background: "#fff", border: `1px solid ${C.line}` }}>Cancel</button>
-            <button onClick={start} disabled={!personId} style={{ ...btn(personId ? C.navy : C.navy3), cursor: personId ? "pointer" : "not-allowed" }}>Start →</button>
+            <button onClick={startList} disabled={!personId} style={{ ...btn("#fff", personId ? C.navy : C.navy3), border: `1px solid ${personId ? C.navy : C.line}`, cursor: personId ? "pointer" : "not-allowed" }}>Select from list</button>
+            <button onClick={start} disabled={!personId} style={{ ...btn(personId ? C.navy : C.navy3), cursor: personId ? "pointer" : "not-allowed" }}>One at a time →</button>
           </div>
         </div>
       )}
+
+      {phase === "list" && personId && (() => {
+        const pool = poolFor(personId);
+        return (
+          <div style={card}>
+            <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, border: "none", background: "none", fontSize: 22, color: C.grayMute, cursor: "pointer", lineHeight: 1 }}>×</button>
+            <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 4px" }}>Assign to {personName}</h2>
+            <p style={{ fontSize: 13, color: C.grayMute, margin: "0 0 14px" }}>Tick everyone you want to assign, then assign them all at once.</p>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 700, color: C.navy, cursor: "pointer", marginBottom: 10 }}>
+              <input type="checkbox" checked={pool.length > 0 && selected.size === pool.length} onChange={(e) => setSelected(e.target.checked ? new Set(pool.map((c) => c.id)) : new Set())} />
+              Select all {pool.length}
+            </label>
+            <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden", maxHeight: "50vh", overflowY: "auto", marginBottom: 16 }}>
+              {pool.map((c, i) => (
+                <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", borderTop: i === 0 ? "none" : `1px solid ${C.line}`, cursor: "pointer", background: selected.has(c.id) ? `${accent}0d` : "#fff" }}>
+                  <input type="checkbox" checked={selected.has(c.id)} onChange={() => setSelected((prev) => { const n = new Set(prev); if (n.has(c.id)) n.delete(c.id); else n.add(c.id); return n; })} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: C.gray }}>{c.name}</div>
+                    <div style={{ fontSize: 11.5, color: C.grayMute }}>{[c.stage, c.point_person_id ? `now: ${nameOf(c.point_person_id)}` : "unassigned"].filter(Boolean).join(" · ")}</div>
+                  </div>
+                </label>
+              ))}
+              {pool.length === 0 && <div style={{ padding: 16, textAlign: "center", fontSize: 13, color: C.grayMute, fontStyle: "italic" }}>Nobody to assign here.</div>}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button onClick={() => setPhase("pick")} style={{ ...btn("#fff", C.navy), border: `1px solid ${C.line}` }}>← Back</button>
+              <button onClick={() => runAssignments([...selected].map((id) => ({ candidateId: id, ownerId: personId })), "person")} disabled={busy || selected.size === 0}
+                style={{ ...btn(accent), cursor: busy || selected.size === 0 ? "not-allowed" : "pointer", opacity: busy || selected.size === 0 ? 0.55 : 1 }}>
+                {busy ? "Assigning…" : `Assign ${selected.size} to ${personName}`}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {phase === "deck" && current && (
         <div style={card}>
@@ -966,9 +1071,11 @@ function AssignPointPeopleModal({ candidates, team, meId, accent, onClose, start
         <div style={card}>
           <h2 style={{ fontFamily: HEAD, fontSize: 24, color: C.navy, margin: "0 0 6px" }}>All done</h2>
           <p style={{ fontSize: 14, color: C.gray, margin: "0 0 22px" }}>
-            {deck.length === 0
-              ? `No candidates to review for ${personName}.`
-              : <>Assigned <b style={{ color: C.good }}>{assigned}</b> candidate{assigned !== 1 ? "s" : ""} to <b>{personName}</b>.</>}
+            {doneKind === "auto"
+              ? <>Distributed <b style={{ color: C.good }}>{assigned}</b> candidate{assigned !== 1 ? "s" : ""} across the team.</>
+              : assigned === 0 && deck.length === 0
+                ? `No candidates to assign for ${personName}.`
+                : <>Assigned <b style={{ color: C.good }}>{assigned}</b> candidate{assigned !== 1 ? "s" : ""} to <b>{personName}</b>.</>}
           </p>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
             <button onClick={() => { setPersonId(null); setPhase("pick"); }} style={{ ...btn("#fff", C.navy), border: `1px solid ${C.line}` }}>Assign someone else</button>
