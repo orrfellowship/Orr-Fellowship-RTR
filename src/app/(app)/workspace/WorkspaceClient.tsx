@@ -203,13 +203,18 @@ export default function WorkspaceClient({
     }
     return Array.from(byId.values());
   }, [team, candidates, allProfiles]);
-  // The distinct schools represented on this board (only meaningful for the
-  // multi-school Satellite/Bonus tiers). Drives the per-school filter.
+  // Schools to offer in the per-school filter. Satellite/Bonus boards span a
+  // whole tier, so list every school in that tier (from allSchools) — even ones
+  // with no candidates yet — so you can always narrow/assign by school. Other
+  // boards just use the distinct schools present in the candidate list.
+  const boardTier = groupName === "Satellite School" ? "satellite" : groupName === "Bonus School" ? "bonus" : null;
   const boardSchoolOptions = useMemo(() => {
-    const ids = new Set(candidates.map((c) => c.school_id).filter(Boolean) as string[]);
-    return allSchools.filter((s) => ids.has(s.id)).sort((a, b) => a.name.localeCompare(b.name));
-  }, [candidates, allSchools]);
-  const multiSchoolBoard = boardSchoolOptions.length > 1;
+    const pool = boardTier
+      ? allSchools.filter((s) => s.tier === boardTier)
+      : (() => { const ids = new Set(candidates.map((c) => c.school_id).filter(Boolean) as string[]); return allSchools.filter((s) => ids.has(s.id)); })();
+    return [...pool].sort((a, b) => a.name.localeCompare(b.name));
+  }, [candidates, allSchools, boardTier]);
+  const multiSchoolBoard = !!boardTier || boardSchoolOptions.length > 1;
   useEffect(() => { setBoardPage(0); }, [boardSearch, boardStage, boardFavOnly, boardOwner, boardSchool, boardPageSize]);
   // Everyone can OPEN any candidate and read its notes/warm-intros. Editing
   // (logging outreach, flags, warm intros) is limited to the assigned point
