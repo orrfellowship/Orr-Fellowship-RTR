@@ -1,4 +1,4 @@
-import { buildGmailMimeMessage, validateGmailTestInput } from "./test-send.server";
+import { buildGmailMimeMessage, validateGmailTestInput, senderDisplayPhrase } from "./test-send.server";
 
 let failures = 0;
 function check(name: string, condition: boolean) {
@@ -24,7 +24,9 @@ const message = buildGmailMimeMessage({
   subject: "One Gmail test",
   body: "Hello from the RTR Gmail test.",
 });
-check("MIME contains the required From header", message.mime.includes("From: fellow@orrfellowship.org\r\n"));
+check("MIME From carries the branded display name and address", /From: .+ <fellow@orrfellowship\.org>\r\n/.test(message.mime) && message.mime.includes("=?UTF-8?B?"));
+check("sender display phrase is derived from the local part", senderDisplayPhrase("mark.stolte@orrfellowship.org") === "Mark Stolte · Orr Fellowship");
+check("sender display phrase handles a single-token local part", senderDisplayPhrase("jesse@orrfellowship.org") === "Jesse · Orr Fellowship");
 check("MIME contains exactly one To header", message.mime.includes("To: recipient@example.com\r\n") && message.mime.match(/^To:/gm)?.length === 1);
 check("MIME contains subject and UTF-8 plain-text headers", message.mime.includes("Subject: One Gmail test\r\n") && message.mime.includes("MIME-Version: 1.0\r\n") && message.mime.includes("Content-Type: text/plain; charset=UTF-8\r\n"));
 check("raw MIME uses unpadded base64url", !/[+/=]/.test(message.raw));

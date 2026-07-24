@@ -116,6 +116,40 @@ function encodeSubject(subject: string): string {
     .join("\r\n ");
 }
 
+// A professional From display name derived from the sender's address local-part
+// ("mark.stolte" → "Mark Stolte"), branded with the org, so recipients see
+// "Mark Stolte · Orr Fellowship" instead of a bare "first.last" address.
+export function senderDisplayPhrase(email: string): string {
+  const local = (email.split("@")[0] ?? "").trim();
+  const name = local
+    .split(/[._+-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+    .trim();
+  return name ? `${name} · Orr Fellowship` : "Orr Fellowship";
+}
+
+// RFC 2047 encoded-word for a header display phrase. ASCII-only phrases are
+// returned as a quoted-string; anything with non-ASCII (e.g. the "·" separator)
+// is base64 encoded-word(s) so no raw non-ASCII lands in a header.
+function encodeHeaderPhrase(phrase: string): string {
+  if (/^[\x20-\x7E]+$/.test(phrase)) return `"${phrase.replace(/(["\\])/g, "\\$1")}"`;
+  const chunks: string[] = [];
+  let current = "";
+  for (const character of phrase) {
+    if (Buffer.byteLength(current + character, "utf8") > 45 && current) { chunks.push(current); current = character; }
+    else current += character;
+  }
+  if (current) chunks.push(current);
+  return chunks.map((chunk) => `=?UTF-8?B?${Buffer.from(chunk, "utf8").toString("base64")}?=`).join("\r\n ");
+}
+
+// Full From header value: encoded display name + the angle-bracketed address.
+export function formatFromHeader(email: string): string {
+  return `${encodeHeaderPhrase(senderDisplayPhrase(email))} <${email}>`;
+}
+
 // An attachment ready to embed: content is already base64 (NOT base64url).
 export type MimeAttachment = {
   fileName: string;
@@ -149,7 +183,7 @@ export function buildGmailMimeMessage(
   const encodedBody = wrap76(Buffer.from(normalizedBody, "utf8").toString("base64"));
 
   const headers = [
-    `From: ${sender}`,
+    `From: ${formatFromHeader(sender)}`,
     `To: ${validated.recipient}`,
     `Subject: ${encodeSubject(validated.subject)}`,
     "MIME-Version: 1.0",
