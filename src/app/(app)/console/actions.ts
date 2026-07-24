@@ -306,6 +306,53 @@ export async function deleteCandidate(id: string) {
   return { ok: true };
 }
 
+// Merge a duplicate into the record you're keeping: move all of the duplicate's
+// tracked data (intros, outreach, sends, notifications, favorites, AI) onto the
+// keeper, fill the keeper's blank fields from it, then delete the duplicate.
+// Atomic (Postgres function). Admin+ only.
+export async function mergeCandidates(keepId: string, loseId: string) {
+  if (await isPreviewing()) return { error: "Exit View As to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  if (!keepId || !loseId || keepId === loseId) return { error: "Pick a different record to merge." };
+  const { error } = await createServiceClient().rpc("merge_candidates", { p_keep: keepId, p_lose: loseId });
+  if (error) return { error: error.message };
+  revalidatePath("/console");
+  revalidatePath("/workspace");
+  return { ok: true };
+}
+
+// Richer detail for the duplicate-review cards — what each record has tracked on
+// it, so an admin can tell which to keep. Admin+ only.
+export async function getDuplicateDetails(ids: string[]): Promise<{ error?: string; details?: Record<string, {
+  createdAt: string | null; pointPerson: string | null; hasLinkedin: boolean; hasResume: boolean; jazzLinked: boolean; outreachCount: number; introCount: number;
+}> }> {
+  const profile = await getCurrentProfile();
+  if (!profile || !isAdminPlus(profile.role)) return { error: "Forbidden" };
+  const clean = [...new Set((ids ?? []).filter(Boolean))];
+  if (!clean.length) return { details: {} };
+  const db = createServiceClient();
+  const [{ data: cands }, { data: logs }, { data: cons }] = await Promise.all([
+    db.from("candidates").select("id, created_at, point_person_id, linkedin, resume_link, jazz_id").in("id", clean),
+    db.from("outreach_log").select("candidate_id").in("candidate_id", clean),
+    db.from("connections").select("candidate_id").in("candidate_id", clean),
+  ]);
+  const ownerIds = [...new Set((cands ?? []).map((c: any) => c.point_person_id).filter(Boolean))] as string[];
+  const owners = ownerIds.length ? ((await db.from("profiles").select("id, full_name").in("id", ownerIds)).data ?? []) : [];
+  const ownerName = new Map(owners.map((o: any) => [o.id, o.full_name]));
+  const countFor = (rows: any[] | null, id: string) => (rows ?? []).filter((r) => r.candidate_id === id).length;
+  const details: Record<string, any> = {};
+  for (const c of (cands ?? []) as any[]) {
+    details[c.id] = {
+      createdAt: c.created_at ?? null,
+      pointPerson: c.point_person_id ? (ownerName.get(c.point_person_id) ?? "Assigned") : null,
+      hasLinkedin: !!c.linkedin, hasResume: !!c.resume_link, jazzLinked: !!c.jazz_id,
+      outreachCount: countFor(logs, c.id), introCount: countFor(cons, c.id),
+    };
+  }
+  return { details };
+}
+
 // Delete many candidates at once (admin+). Used to clean up a bad import.
 export async function bulkDeleteCandidates(ids: string[]): Promise<{ ok?: true; deleted: number; error?: string }> {
   if (await isPreviewing()) return { error: "Exit preview to make changes.", deleted: 0 };

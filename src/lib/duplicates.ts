@@ -27,8 +27,12 @@ export function findDuplicateGroups(candidates: DupCand[]): { reason: "email" | 
   const byName = new Map<string, DupCand[]>();
   for (const c of candidates) {
     if (c.email && norm(c.email)) (byEmail.get(norm(c.email)) ?? byEmail.set(norm(c.email), []).get(norm(c.email))!).push(c);
+    // Match on the normalized name alone (not name+school) so the review also
+    // surfaces same-name candidates filed under different schools — a common
+    // duplicate when someone is sourced under one school but applies under
+    // another. The admin sees each record's school and decides.
     if (norm(c.name)) {
-      const k = nameSchoolKey(c.name, c.school_id);
+      const k = norm(c.name);
       (byName.get(k) ?? byName.set(k, []).get(k)!).push(c);
     }
   }
