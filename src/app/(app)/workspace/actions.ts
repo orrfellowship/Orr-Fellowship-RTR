@@ -130,7 +130,8 @@ export async function reassignPointPerson(candidateId: string, ownerId: string |
   const db = createServiceClient();
 
   if (!canReassign(profile.role)) {
-    if (ownerId !== profile.id) return { error: "You can only assign yourself as point person." };
+    // Fellows may claim a candidate for themselves, or unclaim one they own
+    // (misclicks are common) — but never assign/reassign someone else.
     const { ids: schoolIds } = await getTierSchoolIds(profile.school_id);
     if (schoolIds.length === 0) return { error: "No school assigned." };
     const { data: candidate, error: loadError } = await db
@@ -141,7 +142,14 @@ export async function reassignPointPerson(candidateId: string, ownerId: string |
     if (loadError) return { error: loadError.message };
     if (!candidate || !schoolIds.includes((candidate as any).school_id)) return { error: "Forbidden" };
     const currentOwner = (candidate as any).point_person_id as string | null;
-    if (currentOwner && currentOwner !== profile.id) return { error: "Only a team lead can reassign a point person." };
+    if (ownerId === null) {
+      // Unclaiming: only a candidate you're currently assigned to.
+      if (currentOwner !== profile.id) return { error: "You can only unclaim a candidate you're assigned to." };
+    } else if (ownerId !== profile.id) {
+      return { error: "You can only assign yourself as point person." };
+    } else if (currentOwner && currentOwner !== profile.id) {
+      return { error: "Only a team lead can reassign a point person." };
+    }
   }
 
   const { data: assigned, error } = await db.rpc("assign_candidate_point_person", {

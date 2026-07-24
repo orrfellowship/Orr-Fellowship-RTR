@@ -113,9 +113,9 @@ export default function ImportInfoModal({ onClose }: { onClose: () => void }) {
       <div style={{ position: "relative", background: "#fff", borderRadius: 16, padding: 28, width: 720, maxWidth: "97vw", maxHeight: "90vh", display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 4px" }}>Import additional info</h2>
+            <h2 style={{ fontFamily: HEAD, fontSize: 22, color: C.navy, margin: "0 0 4px" }}>Add Partial Info</h2>
             <p style={{ fontSize: 13, color: C.grayMute, margin: 0 }}>
-              Update candidates already in the system, matched by <b>email</b>. LinkedIn fills blanks only (won&apos;t overwrite). A <b>school</b> value re-routes the candidate — use this to fix placements from a sourcing sheet (e.g. &ldquo;Purdue Fort Wayne&rdquo; → Satellite Schools). Emails not found are skipped.
+              Add extra details to candidates who are <b>already in the system</b> — this does not create new candidates. Records are matched by <b>email</b>. A LinkedIn value fills a blank only (never overwrites); a <b>school</b> value re-routes the candidate — use this to fix placements from a sourcing sheet (e.g. &ldquo;Purdue Fort Wayne&rdquo; → Satellite Schools). Emails not found are skipped.
             </p>
           </div>
           <button onClick={onClose} style={{ border: "none", background: "none", fontSize: 22, color: C.grayMute, cursor: "pointer", padding: "0 4px", lineHeight: 1, flexShrink: 0 }}>×</button>
@@ -157,13 +157,13 @@ export default function ImportInfoModal({ onClose }: { onClose: () => void }) {
 
         <button onClick={addRow} style={{ alignSelf: "flex-start", border: `1px dashed ${C.line}`, background: "transparent", color: C.navy3, fontWeight: 600, fontSize: 13, padding: "7px 14px", borderRadius: 8, cursor: "pointer" }}>+ Add row</button>
 
-        {valid.length > 0 && !result && <div style={{ padding: "9px 14px", background: C.canvas, borderRadius: 9, fontSize: 13 }}><b style={{ color: C.navy }}>{valid.length}</b> row{valid.length !== 1 ? "s" : ""} ready to import</div>}
+        {valid.length > 0 && !result && <div style={{ padding: "9px 14px", background: C.canvas, borderRadius: 9, fontSize: 13 }}><b style={{ color: C.navy }}>{valid.length}</b> row{valid.length !== 1 ? "s" : ""} ready to add</div>}
         {error && <div style={{ background: "#FBE7DF", border: `1px solid ${C.orange}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#8A3A1E" }}>{error}</div>}
         {result && <div style={{ background: "#E8F5EE", border: `1px solid ${C.good}`, borderRadius: 9, padding: "10px 13px", fontSize: 13, color: "#1B5E3F" }}>{result}</div>}
 
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.gray, fontWeight: 600, padding: "11px 18px", borderRadius: 10, cursor: "pointer" }}>{result ? "Done" : "Cancel"}</button>
-          <button onClick={doImport} disabled={pending || valid.length === 0} style={{ border: "none", background: valid.length > 0 && !pending ? C.navy : C.navy3, color: "#fff", fontWeight: 700, padding: "11px 22px", borderRadius: 10, cursor: valid.length > 0 && !pending ? "pointer" : "not-allowed" }}>{pending ? "Importing…" : "Import info"}</button>
+          <button onClick={doImport} disabled={pending || valid.length === 0} style={{ border: "none", background: valid.length > 0 && !pending ? C.navy : C.navy3, color: "#fff", fontWeight: 700, padding: "11px 22px", borderRadius: 10, cursor: valid.length > 0 && !pending ? "pointer" : "not-allowed" }}>{pending ? "Adding…" : "Add info"}</button>
         </div>
       </div>
     </div>

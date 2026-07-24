@@ -32,7 +32,12 @@ export default function NotificationBell({ notifications, canTest = false }: { n
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const unread = notifications.filter((n) => !n.read).length;
+  // Optimistically cleared ids: the moment the panel opens we mark everything
+  // read locally so the badge drops to 0 immediately, without waiting on the
+  // server round-trip / route refetch (which is what left the count "stuck").
+  const [clearedIds, setClearedIds] = useState<Set<string>>(new Set());
+  const isRead = (n: AppNotification) => n.read || clearedIds.has(n.id);
+  const unread = notifications.filter((n) => !isRead(n)).length;
 
   const sendTest = async () => {
     setTesting(true);
@@ -62,7 +67,11 @@ export default function NotificationBell({ notifications, canTest = false }: { n
   const openPanel = () => {
     setOpen((v) => {
       const next = !v;
-      if (next && unread > 0) startTransition(() => { markNotificationsRead([]).then(() => router.refresh()); });
+      if (next && unread > 0) {
+        // Clear the badge instantly, then persist server-side.
+        setClearedIds((prev) => { const s = new Set(prev); for (const n of notifications) if (!n.read) s.add(n.id); return s; });
+        startTransition(() => { markNotificationsRead([]).then(() => router.refresh()); });
+      }
       return next;
     });
   };
@@ -92,8 +101,8 @@ export default function NotificationBell({ notifications, canTest = false }: { n
               <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: C.grayMute }}>You're all caught up.</div>
             ) : notifications.map((n) => (
               <div key={n.id} onClick={() => go(n.link)}
-                style={{ padding: "11px 16px", borderBottom: `1px solid ${C.line}`, cursor: n.link ? "pointer" : "default", background: n.read ? "#fff" : C.canvas, display: "flex", gap: 10 }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: n.read ? "transparent" : C.orange, marginTop: 6, flexShrink: 0 }} />
+                style={{ padding: "11px 16px", borderBottom: `1px solid ${C.line}`, cursor: n.link ? "pointer" : "default", background: isRead(n) ? "#fff" : C.canvas, display: "flex", gap: 10 }}>
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: isRead(n) ? "transparent" : C.orange, marginTop: 6, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.gray }}>{n.title}</div>
                   {n.body && <div style={{ fontSize: 12.5, color: C.grayMute, marginTop: 1 }}>{n.body}</div>}

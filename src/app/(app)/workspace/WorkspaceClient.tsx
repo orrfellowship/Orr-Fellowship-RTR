@@ -584,8 +584,17 @@ export default function WorkspaceClient({
                           style={{ border: `1px solid ${accent}`, background: `${accent}12`, color: accent, fontWeight: 700, fontSize: 12.5, padding: "5px 9px", borderRadius: 7, cursor: previewMode ? "not-allowed" : "pointer", opacity: previewMode ? 0.55 : 1 }}>
                           Claim
                         </button>
+                      ) : c.point_person_id === profile.id ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 13, color: C.gray, fontWeight: 600 }}>You</span>
+                          <button onClick={() => startTransition(() => { reassignPointPerson(c.id, null); })}
+                            title="Remove yourself as point person"
+                            style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.grayMute, fontWeight: 600, fontSize: 11.5, padding: "3px 8px", borderRadius: 7, cursor: "pointer" }}>
+                            Unclaim
+                          </button>
+                        </div>
                       ) : (
-                        <span style={{ fontSize: 13, color: c.point_person_id ? C.grayMute : C.orange, fontWeight: 600 }}>{nameOf(c.point_person_id)}</span>
+                        <span style={{ fontSize: 13, color: C.grayMute, fontWeight: 600 }}>{nameOf(c.point_person_id)}</span>
                       )}
                     </div>
                     <div onClick={(e) => { e.stopPropagation(); onFav(c); }} style={{ cursor: "pointer", fontSize: 18, color: c.is_favorite ? C.gold : "#D8DCE5", textAlign: "center" }}>{c.is_favorite ? "★" : "☆"}</div>
@@ -694,7 +703,7 @@ export default function WorkspaceClient({
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
                   <button onClick={() => setBulkOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Bulk import</button>
-                  <button onClick={() => setInfoOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Import info</button>
+                  <button onClick={() => setInfoOpen(true)} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}>Add Partial Info</button>
                 </div>
               </div>
 
