@@ -204,10 +204,11 @@ export async function updateCandidate(id: string, fields: {
   if (fields.name !== undefined && !fields.name.trim()) return { error: "Name can't be empty." };
 
   const db = createServiceClient();
-  // Editing is limited to the person who added the candidate.
+  // Editing is limited to the person who added the candidate — but admins and
+  // super-admins may edit any candidate (e.g. to fix a bad email).
   const { data: existing } = await db.from("candidates").select("created_by").eq("id", id).maybeSingle();
   if (!existing) return { error: "Candidate not found." };
-  if ((existing as any).created_by !== profile.id) return { error: "Only the person who added this candidate can edit it." };
+  if (!isAdminPlus(profile.role) && (existing as any).created_by !== profile.id) return { error: "Only the person who added this candidate can edit it." };
 
   // Only persist keys that were actually provided, so a partial edit never wipes
   // an untouched column. Trim text; empty strings become null for nullable fields.

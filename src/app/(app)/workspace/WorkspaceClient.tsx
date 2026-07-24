@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useTransition, useEffect, useRef } from "react";
 import type { Profile, Resource } from "@/lib/types";
-import { canReassign, canEditPlaybook, canManageResources, canEditEvents } from "@/lib/types";
+import { canReassign, canEditPlaybook, canManageResources, canEditEvents, isAdminPlus } from "@/lib/types";
 import {
   toggleFavorite, setNotInterested, logOutreach, reassignPointPerson,
   getOutreach, addConnection, getConnections, upsertTask, deleteTask, addPhase,
@@ -1589,7 +1589,7 @@ function CandidateDrawer({ c, canEdit, profile, team, schools, allProfiles, onCl
       <div style={{ position: "relative", width: 440, maxWidth: "93vw", background: C.canvas, height: "100%", overflowY: "auto" }}>
         <div style={{ background: C.navy, color: "#fff", padding: "24px 24px 20px", position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
-          {!editing && isCreator && (
+          {!editing && (isCreator || isAdminPlus(profile.role)) && (
             <button onClick={startEdit} title="Edit candidate details" style={{ position: "absolute", top: 14, right: 54, background: C.orange, border: "none", color: "#fff", height: 32, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: "0 2px 8px rgba(221,84,52,.4)" }}>✎ Edit details</button>
           )}
           <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}><ContactPopover name={c.name} email={c.email} /></h2>

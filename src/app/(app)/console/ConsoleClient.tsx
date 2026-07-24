@@ -20,6 +20,7 @@ import PaginationControls from "@/components/PaginationControls";
 import type { CalEvent } from "@/components/RecruitingCalendar";
 import type { BudgetEntry, Guidance } from "@/components/BudgetPanel";
 import { findDuplicateGroups, nameSchoolKey } from "@/lib/duplicates";
+import { findMalformedEmails } from "@/lib/emailFix";
 import { FightNightOverviewPulse } from "@/components/FightNightCampaign";
 
 // Per-section code splitting: each /console/<section> route renders exactly one
@@ -35,6 +36,7 @@ const MatchReview = dynamic(() => import("@/components/MatchReview"));
 const DuplicateReview = dynamic(() => import("@/components/DuplicateReview"));
 const RoutingReview = dynamic(() => import("@/components/RoutingReview"));
 const SchoolMatchReview = dynamic(() => import("@/components/SchoolMatchReview"));
+const EmailReview = dynamic(() => import("@/components/EmailReview"));
 const ResumeModal = dynamic(() => import("@/components/ResumeModal"));
 const BulkImportModal = dynamic(() => import("@/components/BulkImportModal"));
 const ImportInfoModal = dynamic(() => import("@/components/ImportInfoModal"));
@@ -248,6 +250,7 @@ export default function ConsoleClient({
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dupOpen, setDupOpen] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
+  const [emailReviewOpen, setEmailReviewOpen] = useState(false);
   const [smrOpen, setSmrOpen] = useState(false);
   // Match-review decks on the JazzHR Sync tab and the dedicated Review Sync page.
   const [syncMatchOpen, setSyncMatchOpen] = useState(false);
@@ -273,6 +276,10 @@ export default function ConsoleClient({
     const dest = new Map(moves.map((m) => [m.id, m.school_id]));
     setCandidateFacets((f) => ({ ...f, slim: f.slim.map((c) => dest.has(c.id) ? { ...c, school_id: dest.get(c.id)! } : c) }));
     setAppRows((rows) => rows.map((c) => dest.has(c.id) ? { ...c, school_id: dest.get(c.id)! } : c));
+  };
+  const handleEmailFixed = (id: string, email: string) => {
+    setCandidateFacets((f) => ({ ...f, slim: f.slim.map((c) => c.id === id ? { ...c, email } : c) }));
+    setAppRows((rows) => rows.map((c) => c.id === id ? { ...c, email } : c));
   };
   const [inviteOpen, setInviteOpen] = useState(false);
   const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
@@ -706,6 +713,21 @@ export default function ConsoleClient({
                     blurb="Imported school text routes to a different school"
                     onOpen={() => setRoutingOpen(true)} />
                   <RoutingReview candidates={slimCandidateRows} schools={schools} open={routingOpen} onClose={() => setRoutingOpen(false)} onMoved={handleRoutingMoved} />
+                </>
+              );
+            })()}
+
+            {/* Malformed email review — invalid addresses with suggested fixes */}
+            {adminPlus && (() => {
+              const badEmailCount = findMalformedEmails(slimCandidateRows).length;
+              if (badEmailCount === 0) return null;
+              return (
+                <>
+                  <ReviewLaunchCard accent={C.orange} title="Fix malformed emails"
+                    count={`${badEmailCount} candidate${badEmailCount === 1 ? "" : "s"}`}
+                    blurb="Invalid addresses — accept a suggested fix or edit"
+                    onOpen={() => setEmailReviewOpen(true)} />
+                  <EmailReview candidates={slimCandidateRows} open={emailReviewOpen} onClose={() => setEmailReviewOpen(false)} onFixed={handleEmailFixed} />
                 </>
               );
             })()}
@@ -1490,7 +1512,7 @@ function CandidateDrawer({ c, profile, team, schools, previewMode, onAssignPoint
       <div style={{ position: "relative", width: 440, maxWidth: "93vw", background: C.canvas, height: "100%", overflowY: "auto" }}>
         <div style={{ background: C.navy, color: "#fff", padding: "24px 24px 20px", position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
-          {!editing && c.created_by === profile.id && (
+          {!editing && (c.created_by === profile.id || isAdminPlus(profile.role)) && (
             <button onClick={startEdit} title="Edit candidate details" style={{ position: "absolute", top: 14, right: 54, background: C.orange, border: "none", color: "#fff", height: 32, padding: "0 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: "0 2px 8px rgba(221,84,52,.4)" }}>✎ Edit details</button>
           )}
           <h2 style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, margin: "0 0 2px", paddingRight: 96 }}><ContactPopover name={c.name} email={c.email} /></h2>
