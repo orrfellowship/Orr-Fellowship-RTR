@@ -1621,6 +1621,19 @@ export async function uploadOutreachTemplateAttachment(formData: FormData) {
   return { ok: true };
 }
 
+// Per-send attachment upload — available to any sender (fellow/lead/admin) for
+// their OWN campaign. Stored against the user in outreach_campaign_uploads; the
+// send references the returned id, which the server re-scopes to the sender.
+export async function uploadCampaignAttachment(formData: FormData) {
+  if (await isPreviewing()) return { error: "Exit View As to make changes." };
+  const profile = await getCurrentProfile();
+  if (!profile) return { error: "Not authenticated" };
+  const file = formData.get("file");
+  if (!(file instanceof File)) return { error: "Choose a file to attach." };
+  const { saveCampaignUpload } = await import("@/lib/gmail/outreach-templates.server");
+  return saveCampaignUpload(profile.id, file);
+}
+
 export async function deleteOutreachTemplateAttachment(attachmentId: string) {
   const gate = await requireAdmin();
   if ("error" in gate) return gate;

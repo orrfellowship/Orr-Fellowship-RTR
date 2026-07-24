@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   saveOutreachTemplate, setOutreachTemplateArchived,
   uploadOutreachTemplateAttachment, deleteOutreachTemplateAttachment,
+  uploadCampaignAttachment,
 } from "@/app/(app)/console/actions";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronLeft,
@@ -222,6 +223,25 @@ export default function EmailCampaignsClient({
   // just the [placeholder] → value map, which it re-materializes authoritatively.
   const [rawTemplate, setRawTemplate] = useState<{ subject: string; body: string } | null>(null);
   const [replacements, setReplacements] = useState<Record<string, string>>({});
+  // Sender-uploaded attachments for this campaign (on top of any the template
+  // carries). Stored server-side against the sender; we keep only the ids here.
+  const [myUploads, setMyUploads] = useState<{ id: string; fileName: string; sizeBytes: number }[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const uploadRef = useRef<HTMLInputElement>(null);
+
+  async function addAttachment(file: File | null) {
+    if (!file) return;
+    if (myUploads.length >= 5) { setUploadError("You can attach at most 5 files."); return; }
+    setUploading(true); setUploadError(null);
+    const fd = new FormData();
+    fd.set("file", file);
+    const res = await uploadCampaignAttachment(fd).catch(() => ({ error: "Upload failed — try again." }));
+    setUploading(false);
+    if (res && "error" in res && res.error) { setUploadError(res.error); return; }
+    const view = res as { id: string; fileName: string; sizeBytes: number };
+    setMyUploads((prev) => [...prev, { id: view.id, fileName: view.fileName, sizeBytes: view.sizeBytes }]);
+  }
 
   function pickTemplate(id: string) {
     setTemplateId(id);
@@ -302,7 +322,7 @@ export default function EmailCampaignsClient({
   // auto-fill. Blocks advancing past Compose (and sending) until they're gone.
   const manualPlaceholders = [...new Set([...findManualPlaceholders(subject), ...findManualPlaceholders(body)])];
   const selectedCandidateIds = Array.from(selectedIds);
-  const campaignFingerprint = JSON.stringify({ audienceKey, campaignName, subject, body, selectedCandidateIds, templateId });
+  const campaignFingerprint = JSON.stringify({ audienceKey, campaignName, subject, body, selectedCandidateIds, templateId, uploadIds: myUploads.map((u) => u.id) });
   const confirmed = confirmationFingerprint === campaignFingerprint;
   const composeReady = !!campaignName.trim()
     && !!subject.trim()
@@ -411,6 +431,7 @@ export default function EmailCampaignsClient({
           // Fellows send only the blank values; the server re-materializes the
           // fixed template around them so the copy can't be tampered with.
           replacements: fillInMode ? replacements : undefined,
+          uploadIds: myUploads.map((u) => u.id),
         }),
       });
       const payload = await response.json() as EnqueueResponse | { success: false; error?: { message?: string } };
@@ -470,6 +491,8 @@ export default function EmailCampaignsClient({
     setPreviewIndex(0);
     setStep(0);
     setMaxReached(0);
+    setMyUploads([]);
+    setUploadError(null);
     submission.current = null;
   }
 
@@ -802,11 +825,26 @@ export default function EmailCampaignsClient({
                   </Field>
                 </>
               )}
-              {attachments.length > 0 && (
+              {(attachments.length > 0 || myUploads.length > 0) && (
                 <div className="attachment-chips">
                   {attachments.map((a) => <span className="attachment-chip" key={a.id}>📎 {a.fileName} <small>{fmtBytes(a.sizeBytes)}</small></span>)}
+                  {myUploads.map((u) => (
+                    <span className="attachment-chip" key={u.id}>
+                      📎 {u.fileName} <small>{fmtBytes(u.sizeBytes)}</small>
+                      <button type="button" className="chip-x" aria-label={`Remove ${u.fileName}`} onClick={() => setMyUploads((prev) => prev.filter((x) => x.id !== u.id))}>×</button>
+                    </span>
+                  ))}
                 </div>
               )}
+              <div className="attach-add">
+                <input ref={uploadRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.docx,.pptx" style={{ display: "none" }}
+                  onChange={(e) => { addAttachment(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+                <button type="button" onClick={() => uploadRef.current?.click()} disabled={uploading || myUploads.length >= 5}>
+                  {uploading ? "Uploading…" : "📎 Add attachment"}
+                </button>
+                <small>Your own files ride along with {attachments.length > 0 ? "the template's attachments" : "this send"} · PDF, PNG, JPG, DOCX, PPTX · 5 MB each · up to 5</small>
+              </div>
+              {uploadError && <div className="compose-warn"><CircleAlert size={15} /> {uploadError}</div>}
               {unsupportedVariables.length > 0 && <div className="compose-warn"><CircleAlert size={15} /> Unknown merge field(s): {unsupportedVariables.join(", ")}. Fix before continuing.</div>}
               {manualPlaceholders.length > 0 && (
                 <div className="compose-warn placeholder-warn">
@@ -860,9 +898,10 @@ export default function EmailCampaignsClient({
                 <div><span>Subject</span><strong>{renderHighlightedOutreachTemplate(subject, currentPreview.tokens)}</strong></div>
               </div>
               <div className="email-body">{renderHighlightedOutreachTemplate(body, currentPreview.tokens)}</div>
-              {attachments.length > 0 && (
+              {(attachments.length > 0 || myUploads.length > 0) && (
                 <div className="attachment-chips email-attachments">
                   {attachments.map((a) => <span className="attachment-chip" key={a.id}>📎 {a.fileName} <small>{fmtBytes(a.sizeBytes)}</small></span>)}
+                  {myUploads.map((u) => <span className="attachment-chip" key={u.id}>📎 {u.fileName} <small>{fmtBytes(u.sizeBytes)}</small></span>)}
                 </div>
               )}
               <div className="preview-legend">
@@ -891,7 +930,7 @@ export default function EmailCampaignsClient({
                   <ReviewValue label="Sending from" value={gmailConnection.connectedEmail ?? "Gmail not connected"} />
                   <ReviewValue label="Audience" value={audience?.label ?? "—"} />
                   {selectedTemplate && <ReviewValue label="Template" value={selectedTemplate.name} />}
-                  <ReviewValue label="Attachments" value={attachments.length ? attachments.map((a) => a.fileName).join(", ") : "None"} />
+                  <ReviewValue label="Attachments" value={[...attachments.map((a) => a.fileName), ...myUploads.map((u) => u.fileName)].join(", ") || "None"} />
                   <ReviewValue label="Subject template" value={subject} wide />
                 </div>
               </ReviewCard>
@@ -1073,6 +1112,12 @@ const styles = `
   .attachment-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
   .attachment-chip { display: inline-flex; align-items: center; gap: 6px; background: #EEF1F7; border: 1px solid ${C.line}; border-radius: 999px; padding: 5px 12px; font-size: 12.5px; font-weight: 600; color: ${C.navy}; }
   .attachment-chip small { color: ${C.muted}; font-weight: 400; }
+  .attachment-chip .chip-x { border: none; background: none; color: ${C.muted}; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 0 0 2px; }
+  .attachment-chip .chip-x:hover { color: ${C.orange}; }
+  .attach-add { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .attach-add button { border: 1px solid ${C.line}; background: #fff; color: ${C.navy}; font-weight: 700; font-size: 12.5px; padding: 7px 12px; border-radius: 8px; cursor: pointer; }
+  .attach-add button:disabled { opacity: .55; cursor: default; }
+  .attach-add small { color: ${C.muted}; font-size: 11px; }
   .email-attachments { padding: 12px 18px 16px; border-top: 1px solid ${C.line}; }
   .tpl-manager { border: 1px solid ${C.line}; border-radius: 14px; background: #fff; margin-bottom: 18px; overflow: hidden; }
   .tpl-manager-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 13px 18px; border: none; background: #FAFBFE; cursor: pointer; text-align: left; font: 700 14px var(--font-head); color: ${C.navy}; }

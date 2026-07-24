@@ -42,6 +42,13 @@ check("a valid templateId uuid is accepted", validateOutreachInput({ ...base, te
 check("browser-supplied attachment fields are not accepted into validated input", !("attachments" in validateOutreachInput({ ...base, attachments: [{ storage_path: "attacker/file" }] })));
 rejects("rejects a malformed templateId", () => validateOutreachInput({ ...base, templateId: "not-a-uuid" }), "invalid_template");
 
+// ---- Phase 25: sender-uploaded attachment ids -------------------------------
+check("uploadIds default to empty", validateOutreachInput(base).uploadIds.length === 0);
+check("valid upload uuids are accepted + de-duped", validateOutreachInput({ ...base, uploadIds: [TPL_ID, TPL_ID] }).uploadIds.length === 1);
+rejects("rejects a non-uuid upload id", () => validateOutreachInput({ ...base, uploadIds: ["nope"] }), "invalid_attachment");
+rejects("rejects too many attachments", () => validateOutreachInput({ ...base, uploadIds: Array.from({ length: 6 }, () => TPL_ID) }), "invalid_attachment");
+check("raw storage paths are still never accepted from the browser", !("attachments" in validateOutreachInput({ ...base, attachments: [{ storage_path: "x/y" }], uploadIds: [TPL_ID] })));
+
 import { resolveContentForSender, validateResolvedCampaignText, type OutreachTemplate } from "./outreach-templates.server";
 const tpl: OutreachTemplate = {
   id: TPL_ID, name: "Fall intro", subject: "Meet Orr, {{candidate_first_name}}", body: "Hi {{candidate_first_name}} — I'm [Your Name] from [Your Company].",

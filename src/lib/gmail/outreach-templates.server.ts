@@ -206,3 +206,55 @@ export async function loadAttachmentBase64(storagePath: string): Promise<string>
   if (error || !data) throw new Error(`Attachment unavailable: ${storagePath}`);
   return Buffer.from(await data.arrayBuffer()).toString("base64");
 }
+
+// ============================================================================
+// Per-send (sender-owned) attachments — files a fellow/admin attaches to their
+// own campaign, tracked in outreach_campaign_uploads so the send never trusts a
+// raw client storage path. Stored in the same private bucket under a per-user
+// prefix.
+// ============================================================================
+
+const CAMPAIGN_UPLOADS_PREFIX = "campaign-uploads";
+// A sender may attach at most this many of their own files to one campaign.
+export const MAX_CAMPAIGN_UPLOADS = 5;
+
+export type CampaignUploadView = { id: string; fileName: string; mimeType: string; sizeBytes: number };
+
+// Validate + store one uploaded file for a user, returning a client-safe view
+// (no storage path). Reuses the template attachment type/size allowlist.
+export async function saveCampaignUpload(userId: string, file: File): Promise<CampaignUploadView | { error: string }> {
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose a file to attach." };
+  if (!ATTACHMENT_MIME_ALLOWLIST.has(file.type)) return { error: "Allowed types: PDF, PNG, JPG, DOCX, PPTX." };
+  if (file.size > ATTACHMENT_LIMITS.maxFileBytes) return { error: `Files must be ${Math.round(ATTACHMENT_LIMITS.maxFileBytes / 1024 / 1024)} MB or smaller.` };
+
+  const db = createServiceClient();
+  const safeName = file.name.replace(/[^\w.\- ]+/g, "_").slice(0, 100) || "attachment";
+  const storagePath = `${CAMPAIGN_UPLOADS_PREFIX}/${userId}/${crypto.randomUUID()}-${safeName}`;
+  const { error: upErr } = await db.storage.from(ATTACHMENTS_BUCKET)
+    .upload(storagePath, new Uint8Array(await file.arrayBuffer()), { contentType: file.type, upsert: false });
+  if (upErr) return { error: "Upload failed — try again." };
+
+  const { data, error } = await db.from("outreach_campaign_uploads")
+    .insert({ user_id: userId, file_name: safeName, mime_type: file.type, size_bytes: file.size, storage_path: storagePath })
+    .select("id").single();
+  if (error || !data) {
+    await db.storage.from(ATTACHMENTS_BUCKET).remove([storagePath]); // don't orphan the object
+    return { error: "Upload could not be saved." };
+  }
+  return { id: (data as any).id as string, fileName: safeName, mimeType: file.type, sizeBytes: file.size };
+}
+
+// Load the sender's uploads for the given ids — scoped to user_id so a client
+// can never attach another user's file. Returns campaign-attachment snapshots.
+export async function loadCampaignUploads(userId: string, ids: string[]): Promise<CampaignAttachment[]> {
+  if (!ids.length) return [];
+  const db = createServiceClient();
+  const { data, error } = await db.from("outreach_campaign_uploads")
+    .select("id, file_name, mime_type, size_bytes, storage_path")
+    .eq("user_id", userId)
+    .in("id", ids.slice(0, MAX_CAMPAIGN_UPLOADS));
+  if (error) throw new GmailTestSendError("attachment_unavailable", "Your attachment could not be loaded.", 502);
+  return (data ?? []).map((r: any) => ({
+    storage_path: r.storage_path, file_name: r.file_name, mime_type: r.mime_type, size_bytes: Number(r.size_bytes),
+  }));
+}

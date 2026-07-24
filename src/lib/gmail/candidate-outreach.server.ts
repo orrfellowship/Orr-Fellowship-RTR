@@ -15,6 +15,7 @@ export type ValidatedOutreachInput = {
   campaignName: string; subject: string; body: string; ids: string[];
   idempotencyKey: string; templateId: string | null;
   replacements: Record<string, string>;
+  uploadIds: string[];
 };
 
 // Live sending is enabled for every app role. Fellows and team leads remain
@@ -69,7 +70,16 @@ export function validateOutreachInput(value: unknown): ValidatedOutreachInput {
       replacements[k] = val as string;
     }
   }
-  return { campaignName, subject, body, ids: list as string[], idempotencyKey, templateId, replacements };
+  // Optional sender-uploaded attachment ids (opaque uuids; the server re-scopes
+  // them to the sender before attaching — a raw path is never trusted).
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let uploadIds: string[] = [];
+  if (v.uploadIds != null) {
+    if (!Array.isArray(v.uploadIds) || v.uploadIds.length > 5) bad("invalid_attachment", "Too many attachments.");
+    if ((v.uploadIds as unknown[]).some((id) => typeof id !== "string" || !uuid.test(id))) bad("invalid_attachment", "An attachment reference is invalid.");
+    uploadIds = [...new Set(v.uploadIds as string[])];
+  }
+  return { campaignName, subject, body, ids: list as string[], idempotencyKey, templateId, replacements, uploadIds };
 }
 
 // Real-candidate outreach (Phase 4). Turns a sender's selected candidates into

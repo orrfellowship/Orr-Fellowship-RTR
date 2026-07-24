@@ -2,7 +2,7 @@ import { NextResponse, after } from "next/server";
 import { getCurrentProfile, isPreviewing } from "@/lib/auth";
 import { GmailTestSendError, safeTestSendError } from "@/lib/gmail/test-send.server";
 import { candidateOutreachSendingEnabled, validateOutreachInput, enqueueCandidateCampaign } from "@/lib/gmail/candidate-outreach.server";
-import { resolveCampaignContent } from "@/lib/gmail/outreach-templates.server";
+import { resolveCampaignContent, loadCampaignUploads } from "@/lib/gmail/outreach-templates.server";
 import { drainOutreachQueue } from "@/lib/gmail/outreach-queue.server";
 
 export const runtime = "nodejs";
@@ -43,10 +43,11 @@ export async function POST(request: Request) {
       subject: input.subject,
       body: input.body,
     }, input.templateId, input.replacements);
+    const attachments = [...content.attachments, ...(await loadCampaignUploads(profile.id, input.uploadIds))];
     const result = await enqueueCandidateCampaign(profile.id, profile.role, {
       campaignName: input.campaignName, subject: content.subject, body: content.body,
       selectedCandidateIds: input.ids, idempotencyKey: input.idempotencyKey,
-      templateId: content.templateId, attachments: content.attachments,
+      templateId: content.templateId, attachments,
     });
     after(() => drainOutreachQueue().catch((error) => console.error(JSON.stringify({ level: "error", event: "outreach_after_drain_failed", route: "candidates", message: error instanceof Error ? error.message : "Unknown error" }))));
     return NextResponse.json({
