@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     const content = await resolveCampaignContent(profile.role, {
       subject: input.subject,
       body: input.body,
-    }, input.templateId);
+    }, input.templateId, input.replacements);
     const result = await enqueueCandidateCampaign(profile.id, profile.role, {
       campaignName: input.campaignName, subject: content.subject, body: content.body,
       selectedCandidateIds: input.ids, idempotencyKey: input.idempotencyKey,

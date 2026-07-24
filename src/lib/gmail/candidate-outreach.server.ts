@@ -14,6 +14,7 @@ export const OUTREACH_LIMITS = { campaignName: 120, subject: 200, body: 20_000, 
 export type ValidatedOutreachInput = {
   campaignName: string; subject: string; body: string; ids: string[];
   idempotencyKey: string; templateId: string | null;
+  replacements: Record<string, string>;
 };
 
 // Live sending is enabled for every app role. Fellows and team leads remain
@@ -55,7 +56,20 @@ export function validateOutreachInput(value: unknown): ValidatedOutreachInput {
     }
     templateId = v.templateId as string;
   }
-  return { campaignName, subject, body, ids: list as string[], idempotencyKey, templateId };
+  // Optional [placeholder] → value map for fellow "fill in the blanks" sends.
+  // Shape-checked here; the exact key set + content rules are enforced when the
+  // template is re-materialized server-side (materializeTemplateBundle).
+  const replacements: Record<string, string> = {};
+  if (v.replacements != null) {
+    if (typeof v.replacements !== "object" || Array.isArray(v.replacements)) bad("invalid_replacement", "Template values are invalid.");
+    const entries = Object.entries(v.replacements as Record<string, unknown>);
+    if (entries.length > 50) bad("invalid_replacement", "Too many template values.");
+    for (const [k, val] of entries) {
+      if (typeof val !== "string" || k.length > 200 || val.length > 5000) bad("invalid_replacement", "Template values are invalid.");
+      replacements[k] = val as string;
+    }
+  }
+  return { campaignName, subject, body, ids: list as string[], idempotencyKey, templateId, replacements };
 }
 
 // Real-candidate outreach (Phase 4). Turns a sender's selected candidates into

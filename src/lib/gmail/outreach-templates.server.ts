@@ -4,6 +4,8 @@ import {
   findManualPlaceholders,
   findUnsupportedOutreachVariables,
   normalizeOutreachMergeVariables,
+  materializeTemplateBundle,
+  type TemplateReplacements,
 } from "./candidate-tokens";
 import { GmailTestSendError } from "./test-send.server";
 
@@ -113,25 +115,35 @@ export function resolveContentForSender(
   role: AppRole,
   client: { subject: string; body: string },
   template: OutreachTemplate | null,
+  replacements: TemplateReplacements = {},
 ): ResolvedCampaignContent {
+  if (!isAdminPlus(role)) {
+    // Fellows/leads: a live admin template is REQUIRED, and the ONLY thing they
+    // can change is the [blank] values. The subject/body are re-materialized
+    // from the stored template around those values — never trusted from the
+    // browser — so the fixed copy can't be altered. Attachments come only from
+    // the server-loaded template.
+    if (!template || template.isArchived) {
+      throw new GmailTestSendError("template_required", "Pick one of the templates provided by your admins before sending.", 400);
+    }
+    const materialized = materializeTemplateBundle([template.subject, template.body], replacements);
+    if (!materialized.ok) {
+      const message = materialized.reason === "unfilled_placeholder"
+        ? "Fill in every blank in the template before sending."
+        : materialized.reason === "replacement_keys_changed"
+          ? "The template changed — reopen it and fill the blanks again."
+          : "One of the values you filled in isn't allowed (it can't contain a merge field or another blank).";
+      throw new GmailTestSendError("invalid_replacement", message, 400);
+    }
+    const [subject, body] = materialized.values;
+    return { subject, body, templateId: template.id, attachments: toCampaignAttachments(template.attachments) };
+  }
+  // Admins: template optional and free-composed. When one is picked its
+  // attachments ride along, but the (possibly edited) client copy is what sends.
   const clientContent = {
     subject: normalizeOutreachMergeVariables(client.subject),
     body: normalizeOutreachMergeVariables(client.body),
   };
-  if (!isAdminPlus(role)) {
-    // Fellows/leads: a live admin template is REQUIRED, but its prefilled copy
-    // may be edited for the campaign. Attachments still come only from the
-    // server-loaded template.
-    if (!template || template.isArchived) {
-      throw new GmailTestSendError("template_required", "Pick one of the templates provided by your admins before sending.", 400);
-    }
-    return {
-      ...clientContent,
-      templateId: template.id, attachments: toCampaignAttachments(template.attachments),
-    };
-  }
-  // Admins: template optional. When one is picked its attachments ride along,
-  // but the (possibly edited) client subject/body is what sends.
   if (template && !template.isArchived) {
     return { ...clientContent, templateId: template.id, attachments: toCampaignAttachments(template.attachments) };
   }
@@ -142,6 +154,7 @@ export async function resolveCampaignContent(
   role: AppRole,
   client: { subject: string; body: string },
   templateId: string | null,
+  replacements: TemplateReplacements = {},
 ): Promise<ResolvedCampaignContent> {
   let template: OutreachTemplate | null = null;
   if (templateId) {
@@ -160,7 +173,7 @@ export async function resolveCampaignContent(
       };
     }
   }
-  const resolved = resolveContentForSender(role, client, template);
+  const resolved = resolveContentForSender(role, client, template, replacements);
   // Re-check limits on the resolved content at the server boundary.
   validateResolvedCampaignText(resolved);
   // Templates are validated at save, but re-check here so a template edited

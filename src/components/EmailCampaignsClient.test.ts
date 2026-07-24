@@ -33,8 +33,8 @@ check("all-candidate admin audience is search-first", src.includes('audience?.ke
 check("paginates broad recipient results", src.includes("shownRecipients") && src.includes("recipientPageSize") && src.includes("PaginationControls"));
 check("admins can filter contacts by point person", src.includes('aria-label="Filter by point person"') && src.includes("r.tokens.fellow_point_person !== pointPersonFilter"));
 check("uses the renamed candidate and fellow merge fields", src.includes("{{candidate_first_name}}") && src.includes("{{candidate_last_name}}") && src.includes("{{candidate_full_name}}") && src.includes("{{fellow_point_person}}"));
-check("template-required users can edit the full prefilled copy", src.includes("canCustomizeTemplate") && src.includes("const contentLocked = templateRequired && !canCustomizeTemplate"));
-check("does not render individual template prompt fields", !src.includes("canAnswerTemplatePrompts") && !src.includes("templateReplacements"));
+check("template-required users fill in the blanks only", src.includes("const fillInMode = templateRequired") && src.includes("placeholderKeys") && src.includes("setFill("));
+check("sends only the blank values, re-materialized server-side", src.includes("replacements: fillInMode ? replacements : undefined"));
 check("workspace enables Gmail sending without a disabled reason", workspaceSrc.includes("gmailCampaignSendEnabled") && !workspaceSrc.includes("sendDisabledReason"));
 
 console.log(failures === 0 ? "\nAll email campaign composer checks passed." : `\n${failures} check(s) failed.`);

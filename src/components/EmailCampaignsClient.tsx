@@ -17,6 +17,8 @@ import {
   OUTREACH_MERGE_VARIABLES,
   findUnsupportedOutreachVariables,
   findManualPlaceholders,
+  templatePlaceholderKeys,
+  previewTemplateMaterialization,
   sendEtaLabel,
   type ComposerRecipient,
   type OutreachAudience,
@@ -173,7 +175,6 @@ export default function EmailCampaignsClient({
   recentCampaigns = [],
   templates = [],
   canFreeCompose = false,
-  canCustomizeTemplate = false,
   sendDisabledReason,
 }: {
   gmailConnection?: GmailConnectionStatus;
@@ -182,10 +183,10 @@ export default function EmailCampaignsClient({
   audiences?: OutreachAudience[];
   recentCampaigns?: CampaignHistoryItem[];
   // Admin-curated templates. `canFreeCompose` controls whether a template is
-  // required; `canCustomizeTemplate` lets template-required users edit the
-  // selected template without granting template-management access.
+  // required (admins free-compose; everyone else fills in the template blanks).
   templates?: OutreachTemplateView[];
   canFreeCompose?: boolean;
+  // Accepted for backward-compat with callers; fellows now always fill blanks.
   canCustomizeTemplate?: boolean;
   sendDisabledReason?: string;
 }) {
@@ -206,14 +207,44 @@ export default function EmailCampaignsClient({
   const [templateId, setTemplateId] = useState<string>("");
   const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
   const templateRequired = !canFreeCompose;
-  const contentLocked = templateRequired && !canCustomizeTemplate;
+  // Fellows/leads fill in the template's [blanks] only — the rest of the copy is
+  // fixed. Admins free-compose.
+  const fillInMode = templateRequired;
   const attachments = selectedTemplate?.attachments ?? [];
+
+  // Which [placeholder]s the chosen template exposes for the fellow to fill.
+  const placeholderKeys = useMemo(
+    () => (selectedTemplate ? templatePlaceholderKeys(selectedTemplate.subject, selectedTemplate.body) : []),
+    [selectedTemplate],
+  );
+  // The raw template (with placeholders) kept so the assembled subject/body can
+  // be recomputed as the fellow fills blanks; the values sent to the server are
+  // just the [placeholder] → value map, which it re-materializes authoritatively.
+  const [rawTemplate, setRawTemplate] = useState<{ subject: string; body: string } | null>(null);
+  const [replacements, setReplacements] = useState<Record<string, string>>({});
 
   function pickTemplate(id: string) {
     setTemplateId(id);
     const t = templates.find((x) => x.id === id);
-    if (t) { setSubject(t.subject); setBody(t.body); }
-    else if (templateRequired) { setSubject(""); setBody(""); }
+    setReplacements({});
+    if (t) {
+      setRawTemplate({ subject: t.subject, body: t.body });
+      setSubject(t.subject); setBody(t.body);
+    } else {
+      setRawTemplate(null);
+      if (templateRequired) { setSubject(""); setBody(""); }
+    }
+  }
+
+  // Fill one blank: store the value and re-assemble subject/body so the preview,
+  // send-block, and highlighting all reflect it (unfilled blanks stay as [text]).
+  function setFill(placeholder: string, value: string) {
+    const next = { ...replacements, [placeholder]: value };
+    setReplacements(next);
+    if (rawTemplate) {
+      setSubject(previewTemplateMaterialization(rawTemplate.subject, next));
+      setBody(previewTemplateMaterialization(rawTemplate.body, next));
+    }
   }
   const [activeField, setActiveField] = useState<"subject" | "body">("body");
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -377,6 +408,9 @@ export default function EmailCampaignsClient({
           selectedIds: selectedCandidateIds,
           idempotencyKey,
           templateId: templateId || null,
+          // Fellows send only the blank values; the server re-materializes the
+          // fixed template around them so the copy can't be tampered with.
+          replacements: fillInMode ? replacements : undefined,
         }),
       });
       const payload = await response.json() as EnqueueResponse | { success: false; error?: { message?: string } };
@@ -726,16 +760,48 @@ export default function EmailCampaignsClient({
               {templateRequired && templates.length === 0 && (
                 <div className="compose-warn"><CircleAlert size={15} /> No templates are available yet — ask an admin to create one in Email Campaigns.</div>
               )}
-              <Field label="Subject line">
-                <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} readOnly={contentLocked} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)}
-                  onDragOver={contentLocked ? undefined : allowMergeFieldDrop} onDrop={contentLocked ? undefined : (e) => insertMergeFieldOnDrop(e, subject, setSubject)}
-                  placeholder={templateRequired ? "Pick a template above" : "Email subject"} />
-              </Field>
-              <Field label="Email body">
-                <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} readOnly={contentLocked} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)}
-                  onDragOver={contentLocked ? undefined : allowMergeFieldDrop} onDrop={contentLocked ? undefined : (e) => insertMergeFieldOnDrop(e, body, setBody)}
-                  rows={14} placeholder={templateRequired ? "The template's message will appear here." : undefined} />
-              </Field>
+              {fillInMode ? (
+                <>
+                  {selectedTemplate && placeholderKeys.length > 0 && (
+                    <div className="fill-in-panel">
+                      <div className="fill-in-head">Fill in the blanks <small>Only these can be changed — the rest of the template is fixed by your admins.</small></div>
+                      {placeholderKeys.map((key) => {
+                        const filled = (replacements[key] ?? "").trim().length > 0;
+                        return (
+                          <label className="fill-in-row" key={key}>
+                            <span>{key.replace(/^\[|\]$/g, "")}{!filled && <em> · required</em>}</span>
+                            <input value={replacements[key] ?? ""} maxLength={5000}
+                              onChange={(e) => setFill(key, e.target.value)}
+                              placeholder={`e.g. ${key.replace(/^\[|\]$/g, "")}`} />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {selectedTemplate && placeholderKeys.length === 0 && (
+                    <div className="fill-in-panel"><div className="fill-in-head">Nothing to fill in <small>This template has no blanks — it&apos;ll send exactly as written.</small></div></div>
+                  )}
+                  <Field label="Subject line" hint="Read-only preview">
+                    <input value={subject} readOnly placeholder="Pick a template above" />
+                  </Field>
+                  <Field label="Email body" hint="Read-only preview">
+                    <textarea value={body} readOnly rows={12} placeholder="The template's message will appear here." />
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label="Subject line">
+                    <input ref={subjectRef} value={subject} maxLength={LIMITS.subject} onFocus={() => setActiveField("subject")} onChange={(event) => setSubject(event.target.value)}
+                      onDragOver={allowMergeFieldDrop} onDrop={(e) => insertMergeFieldOnDrop(e, subject, setSubject)}
+                      placeholder="Email subject" />
+                  </Field>
+                  <Field label="Email body">
+                    <textarea ref={bodyRef} value={body} maxLength={LIMITS.body} onFocus={() => setActiveField("body")} onChange={(event) => setBody(event.target.value)}
+                      onDragOver={allowMergeFieldDrop} onDrop={(e) => insertMergeFieldOnDrop(e, body, setBody)}
+                      rows={14} />
+                  </Field>
+                </>
+              )}
               {attachments.length > 0 && (
                 <div className="attachment-chips">
                   {attachments.map((a) => <span className="attachment-chip" key={a.id}>📎 {a.fileName} <small>{fmtBytes(a.sizeBytes)}</small></span>)}
@@ -746,27 +812,17 @@ export default function EmailCampaignsClient({
                 <div className="compose-warn placeholder-warn">
                   <CircleAlert size={15} />
                   <div className="compose-warn-body">
-                    <strong>{manualPlaceholders.length} template note{manualPlaceholders.length === 1 ? "" : "s"} {contentLocked ? "need attention" : "need your edits"}</strong>
-                    <span>
-                      {contentLocked
-                        ? "Ask an admin to replace the bracketed text before this template is used."
-                        : "Replace the bracketed text in the subject or body before previewing. It won’t auto-fill."}
-                    </span>
-                    <details>
-                      <summary>View {manualPlaceholders.length === 1 ? "note" : "notes"}</summary>
-                      <div className="placeholder-list">
-                        {manualPlaceholders.map((placeholder) => <code key={placeholder}>{placeholder}</code>)}
-                      </div>
-                    </details>
+                    <strong>{manualPlaceholders.length} blank{manualPlaceholders.length === 1 ? "" : "s"} left to fill</strong>
+                    <span>{fillInMode ? "Fill every blank above before previewing." : "Replace the bracketed text in the subject or body before previewing. It won’t auto-fill."}</span>
                   </div>
                 </div>
               )}
             </div>
             <aside className="variables-card">
-              <div className="variables-heading"><span>Merge variables</span><small>{contentLocked ? "Filled automatically" : `Insert into ${activeField}`}</small></div>
-              <p>{contentLocked ? "These placeholders in the template are replaced with each recipient's details." : "Personalize the template with each recipient's details."}</p>
-              <MergeFieldPalette disabled={contentLocked} onInsert={insertVariable} />
-              {!contentLocked && <div className="tip"><CircleAlert size={15} /><span>Drag a field into the subject or body, or click it to insert at the cursor in the last-focused field.</span></div>}
+              <div className="variables-heading"><span>Merge variables</span><small>{fillInMode ? "Filled automatically" : `Insert into ${activeField}`}</small></div>
+              <p>{fillInMode ? "These placeholders are replaced with each recipient's details when the email sends." : "Personalize the template with each recipient's details."}</p>
+              <MergeFieldPalette disabled={fillInMode} onInsert={insertVariable} />
+              {!fillInMode && <div className="tip"><CircleAlert size={15} /><span>Drag a field into the subject or body, or click it to insert at the cursor in the last-focused field.</span></div>}
             </aside>
           </div>
         </section>
@@ -1008,6 +1064,10 @@ const styles = `
   .compose-warn-body>span { color: #9B3A2C; font-size: 11.5px; }
   .compose-warn-body details { margin-top: 3px; }
   .compose-warn-body summary { width: fit-content; color: #8E2D20; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+  .fill-in-panel { border: 1px solid ${C.line}; border-radius: 12px; padding: 14px; margin-bottom: 14px; background: #FAFBFE; display: grid; gap: 10px; }
+  .fill-in-head { font: 700 13px ${HEAD}; color: ${C.navy}; display: flex; flex-direction: column; gap: 2px; } .fill-in-head small { color: ${C.muted}; font-weight: 600; font-size: 11px; }
+  .fill-in-row { display: grid; gap: 4px; } .fill-in-row>span { font-size: 11.5px; font-weight: 700; color: ${C.gray}; } .fill-in-row em { color: ${C.orange}; font-style: normal; font-weight: 600; }
+  .fill-in-row input { width: 100%; border: 1px solid ${C.line}; border-radius: 8px; padding: 8px 11px; font: 13px var(--font-body); color: ${C.gray}; box-sizing: border-box; }
   .placeholder-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
   .placeholder-list code { max-width: 100%; overflow-wrap: anywhere; color: #7A1D12; background: rgba(255,255,255,.6); border: 1px solid rgba(180,35,24,.2); border-radius: 6px; padding: 3px 6px; font: 600 10.5px ${MONO}; }
   .attachment-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }

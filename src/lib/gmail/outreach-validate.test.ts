@@ -49,20 +49,22 @@ const tpl: OutreachTemplate = {
   attachments: [{ id: "a1", fileName: "one-pager.pdf", mimeType: "application/pdf", sizeBytes: 1234, storagePath: "t/one-pager.pdf" }],
 };
 const clientContent = { subject: "My own subject", body: "My own body" };
-const fellowContent = {
-  subject: "Edited fellow subject",
-  body: "Hi {{candidate_first_name}} — I'm Sam from Acme.",
-};
 
-{ // fellow with a template: edited campaign copy + template attachments win
-  const r = resolveContentForSender("fellow", fellowContent, tpl);
-  check("fellow sends their edited template subject/body", r.subject === fellowContent.subject && r.body === fellowContent.body && r.templateId === TPL_ID);
+{ // fellow with a template: ONLY the [blanks] are filled; the fixed copy is
+  // rebuilt from the template and the browser-supplied subject/body are ignored.
+  const r = resolveContentForSender("fellow", clientContent, tpl, { "[Your Name]": "Sam", "[Your Company]": "Acme" });
+  check("fellow's send is rebuilt from the template + blank values (browser copy ignored)",
+    r.subject === "Meet Orr, {{candidate_first_name}}" && r.body === "Hi {{candidate_first_name}} — I'm Sam from Acme." && r.templateId === TPL_ID);
   check("fellow's campaign snapshots only the template attachments", r.attachments.length === 1 && r.attachments[0].storage_path === "t/one-pager.pdf");
 }
+{ // a fellow who leaves a blank empty (or sends the wrong keys) is rejected
+  try { resolveContentForSender("fellow", clientContent, tpl, { "[Your Name]": "Sam" }); failures++; console.log("FAIL  unfilled blank rejected (no throw)"); }
+  catch (e) { check("fellow with an unfilled blank is rejected", e instanceof GmailTestSendError && e.code === "invalid_replacement"); }
+}
 { // fellow without a template (or an archived one): blocked
-  try { resolveContentForSender("fellow", fellowContent, null); failures++; console.log("FAIL  fellow without template is rejected (no throw)"); }
+  try { resolveContentForSender("fellow", clientContent, null, {}); failures++; console.log("FAIL  fellow without template is rejected (no throw)"); }
   catch (e) { check("fellow without template is rejected", e instanceof GmailTestSendError && e.code === "template_required"); }
-  try { resolveContentForSender("team_lead", fellowContent, { ...tpl, isArchived: true }); failures++; console.log("FAIL  archived template is rejected for leads (no throw)"); }
+  try { resolveContentForSender("team_lead", clientContent, { ...tpl, isArchived: true }, {}); failures++; console.log("FAIL  archived template is rejected for leads (no throw)"); }
   catch (e) { check("archived template is rejected for leads", e instanceof GmailTestSendError && e.code === "template_required"); }
 }
 rejects("completed template subject cannot contain a line break", () => validateResolvedCampaignText({ subject: "Hi\nthere", body: "Body" }), "invalid_campaign");
